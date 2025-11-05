@@ -30,7 +30,7 @@ import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, runReader, ask)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList)
-import UniversalLLM (HasTools, SupportsTemperature, SupportsSystemPrompt)
+import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
@@ -82,7 +82,6 @@ runixCode
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
      , HasTools model provider
-     , SupportsTemperature provider
      , SupportsSystemPrompt provider
      )
   => UserPrompt
@@ -93,7 +92,6 @@ runixCode (UserPrompt userPrompt) = do
 
   let baseConfigs :: [ULL.ModelConfig provider model]
       baseConfigs = [ ULL.SystemPrompt sysPrompt
-                    , ULL.Temperature 0.7
                     ]
       newHistory = currentHistory ++ [UserText userPrompt]
 
@@ -114,7 +112,6 @@ runRunixCode
      ( Member (LLM provider model) r
      , Member FileSystem r
      , HasTools model provider
-     , SupportsTemperature provider
      , SupportsSystemPrompt provider
      )
   => SystemPrompt
