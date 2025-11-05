@@ -89,20 +89,22 @@ runixCode
   -> Sem r (RunixCodeResult provider model)
 runixCode (UserPrompt userPrompt) = do
   SystemPrompt sysPrompt <- ask
-  currentHistory <- get
+  currentHistory <- get @[Message model provider]
 
-  let baseConfigs = [ ULL.SystemPrompt sysPrompt
+  let baseConfigs :: [ULL.ModelConfig provider model]
+      baseConfigs = [ ULL.SystemPrompt sysPrompt
                     , ULL.Temperature 0.7
                     ]
       newHistory = currentHistory ++ [UserText userPrompt]
-      initialTodos = [] :: [Tools.Todo]  -- Start with empty todo list
 
-  -- Agent loop handles State [Tools.Todo] internally, returns result and final todos
-  (result, _finalTodos) <- runixCodeAgentLoop baseConfigs initialTodos newHistory
+  -- Add user prompt to history
+  put @[Message model provider] newHistory
 
-  -- Update message history with the result
-  put (updatedHistory result)
-
+  -- Run agent loop with Reader for configs and State for todos locally
+  (_finalTodos, result) <-
+    runState ([] :: [Tools.Todo]) $
+      runReader baseConfigs $
+        runixCodeAgentLoop
   return result
 
 -- | Pure wrapper for runixCode (for standalone use)
@@ -125,18 +127,6 @@ runRunixCode sysPrompt initialHistory userPrompt = do
                                 runixCode userPrompt
   return (result, finalHistory)
 
--- | Build tool list - tools can use State [Tools.Todo] effect
-buildTools :: forall r. (Member FileSystem r, Member (State [Tools.Todo]) r) => [LLMTool (Sem r)]
-buildTools =
-  [ LLMTool (Tools.readFile @r)
-  , LLMTool (Tools.writeFile @r)
-  , LLMTool (Tools.editFile @r)
-  , LLMTool (Tools.glob @r)
-  , LLMTool (Tools.grep @r)
-  , LLMTool (Tools.bash @r)
-  , LLMTool (Tools.todoWrite @r)  -- Uses State [Tools.Todo] directly
-  ]
-
 -- | Update config with new tool list
 setTools :: HasTools model provider => [LLMTool (Sem r)] -> [ULL.ModelConfig provider model] -> [ULL.ModelConfig provider model]
 setTools tools configs =
@@ -147,42 +137,39 @@ setTools tools configs =
     isToolsConfig (ULL.Tools _) = True
     isToolsConfig _ = False
 
--- | Agent loop - handles tool calling recursion
--- This is exposed so others can build upon it (e.g., custom tool loops)
--- Runs State [Tools.Todo] internally, returns result and final todos
+-- | Agent loop - reads base configs from Reader, builds tools each iteration
 runixCodeAgentLoop
   :: forall provider model r.
      ( Member (LLM provider model) r
      , Member FileSystem r
-     , HasTools model provider
-     )
-  => [ULL.ModelConfig provider model]
-  -> [Tools.Todo]  -- Initial todos
-  -> [Message model provider]
-  -> Sem r (RunixCodeResult provider model, [Tools.Todo])  -- Returns result and final todos
-runixCodeAgentLoop baseConfigs initialTodos currentHistory = do
-  (finalTodos, result) <- runState initialTodos (runixCodeAgentLoopWithState baseConfigs currentHistory)
-  return (result, finalTodos)
-
--- | Internal loop with State [Tools.Todo] in effect stack
-runixCodeAgentLoopWithState
-  :: forall provider model r.
-     ( Member (LLM provider model) r
-     , Member FileSystem r
+     , Member (Reader [ULL.ModelConfig provider model]) r
+     , Member (State [Message model provider]) r
      , Member (State [Tools.Todo]) r
      , HasTools model provider
      )
-  => [ULL.ModelConfig provider model]
-  -> [Message model provider]
-  -> Sem r (RunixCodeResult provider model)
-runixCodeAgentLoopWithState baseConfigs currentHistory = do
-  let tools = buildTools @r
+  => Sem r (RunixCodeResult provider model)
+runixCodeAgentLoop = do
+  baseConfigs <- ask @[ULL.ModelConfig provider model]
+
+  let tools = 
+        [ LLMTool Tools.readFile
+        , LLMTool Tools.writeFile
+        , LLMTool Tools.editFile
+        , LLMTool Tools.glob
+        , LLMTool Tools.grep
+        , LLMTool Tools.bash
+        , LLMTool Tools.todoWrite 
+        ]
       configs = setTools tools baseConfigs
 
+  currentHistory <- get @[Message model provider]
   responseMsgs <- queryLLM configs currentHistory
 
   let historyWithResponse = currentHistory ++ responseMsgs
       toolCalls = [tc | AssistantTool tc <- responseMsgs]
+
+  -- Update history state
+  put @[Message model provider] historyWithResponse
 
   case toolCalls of
     [] -> do
@@ -195,7 +182,12 @@ runixCodeAgentLoopWithState baseConfigs currentHistory = do
       -- Execute all tool calls - tools mutate State [Todo] directly
       results <- mapM (executeToolCallFromList tools) calls
       let historyWithResults = historyWithResponse ++ map ToolResultMsg results
-      runixCodeAgentLoopWithState baseConfigs historyWithResults
+
+      -- Update history again with tool results
+      put @[Message model provider] historyWithResults
+
+      -- Recurse
+      runixCodeAgentLoop
 
 --------------------------------------------------------------------------------
 -- Serialization Types (CLI convenience only)
