@@ -29,13 +29,15 @@ import Polysemy (Member, Sem)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, runReader, ask)
 import UniversalLLM.Core.Types (Message(..))
-import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList)
+import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList, ToolFunction(..), ToolParameter(..))
 import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
 import qualified Tools
 import Runix.FileSystem.Effects (FileSystem)
+import Autodocodec (HasCodec(..))
+import qualified Autodocodec
 
 --------------------------------------------------------------------------------
 -- Semantic Newtypes
@@ -46,6 +48,14 @@ newtype SystemPrompt = SystemPrompt Text
 
 -- | User prompt - what the user wants
 newtype UserPrompt = UserPrompt Text
+  deriving stock (Show, Eq)
+
+instance HasCodec UserPrompt where
+  codec = Autodocodec.dimapCodec UserPrompt (\(UserPrompt t) -> t) codec
+
+instance ToolParameter UserPrompt where
+  paramName _ _ = "prompt"
+  paramDescription _ = "the user's request or question"
 
 --------------------------------------------------------------------------------
 -- Result Type
@@ -59,11 +69,22 @@ data RunixCodeResult provider model = RunixCodeResult
   { updatedHistory :: [Message model provider]
   , responseText :: Text
   }
+  deriving stock (Show)
 
--- TODO: Add ToolFunction instance when we implement tools
--- instance ToolFunction (RunixCodeResult provider model) where
---   toolFunctionName _ = "runix_code"
---   toolFunctionDescription _ = "AI coding assistant that can read/write files, run shell commands, and help with code"
+-- For codec, we only encode/decode the response text (history is internal)
+instance HasCodec (RunixCodeResult provider model) where
+  codec = Autodocodec.dimapCodec
+    (\txt -> RunixCodeResult [] txt)
+    responseText
+    codec
+
+instance ToolParameter (RunixCodeResult provider model) where
+  paramName _ _ = "result"
+  paramDescription _ = "result from the runix code agent"
+
+instance ToolFunction (RunixCodeResult provider model) where
+  toolFunctionName _ = "runix_code"
+  toolFunctionDescription _ = "AI coding assistant that can read/write files, run shell commands, and help with code"
 
 --------------------------------------------------------------------------------
 -- (State effect for todo tracking is run locally in agent loop)
@@ -140,22 +161,27 @@ runixCodeAgentLoop
      ( Member (LLM provider model) r
      , Member FileSystem r
      , Member (Reader [ULL.ModelConfig provider model]) r
+     , Member (Reader SystemPrompt) r
      , Member (State [Message model provider]) r
      , Member (State [Tools.Todo]) r
      , HasTools model provider
+     , SupportsSystemPrompt provider
      )
   => Sem r (RunixCodeResult provider model)
 runixCodeAgentLoop = do
   baseConfigs <- ask @[ULL.ModelConfig provider model]
 
-  let tools = 
+  let tools :: [LLMTool (Sem r)]
+      tools =
         [ LLMTool Tools.readFile
         , LLMTool Tools.writeFile
         , LLMTool Tools.editFile
         , LLMTool Tools.glob
         , LLMTool Tools.grep
         , LLMTool Tools.bash
-        , LLMTool Tools.todoWrite 
+        , LLMTool Tools.todoWrite
+        -- Recursive agent starts with fresh history, shares SystemPrompt Reader
+        , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model prompt)
         ]
       configs = setTools tools baseConfigs
 
