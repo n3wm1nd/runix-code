@@ -9,8 +9,9 @@
 -- - Newtypes prevent mixing up semantically different Text values
 -- - No unnecessary wrapper types
 module Agent
-  ( -- * Core Function
-    runixCode
+  ( -- * Core Functions
+    runixCode       -- Stateful version (for composition)
+  , runRunixCode    -- Pure version (for standalone use)
   , runixCodeAgentLoop
 
     -- * Types
@@ -25,7 +26,8 @@ module Agent
 
 import Data.Text (Text)
 import Polysemy (Member, Sem)
-import Polysemy.State (State, runState)
+import Polysemy.State (State, runState, get, put)
+import Polysemy.Reader (Reader, runReader, ask)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList)
 import UniversalLLM (HasTools, SupportsTemperature, SupportsSystemPrompt)
@@ -71,8 +73,41 @@ data RunixCodeResult provider model = RunixCodeResult
 -- Core Function
 --------------------------------------------------------------------------------
 
--- | Runix Code - AI coding assistant
+-- | Runix Code - AI coding assistant (stateful version for composition)
+-- Uses State for message history and Reader for system prompt
 runixCode
+  :: forall provider model r.
+     ( Member (LLM provider model) r
+     , Member FileSystem r
+     , Member (State [Message model provider]) r
+     , Member (Reader SystemPrompt) r
+     , HasTools model provider
+     , SupportsTemperature provider
+     , SupportsSystemPrompt provider
+     )
+  => UserPrompt
+  -> Sem r (RunixCodeResult provider model)
+runixCode (UserPrompt userPrompt) = do
+  SystemPrompt sysPrompt <- ask
+  currentHistory <- get
+
+  let baseConfigs = [ ULL.SystemPrompt sysPrompt
+                    , ULL.Temperature 0.7
+                    ]
+      newHistory = currentHistory ++ [UserText userPrompt]
+      initialTodos = [] :: [Tools.Todo]  -- Start with empty todo list
+
+  -- Agent loop handles State [Tools.Todo] internally, returns result and final todos
+  (result, _finalTodos) <- runixCodeAgentLoop baseConfigs initialTodos newHistory
+
+  -- Update message history with the result
+  put (updatedHistory result)
+
+  return result
+
+-- | Pure wrapper for runixCode (for standalone use)
+-- Interprets State and Reader effects, returns explicit values
+runRunixCode
   :: forall provider model r.
      ( Member (LLM provider model) r
      , Member FileSystem r
@@ -83,17 +118,12 @@ runixCode
   => SystemPrompt
   -> [Message model provider]
   -> UserPrompt
-  -> Sem r (RunixCodeResult provider model)
-runixCode (SystemPrompt sysPrompt) messageHistory (UserPrompt userPrompt) = do
-  let baseConfigs = [ ULL.SystemPrompt sysPrompt
-                    , ULL.Temperature 0.7
-                    ]
-      newHistory = messageHistory ++ [UserText userPrompt]
-      initialTodos = [] :: [Tools.Todo]  -- Start with empty todo list
-
-  -- Agent loop handles State [Tools.Todo] internally, returns result and final todos
-  (result, _finalTodos) <- runixCodeAgentLoop baseConfigs initialTodos newHistory
-  return result
+  -> Sem r (RunixCodeResult provider model, [Message model provider])
+runRunixCode sysPrompt initialHistory userPrompt = do
+  (finalHistory, result) <- runReader sysPrompt $
+                              runState initialHistory $
+                                runixCode userPrompt
+  return (result, finalHistory)
 
 -- | Build tool list - tools can use State [Tools.Todo] effect
 buildTools :: forall r. (Member FileSystem r, Member (State [Tools.Todo]) r) => [LLMTool (Sem r)]

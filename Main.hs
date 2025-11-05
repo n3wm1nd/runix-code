@@ -4,7 +4,7 @@ import Data.Text (Text)
 import qualified Data.Text.IO as TIO
 import System.Environment (getArgs)
 
-import Agent (AgentConfig, AgentSession, RunixCodeResult, SystemPrompt, UserPrompt, runixCode)
+import Agent (AgentConfig, AgentSession, RunixCodeResult, runRunixCode)
 
 -- | Main entry point for runix-code
 --
