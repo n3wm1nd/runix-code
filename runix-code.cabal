@@ -1,0 +1,59 @@
+cabal-version:      3.0
+name:               runix-code
+version:            0.1.0.0
+synopsis:           AI coding assistant built on Runix
+description:
+  Runix Code is a Claude Code clone with self-improvement capabilities,
+  built on the Runix task automation framework.
+
+  Features:
+  - Type-safe tool calling via Polysemy effects
+  - Self-improving agent (can generate and integrate new tools)
+  - Effect-based security (compile-time guarantees)
+  - Multi-provider LLM support
+
+license:            MIT
+license-file:       LICENSE
+author:             Runix Contributors
+maintainer:         runix@example.com
+copyright:          2025 Runix Contributors
+category:           Development
+build-type:         Simple
+extra-doc-files:    DESIGN.md, SECRETS.md
+
+common warnings
+    ghc-options: -Wall
+                 -Wcompat
+                 -Widentities
+                 -Wincomplete-uni-patterns
+                 -Wincomplete-record-updates
+                 -Wredundant-constraints
+                 -Wnoncanonical-monad-instances
+                 -Wmissing-export-lists
+                 -Wpartial-fields
+                 -Wmissing-deriving-strategies
+
+executable runix-code
+    import:           warnings
+    main-is:          Main.hs
+
+    -- other-modules:
+
+    build-depends:    base >=4.17 && <5
+                    , runix
+                    , universal-llm
+                    , polysemy >=1.9
+                    , text >=2.0
+                    , aeson >=2.1
+                    , autodocodec >=0.2
+
+    hs-source-dirs:   .
+    default-language: Haskell2010
+    default-extensions:
+        DataKinds
+        FlexibleContexts
+        GADTs
+        LambdaCase
+        OverloadedStrings
+        TypeApplications
+        TypeOperators
