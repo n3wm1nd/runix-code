@@ -44,7 +44,6 @@ executable runix-code
                     , universal-llm
                     , polysemy >=1.9
                     , text >=2.0
-                    , aeson >=2.1
                     , autodocodec >=0.2
 
     hs-source-dirs:   .
@@ -54,10 +53,13 @@ executable runix-code
         DerivingStrategies
         DerivingVia
         FlexibleContexts
+        FlexibleInstances
         GADTs
         LambdaCase
+        MultiParamTypeClasses
         OverloadedStrings
         RankNTypes
         ScopedTypeVariables
         TypeApplications
+        TypeFamilies
         TypeOperators
