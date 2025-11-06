@@ -52,12 +52,20 @@ module Tools
 import Prelude hiding (readFile, writeFile, FilePath)
 import Data.Text (Text)
 import qualified Data.Text as T
-import Polysemy (Sem, Member)
+import qualified Data.Text.Encoding as T
+import qualified Data.ByteString.Lazy as BL
+import Polysemy (Sem, Member, embed)
 import Polysemy.State (State, modify, get, put)
+import Polysemy.Embed (Embed)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem.Effects (FileSystem)
+import qualified Runix.FileSystem.Effects
+import Runix.Grep.Effects (Grep)
+import qualified Runix.Grep.Effects
+import Runix.Bash.Effects (Bash)
+import qualified Runix.Bash.Effects
 
 --------------------------------------------------------------------------------
 -- Types
@@ -283,34 +291,60 @@ instance ToolFunction TodoDeleteResult where
 readFile
   :: forall r. (Member FileSystem r) => FilePath
   -> Sem r ReadFileResult
-readFile _path = return $ ReadFileResult ""
+readFile (FilePath path) = do
+  contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
+  return $ ReadFileResult (T.decodeUtf8 $ BL.toStrict contents)
 
 -- | Write a new file
 writeFile
-  :: FilePath
+  :: Member FileSystem r
+  => FilePath
   -> FileContent
   -> Sem r WriteFileResult
-writeFile _path _content = return $ WriteFileResult True
+writeFile (FilePath path) (FileContent content) = do
+  let bytes = BL.fromStrict $ T.encodeUtf8 content
+  Runix.FileSystem.Effects.writeFile (T.unpack path) bytes
+  return $ WriteFileResult True
 
 -- | Edit existing file via string replacement
 editFile
-  :: FilePath
+  :: Member FileSystem r
+  => FilePath
   -> OldString
   -> NewString
   -> Sem r EditFileResult
-editFile _path _old _new = undefined
+editFile (FilePath path) (OldString old) (NewString new) = do
+  contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
+  let contentText = T.decodeUtf8 $ BL.toStrict contents
+      replaced = T.replace old new contentText
+      newBytes = BL.fromStrict $ T.encodeUtf8 replaced
+  Runix.FileSystem.Effects.writeFile (T.unpack path) newBytes
+  return $ EditFileResult True
 
 -- | Find files matching a pattern
 glob
-  :: Pattern
+  :: Member FileSystem r
+  => Pattern
   -> Sem r GlobResult
-glob _pattern = undefined
+glob (Pattern pattern) = do
+  -- Glob from current directory
+  files <- Runix.FileSystem.Effects.glob "." (T.unpack pattern)
+  return $ GlobResult (map T.pack files)
 
 -- | Search file contents with regex
 grep
-  :: Pattern
+  :: Member Grep r
+  => Pattern
   -> Sem r GrepResult
-grep _pattern = undefined
+grep (Pattern pattern) = do
+  -- Grep from current directory
+  matches <- Runix.Grep.Effects.grepSearch "." (T.unpack pattern)
+  -- Format matches as text
+  let formatted = T.intercalate "\n" $
+        map (\m -> T.pack (Runix.Grep.Effects.matchFile m) <> ":" <>
+                   T.pack (show $ Runix.Grep.Effects.matchLine m) <> ":" <>
+                   Runix.Grep.Effects.matchText m) matches
+  return $ GrepResult formatted
 
 --------------------------------------------------------------------------------
 -- Shell Operations
@@ -318,9 +352,16 @@ grep _pattern = undefined
 
 -- | Execute a bash command
 bash
-  :: Command
+  :: Member Bash r
+  => Command
   -> Sem r BashResult
-bash _cmd = undefined
+bash (Command cmd) = do
+  output <- Runix.Bash.Effects.bashExec (T.unpack cmd)
+  -- Format output with stdout and stderr
+  let result = if Runix.Bash.Effects.exitCode output == 0
+               then Runix.Bash.Effects.stdout output
+               else Runix.Bash.Effects.stdout output <> "\nSTDERR:\n" <> Runix.Bash.Effects.stderr output
+  return $ BashResult result
 
 --------------------------------------------------------------------------------
 -- Meta Operations

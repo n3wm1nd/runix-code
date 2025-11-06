@@ -6,18 +6,21 @@ import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
 import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
-import System.IO (stderr, hPutStr)
+import System.IO (hPutStr)
+import qualified System.IO as IO
 import GHC.Stack
 
 import Polysemy
 import Polysemy.Fail
 import Polysemy.Error
 
-import Runix.Runner (filesystemIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, httpIO, withRequestTimeout, loggingIO, failLog)
 import Runix.LLM.Effects
 import Runix.LLM.Interpreter hiding (SystemPrompt)
 import Runix.HTTP.Effects
 import Runix.FileSystem.Effects
+import Runix.Grep.Effects
+import Runix.Bash.Effects
 import Runix.Logging.Effects
 import Runix.Secret.Effects (runSecret)
 
@@ -104,7 +107,7 @@ loadSession path = do
 -- | Run the entire runix-code stack
 runRunixCodeStack :: HasCallStack
                   => Text  -- ^ OAuth token
-                  -> (forall r. Members '[FileSystem, HTTP, Logging, LLM Anthropic ClaudeSonnet45, Fail, Embed IO] r => Sem r a)
+                  -> (forall r. Members '[FileSystem, Grep, Bash, HTTP, Logging, LLM Anthropic ClaudeSonnet45, Fail, Embed IO] r => Sem r a)
                   -> IO (Either String a)
 runRunixCodeStack token action =
   runM
@@ -112,6 +115,8 @@ runRunixCodeStack token action =
     . loggingIO
     . failLog
     . httpIO (withRequestTimeout 300)
+    . bashIO
+    . grepIO
     . filesystemIO
     . runSecret (pure $ T.unpack token)
     . interpretAnthropicOAuth Anthropic ClaudeSonnet45
@@ -139,7 +144,7 @@ main = do
   maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
   token <- case maybeToken of
     Nothing -> do
-      hPutStr stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
+      hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
       exitFailure
     Just t -> pure $ T.pack t
 
@@ -150,11 +155,11 @@ main = do
       loaded <- loadSession sessionFile
       case loaded of
         Left err -> do
-          hPutStr stderr $ "Warning: Failed to load session from " <> sessionFile <> ": " <> err <> "\n"
-          hPutStr stderr "Starting with empty history.\n"
+          hPutStr IO.stderr $ "Warning: Failed to load session from " <> sessionFile <> ": " <> err <> "\n"
+          hPutStr IO.stderr "Starting with empty history.\n"
           return []
         Right msgs -> do
-          hPutStr stderr $ "Loaded " <> show (length msgs) <> " messages from session.\n"
+          hPutStr IO.stderr $ "Loaded " <> show (length msgs) <> " messages from session.\n"
           return msgs
 
   -- Read user input from stdin
@@ -163,7 +168,7 @@ main = do
   -- Check if we got any input
   if T.null (T.strip userInput)
     then do
-      hPutStr stderr "Error: No input provided. Usage: echo \"prompt\" | runix-code [session-file]\n"
+      hPutStr IO.stderr "Error: No input provided. Usage: echo \"prompt\" | runix-code [session-file]\n"
       exitFailure
     else do
       -- Run the agent with session
@@ -175,10 +180,10 @@ main = do
             Nothing -> return ()
             Just sessionFile -> saveSession sessionFile finalHistory
           TIO.putStrLn response
-        Left errMsg -> hPutStr stderr errMsg >> exitFailure
+        Left errMsg -> hPutStr IO.stderr errMsg >> exitFailure
 
 -- | Run the agent with history
-runAgentWithHistory :: Members '[FileSystem, HTTP, Logging, LLM Anthropic ClaudeSonnet45, Fail, Embed IO] r
+runAgentWithHistory :: Members '[FileSystem, Grep, Bash, HTTP, Logging, LLM Anthropic ClaudeSonnet45, Fail, Embed IO] r
                     => [Message ClaudeSonnet45 Anthropic]
                     -> Text
                     -> Sem r (Text, [Message ClaudeSonnet45 Anthropic])
