@@ -22,6 +22,9 @@ module Tools
 
     -- * Meta
   , todoWrite
+  , todoRead
+  , todoCheck
+  , todoDelete
   , Todo (..)
 
     -- * Result Types
@@ -32,6 +35,9 @@ module Tools
   , GrepResult (..)
   , BashResult (..)
   , TodoWriteResult (..)
+  , TodoReadResult (..)
+  , TodoCheckResult (..)
+  , TodoDeleteResult (..)
 
     -- * Parameter Types
   , FilePath (..)
@@ -40,12 +46,14 @@ module Tools
   , NewString (..)
   , Pattern (..)
   , Command (..)
+  , TodoText (..)
   ) where
 
 import Prelude hiding (readFile, writeFile, FilePath)
 import Data.Text (Text)
+import qualified Data.Text as T
 import Polysemy (Sem, Member)
-import Polysemy.State (State, modify)
+import Polysemy.State (State, modify, get, put)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
@@ -55,10 +63,17 @@ import Runix.FileSystem.Effects (FileSystem)
 -- Types
 --------------------------------------------------------------------------------
 
--- | A single todo item
-newtype Todo = Todo Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
+-- | A single todo item with completion status
+data Todo = Todo
+  { todoText :: Text
+  , todoCompleted :: Bool
+  } deriving stock (Show, Eq)
+
+instance HasCodec Todo where
+  codec = Autodocodec.object "Todo" $
+    Todo
+      <$> Autodocodec.requiredField "text" "todo item text" Autodocodec..= todoText
+      <*> Autodocodec.requiredField "completed" "completion status" Autodocodec..= todoCompleted
 
 instance ToolParameter Todo where
   paramName _ _ = "todo"
@@ -92,6 +107,10 @@ newtype Command = Command Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
 
+newtype TodoText = TodoText Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
 -- ToolParameter instances for parameters
 instance ToolParameter FilePath where
   paramName _ _ = "file_path"
@@ -116,6 +135,10 @@ instance ToolParameter Pattern where
 instance ToolParameter Command where
   paramName _ _ = "command"
   paramDescription _ = "shell command to execute"
+
+instance ToolParameter TodoText where
+  paramName _ _ = "text"
+  paramDescription _ = "text or prefix of the todo item"
 
 --------------------------------------------------------------------------------
 -- Result Types (unique for ToolFunction instances)
@@ -155,6 +178,21 @@ data TodoWriteResult = TodoWriteResult
 instance HasCodec TodoWriteResult where
   codec = Autodocodec.dimapCodec (const TodoWriteResult) (const ()) Autodocodec.nullCodec
 
+-- | Result from todo_read - returns the list of todos
+newtype TodoReadResult = TodoReadResult [Todo]
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via [Todo]
+
+-- | Result from todo_check - returns a message about what happened
+newtype TodoCheckResult = TodoCheckResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+-- | Result from todo_delete - returns a message about what happened
+newtype TodoDeleteResult = TodoDeleteResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
 -- ToolParameter instances for result types (required by ToolFunction)
 instance ToolParameter ReadFileResult where
   paramName _ _ = "read_file_result"
@@ -184,6 +222,18 @@ instance ToolParameter TodoWriteResult where
   paramName _ _ = "result"
   paramDescription _ = "todo write result (always succeeds)"
 
+instance ToolParameter TodoReadResult where
+  paramName _ _ = "todos"
+  paramDescription _ = "list of all todos"
+
+instance ToolParameter TodoCheckResult where
+  paramName _ _ = "result"
+  paramDescription _ = "message describing what happened (todo checked, no match found, or multiple matches)"
+
+instance ToolParameter TodoDeleteResult where
+  paramName _ _ = "result"
+  paramDescription _ = "message describing what happened (todo deleted, no match found, or multiple matches)"
+
 -- ToolFunction instances for result types
 instance ToolFunction ReadFileResult where
   toolFunctionName _ = "read_file"
@@ -211,7 +261,19 @@ instance ToolFunction BashResult where
 
 instance ToolFunction TodoWriteResult where
   toolFunctionName _ = "todo_write"
-  toolFunctionDescription _ = "Update the todo list to track task progress"
+  toolFunctionDescription _ = "Add a new todo item to the list"
+
+instance ToolFunction TodoReadResult where
+  toolFunctionName _ = "todo_read"
+  toolFunctionDescription _ = "Read all current todos with their completion status"
+
+instance ToolFunction TodoCheckResult where
+  toolFunctionName _ = "todo_check"
+  toolFunctionDescription _ = "Mark a todo as completed by text prefix (must match exactly one todo)"
+
+instance ToolFunction TodoDeleteResult where
+  toolFunctionName _ = "todo_delete"
+  toolFunctionDescription _ = "Delete a todo by text prefix (must match exactly one todo)"
 
 --------------------------------------------------------------------------------
 -- File Operations
@@ -268,8 +330,62 @@ bash _cmd = undefined
 -- Tool mutates state directly, returns unit to LLM
 todoWrite
   :: Member (State [Todo]) r
-  => Todo
+  => TodoText
   -> Sem r TodoWriteResult
-todoWrite todo = do
-  modify (todo :)
+todoWrite (TodoText text) = do
+  let newTodo = Todo { todoText = text, todoCompleted = False }
+  modify (newTodo :)
   return TodoWriteResult
+
+-- | Read all todos from the state
+todoRead
+  :: Member (State [Todo]) r
+  => Sem r TodoReadResult
+todoRead = do
+  todos <- get @[Todo]
+  -- Return in reverse order so newest todos are at the end (more natural)
+  return $ TodoReadResult (reverse todos)
+
+-- | Mark a todo as completed by text prefix
+-- Returns a message indicating success, no match, or multiple matches
+todoCheck
+  :: Member (State [Todo]) r
+  => TodoText
+  -> Sem r TodoCheckResult
+todoCheck (TodoText prefix) = do
+  todos <- get @[Todo]
+  let matches = filter (\todo -> prefix `T.isPrefixOf` todoText todo) todos
+  case matches of
+    [] -> return $ TodoCheckResult "No todo found matching that prefix"
+    [matchedTodo] -> do
+      -- Update the single matching todo
+      let updatedTodos = map
+            (\todo -> if todoText todo == todoText matchedTodo
+                      then todo { todoCompleted = True }
+                      else todo)
+            todos
+      put @[Todo] updatedTodos
+      return $ TodoCheckResult $ "Checked off: " <> todoText matchedTodo
+    multiple -> do
+      let matchTexts = T.intercalate ", " (map todoText multiple)
+      return $ TodoCheckResult $ "Multiple matches found: " <> matchTexts
+
+-- | Delete a todo by text prefix
+-- Returns a message indicating success, no match, or multiple matches
+todoDelete
+  :: Member (State [Todo]) r
+  => TodoText
+  -> Sem r TodoDeleteResult
+todoDelete (TodoText prefix) = do
+  todos <- get @[Todo]
+  let matches = filter (\todo -> prefix `T.isPrefixOf` todoText todo) todos
+  case matches of
+    [] -> return $ TodoDeleteResult "No todo found matching that prefix"
+    [matchedTodo] -> do
+      -- Remove the single matching todo
+      let updatedTodos = filter (\todo -> todoText todo /= todoText matchedTodo) todos
+      put @[Todo] updatedTodos
+      return $ TodoDeleteResult $ "Deleted: " <> todoText matchedTodo
+    multiple -> do
+      let matchTexts = T.intercalate ", " (map todoText multiple)
+      return $ TodoDeleteResult $ "Multiple matches found: " <> matchTexts

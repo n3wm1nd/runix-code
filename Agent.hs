@@ -180,6 +180,9 @@ runixCodeAgentLoop = do
         , LLMTool Tools.grep
         , LLMTool Tools.bash
         , LLMTool Tools.todoWrite
+        , LLMTool Tools.todoRead
+        , LLMTool Tools.todoCheck
+        , LLMTool Tools.todoDelete
         -- Recursive agent starts with fresh history, shares SystemPrompt Reader
         , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model prompt)
         ]
