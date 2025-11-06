@@ -162,9 +162,16 @@ newtype WriteFileResult = WriteFileResult Bool
   deriving stock (Show, Eq)
   deriving (HasCodec) via Bool
 
-newtype EditFileResult = EditFileResult Bool
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Bool
+data EditFileResult = EditFileResult
+  { editSuccess :: Bool
+  , editMessage :: Text
+  } deriving stock (Show, Eq)
+
+instance HasCodec EditFileResult where
+  codec = Autodocodec.object "EditFileResult" $
+    EditFileResult
+      <$> Autodocodec.requiredField "success" "whether the edit succeeded" Autodocodec..= editSuccess
+      <*> Autodocodec.requiredField "message" "description of what happened" Autodocodec..= editMessage
 
 newtype GlobResult = GlobResult [Text]
   deriving stock (Show, Eq)
@@ -212,7 +219,7 @@ instance ToolParameter WriteFileResult where
 
 instance ToolParameter EditFileResult where
   paramName _ _ = "edit_file_result"
-  paramDescription _ = "edit success status"
+  paramDescription _ = "edit result with success status and message"
 
 instance ToolParameter GlobResult where
   paramName _ _ = "glob_result"
@@ -307,6 +314,7 @@ writeFile (FilePath path) (FileContent content) = do
   return $ WriteFileResult True
 
 -- | Edit existing file via string replacement
+-- Returns error if old_string matches 0 or >1 times (must match exactly once)
 editFile
   :: Member FileSystem r
   => FilePath
@@ -316,10 +324,32 @@ editFile
 editFile (FilePath path) (OldString old) (NewString new) = do
   contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
   let contentText = T.decodeUtf8 $ BL.toStrict contents
-      replaced = T.replace old new contentText
-      newBytes = BL.fromStrict $ T.encodeUtf8 replaced
-  Runix.FileSystem.Effects.writeFile (T.unpack path) newBytes
-  return $ EditFileResult True
+      (replaced, occurrences) = replaceAndCount old new contentText
+  case occurrences of
+    0 -> return $ EditFileResult False $
+           "Error: old_string not found in file. No changes made."
+    1 -> do
+      let newBytes = BL.fromStrict $ T.encodeUtf8 replaced
+      Runix.FileSystem.Effects.writeFile (T.unpack path) newBytes
+      return $ EditFileResult True $
+        "Successfully replaced 1 occurrence in " <> path
+    n -> return $ EditFileResult False $
+           "Error: old_string appears " <> T.pack (show n) <> " times in file. " <>
+           "To avoid unintended changes, old_string must match exactly once. " <>
+           "Please make old_string more specific."
+
+-- | Replace all occurrences and count how many replacements were made
+replaceAndCount :: Text -> Text -> Text -> (Text, Int)
+replaceAndCount old new haystack
+  | T.null old = (haystack, 0)
+  | otherwise = go [] 0 haystack
+  where
+    go acc count text =
+      case T.breakOn old text of
+        (_, rest) | T.null rest -> (T.concat (reverse (text : acc)), count)
+        (before, rest) ->
+          let after = T.drop (T.length old) rest
+          in go (new : before : acc) (count + 1) after
 
 -- | Find files matching a pattern
 glob
