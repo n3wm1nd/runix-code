@@ -34,8 +34,10 @@ import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
+import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
 import Runix.FileSystem.Effects (FileSystem)
+import Runix.Logging.Effects (Logging)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 
@@ -100,6 +102,7 @@ runixCode
   :: forall provider model r.
      ( Member (LLM provider model) r
      , Member FileSystem r
+     , Member Logging r
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
      , HasTools model provider
@@ -132,6 +135,7 @@ runRunixCode
   :: forall provider model r.
      ( Member (LLM provider model) r
      , Member FileSystem r
+     , Member Logging r
      , HasTools model provider
      , SupportsSystemPrompt provider
      )
@@ -160,6 +164,7 @@ runixCodeAgentLoop
   :: forall provider model r.
      ( Member (LLM provider model) r
      , Member FileSystem r
+     , Member Logging r
      , Member (Reader [ULL.ModelConfig provider model]) r
      , Member (Reader SystemPrompt) r
      , Member (State [Message model provider]) r
@@ -205,8 +210,8 @@ runixCodeAgentLoop = do
       return $ RunixCodeResult historyWithResponse assistantResponse
 
     calls -> do
-      -- Execute all tool calls - tools mutate State [Todo] directly
-      results <- mapM (executeToolCallFromList tools) calls
+      -- Execute all tool calls with logging - tools mutate State [Todo] directly
+      results <- mapM (executeTool tools) calls
       let historyWithResults = historyWithResponse ++ map ToolResultMsg results
 
       -- Update history again with tool results
