@@ -188,11 +188,25 @@ runAgentWithHistory :: Members '[FileSystem, Grep, Bash, HTTP, Logging, LLM Anth
                     -> Text
                     -> Sem r (Text, [Message ClaudeSonnet45 Anthropic])
 runAgentWithHistory initialHistory userInput = do
-  -- Use a simple system prompt for now
-  let sysPrompt = SystemPrompt "You are a helpful AI coding assistant."
+  -- Load system prompt from file or use default
+  sysPromptText <- embed loadSystemPrompt
+  let sysPrompt = SystemPrompt sysPromptText
       userPrompt = UserPrompt userInput
 
   -- Run the agent
   (result, finalHistory) <- runRunixCode @Anthropic @ClaudeSonnet45 sysPrompt initialHistory userPrompt
 
   return (responseText result, finalHistory)
+
+-- | Load system prompt from prompt/runix-code.md or use default
+loadSystemPrompt :: IO Text
+loadSystemPrompt = do
+  let promptFile = "prompt/runix-code.md"
+  exists <- doesFileExist promptFile
+  if exists
+    then do
+      hPutStr IO.stderr "info: Using system prompt from prompt/runix-code.md\n"
+      TIO.readFile promptFile
+    else do
+      hPutStr IO.stderr "warn: prompt/runix-code.md not found, using default system prompt\n"
+      return "You are a helpful AI coding assistant. You can answer the users's queries, or use tools."
