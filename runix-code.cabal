@@ -38,6 +38,9 @@ executable runix-code
     main-is:          Main.hs
     other-modules:    Agent
                     , Tools
+                    , Models
+                    , Config
+                    , Runner
 
     build-depends:    base >=4.17 && <5
                     , runix
