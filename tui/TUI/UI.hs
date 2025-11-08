@@ -101,9 +101,16 @@ renderDisplayText = lines . Text.unpack
 --
 -- The UI reads from UIVars (written to by effect interpreters) and
 -- writes user input to the TMVar when user sends a message.
-runUI :: UIVars  -- ^ STM variables for UI state
+-- Refreshes are triggered by the effect interpreters, not by polling.
+runUI :: (IO () -> IO UIVars)  -- ^ Function to create UIVars with refresh callback
       -> IO ()
-runUI uiVars = do
+runUI mkUIVars = do
+  -- Create event channel for UI refreshes
+  eventChan <- newBChan 10
+
+  -- Create UI vars with refresh callback
+  uiVars <- mkUIVars $ writeBChan eventChan RefreshUI
+
   -- Read initial UI state
   initialUIState <- atomically $ readUIState (uiStateVar uiVars)
 
@@ -113,14 +120,6 @@ runUI uiVars = do
         , _inputMode = EnterSends
         , _cachedUIState = initialUIState
         }
-
-  -- Create event channel for periodic refreshes
-  eventChan <- newBChan 10
-
-  -- Fork a thread that sends periodic refresh events
-  _ <- forkIO $ forever $ do
-    threadDelay 100000  -- 100ms = 10 FPS
-    writeBChan eventChan RefreshUI
 
   -- Create vty with bracketed paste enabled
   let buildVty = do

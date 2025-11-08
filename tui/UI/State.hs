@@ -30,29 +30,37 @@ emptyUIState = UIState
 data UIVars = UIVars
   { uiStateVar :: TVar UIState      -- ^ Main UI state (agent writes, UI reads)
   , userInputVar :: TMVar Text      -- ^ User input channel (UI writes, agent reads)
+  , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh
   }
 
 -- | Create fresh UI state variables
-newUIVars :: IO UIVars
-newUIVars = do
+-- The refresh callback will be set later by the UI
+newUIVars :: IO () -> IO UIVars
+newUIVars refreshCallback = do
   stateVar <- newTVarIO emptyUIState
   inputVar <- newEmptyTMVarIO
-  return $ UIVars stateVar inputVar
+  return $ UIVars stateVar inputVar refreshCallback
 
--- | Append a log message to the UI state
-appendLog :: TVar UIState -> Text -> STM ()
-appendLog stateVar msg = modifyTVar' stateVar $ \st ->
-  st { uiLogs = uiLogs st ++ [msg] }
+-- | Append a log message to the UI state and trigger refresh
+appendLog :: UIVars -> Text -> IO ()
+appendLog vars msg = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiLogs = uiLogs st ++ [msg] }
+  refreshSignal vars
 
--- | Update the status line
-setStatus :: TVar UIState -> Text -> STM ()
-setStatus stateVar status = modifyTVar' stateVar $ \st ->
-  st { uiStatus = status }
+-- | Update the status line and trigger refresh
+setStatus :: UIVars -> Text -> IO ()
+setStatus vars status = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiStatus = status }
+  refreshSignal vars
 
--- | Add a display message to the chat history
-appendDisplayMessage :: TVar UIState -> Text -> STM ()
-appendDisplayMessage stateVar msg = modifyTVar' stateVar $ \st ->
-  st { uiDisplayMessages = uiDisplayMessages st ++ [msg] }
+-- | Add a display message to the chat history and trigger refresh
+appendDisplayMessage :: UIVars -> Text -> IO ()
+appendDisplayMessage vars msg = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiDisplayMessages = uiDisplayMessages st ++ [msg] }
+  refreshSignal vars
 
 -- | Read the current UI state (for UI rendering)
 readUIState :: TVar UIState -> STM UIState

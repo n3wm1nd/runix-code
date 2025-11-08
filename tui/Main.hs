@@ -80,20 +80,20 @@ main = do
   -- Load configuration
   cfg <- loadConfig
 
-  -- Create UI state variables
-  uiVars <- newUIVars
+  -- Run UI with a function that creates UIVars after getting the refresh callback
+  runUI $ \refreshCallback -> do
+    -- Create UI state variables with the refresh callback
+    uiVars <- newUIVars refreshCallback
 
-  -- Create the appropriate runner
-  agentRunner <- createRunner (cfgModelSelection cfg) cfg uiVars
+    -- Create the appropriate runner
+    agentRunner <- createRunner (cfgModelSelection cfg) cfg uiVars
 
-  -- Start agent thread that processes user input
-  case agentRunner of
-    AgentRunner (historyRef :: IORef [Message model provider]) (Runner runner) -> do
-      -- Fork agent thread
-      _ <- forkIO $ agentLoop uiVars historyRef runner
-
-      -- Run UI in main thread
-      runUI uiVars
+    -- Start agent thread that processes user input
+    case agentRunner of
+      AgentRunner (historyRef :: IORef [Message model provider]) (Runner runner) -> do
+        -- Fork agent thread
+        _ <- forkIO $ agentLoop uiVars historyRef runner
+        return uiVars
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -117,7 +117,7 @@ agentLoop uiVars historyRef runner = forever $ do
   currentHistory <- readIORef historyRef
 
   -- Add user message to display
-  atomically $ appendDisplayMessage (uiStateVar uiVars) (messageToDisplay @model @provider (UserText userInput))
+  appendDisplayMessage uiVars (messageToDisplay @model @provider (UserText userInput))
 
   -- Run the agent
   result <- runner $ runRunixCode @provider @model
@@ -128,18 +128,16 @@ agentLoop uiVars historyRef runner = forever $ do
   case result of
     Left err -> do
       -- Show error in UI
-      atomically $ do
-        appendLog (uiStateVar uiVars) (T.pack $ "Agent error: " ++ err)
-        setStatus (uiStateVar uiVars) (T.pack "Error occurred")
+      appendLog uiVars (T.pack $ "Agent error: " ++ err)
+      setStatus uiVars (T.pack "Error occurred")
     Right (_result, newHistory) -> do
       -- Update history
       writeIORef historyRef newHistory
 
       -- Add new messages to display (only the ones that weren't there before)
       let newMessages = drop (length currentHistory) newHistory
-      atomically $ do
-        mapM_ (\msg -> appendDisplayMessage (uiStateVar uiVars) (messageToDisplay @model @provider msg)) newMessages
-        setStatus (uiStateVar uiVars) (T.pack "Ready")
+      mapM_ (\msg -> appendDisplayMessage uiVars (messageToDisplay @model @provider msg)) newMessages
+      setStatus uiVars (T.pack "Ready")
 
 --------------------------------------------------------------------------------
 -- Runner Creation
