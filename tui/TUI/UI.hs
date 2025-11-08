@@ -34,16 +34,16 @@ import Data.Text.Zipper (cursorPosition, breakLine, deletePrevChar)
 import Lens.Micro
 import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
+import Control.Monad (when)
 import Control.Concurrent.STM
-import Control.Concurrent (forkIO, threadDelay)
-import Control.Monad (forever)
+import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState, uiStateVar)
 import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage)
 
 -- | Custom events for the TUI
-data CustomEvent = RefreshUI
+data CustomEvent = RefreshUI | UpdateViewport
   deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -66,6 +66,8 @@ data AppState = AppState
   , _inputEditor :: Editor String Name     -- Input field
   , _inputMode :: InputMode                -- Current input mode
   , _cachedUIState :: UIState              -- Cached copy updated on each refresh event
+  , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
+  , _eventChan :: Brick.BChan.BChan CustomEvent  -- Event channel for sending custom events
   }
 
 --------------------------------------------------------------------------------
@@ -83,6 +85,12 @@ inputModeL = lens _inputMode (\st m -> st { _inputMode = m })
 
 cachedUIStateL :: Lens' AppState UIState
 cachedUIStateL = lens _cachedUIState (\st s -> st { _cachedUIState = s })
+
+lastViewportL :: Lens' AppState (Maybe T.Viewport)
+lastViewportL = lens _lastViewport (\st v -> st { _lastViewport = v })
+
+eventChanL :: Lens' AppState (Brick.BChan.BChan CustomEvent)
+eventChanL = lens _eventChan (\st c -> st { _eventChan = c })
 
 --------------------------------------------------------------------------------
 -- Display Rendering
@@ -120,6 +128,8 @@ runUI mkUIVars = do
         , _inputEditor = editor InputEditor Nothing ""
         , _inputMode = EnterSends
         , _cachedUIState = initialUIState
+        , _lastViewport = Nothing
+        , _eventChan = eventChan
         }
 
   -- Create vty with bracketed paste enabled
@@ -149,31 +159,35 @@ app = M.App
 --------------------------------------------------------------------------------
 
 drawUI :: AppState -> [T.Widget Name]
-drawUI st = [ui]
+drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
   where
     cached = _cachedUIState st
-    ui = T.Widget T.Greedy T.Greedy $ do
+
+    -- Calculate dimensions
+    availHeight = 100  -- This will be determined by context, placeholder for now
+    maxInputHeight = max 1 (availHeight `div` 2)
+    editorLines = getEditContents (_inputEditor st)
+    contentHeight = max 1 (length editorLines)
+    inputHeight = min contentHeight maxInputHeight
+
+    modeStr = case _inputMode st of
+              EnterSends -> "Enter: send"
+              EnterNewline -> "Enter: newline (Ctrl-D: send)"
+
+    -- Filter and render output history
+    filteredOutput = filter (shouldDisplay (uiDisplayFilter cached)) (uiOutputHistory cached)
+    historyLines = concatMap (map Text.unpack . renderOutputMessage) filteredOutput
+
+    statusText = Text.unpack (uiStatus cached)
+
+    -- Base layer: main UI without indicators
+    baseLayer = T.Widget T.Greedy T.Greedy $ do
       ctx <- T.getContext
-      let availHeight = ctx ^. T.availHeightL
-          maxInputHeight = max 1 (availHeight `div` 2)  -- Max 50% of screen
-          editorLines = getEditContents (_inputEditor st)
-          contentHeight = max 1 (length editorLines)
-          inputHeight = min contentHeight maxInputHeight
-
-          historyHeight = availHeight - inputHeight - 3  -- -3 for border, status, logs
-
-          modeStr = case _inputMode st of
-                      EnterSends -> "Enter: send"
-                      EnterNewline -> "Enter: newline (Ctrl-D: send)"
-
-          -- Filter and render output history
-          filteredOutput = filter (shouldDisplay (uiDisplayFilter cached)) (uiOutputHistory cached)
-          historyLines = concatMap (map Text.unpack . renderOutputMessage) filteredOutput
-
-          statusText = Text.unpack (uiStatus cached)
+      let availH = ctx ^. T.availHeightL
+          historyH = availH - inputHeight - 3  -- -3 for border, status
 
           mainUI = vBox
-            [ vLimit historyHeight $ viewport HistoryViewport T.Vertical $
+            [ vLimit historyH $ viewport HistoryViewport T.Vertical $
                 vBox $ map strWrap historyLines
             , hBorder
             , vLimit inputHeight $
@@ -181,6 +195,42 @@ drawUI st = [ui]
             , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | \\<Enter>: newline | Ctrl-T: toggle | Ctrl-C: quit"
             ]
       T.render mainUI
+
+    -- Indicator layer: use translateBy to position indicators without affecting layout
+    indicatorLayer = T.Widget T.Fixed T.Fixed $ do
+      ctx <- T.getContext
+      let screenWidth = ctx ^. T.availWidthL
+
+      case _lastViewport st of
+        Nothing -> return T.emptyResult  -- No indicators if viewport not available
+        Just vp -> do
+          let scrollTop = vp ^. T.vpTop
+              visibleHeight = snd (vp ^. T.vpSize)
+              totalContentHeight = snd (vp ^. T.vpContentSize)
+              scrollBottom = scrollTop + visibleHeight
+
+              rowsAbove = scrollTop
+              rowsBelow = max 0 (totalContentHeight - scrollBottom)
+
+              topText = "↑" ++ show rowsAbove ++ "↑"
+              bottomText = "↓" ++ show rowsBelow ++ "↓"
+
+          -- Create Vty images at absolute positions - these overlay without affecting layout
+          let topImg = if rowsAbove > 0
+                      then V.translateX (screenWidth - length topText) $
+                           V.translateY 0 $
+                           V.string V.defAttr topText
+                      else V.emptyImage
+
+              bottomImg = if rowsBelow > 0
+                         then V.translateX (screenWidth - length bottomText) $
+                              V.translateY (visibleHeight - 1) $
+                              V.string V.defAttr bottomText
+                         else V.emptyImage
+
+              combinedImg = topImg V.<-> bottomImg
+
+          return $ T.emptyResult & T.imageL .~ combinedImg
 
     -- Render a line, showing empty lines as a space to preserve them
     renderLine :: String -> T.Widget Name
@@ -195,13 +245,53 @@ handleEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
 handleEvent (T.VtyEvent (V.EvKey V.KEsc [])) = M.halt
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
--- Periodically refresh UI state from STM
+-- Refresh UI state from STM and scroll to bottom
 handleEvent (T.AppEvent RefreshUI) = do
   vars <- use uiVarsL
   newUIState <- liftIO $ atomically $ readUIState (uiStateVar vars)
   cachedUIStateL .= newUIState
   -- Scroll viewport to bottom to show new content
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
+  -- Send event to update viewport indicators after render
+  chan <- use eventChanL
+  liftIO $ writeBChan chan UpdateViewport
+
+-- Update cached viewport state (called after scrolling/rendering)
+handleEvent (T.AppEvent UpdateViewport) = do
+  mVp <- M.lookupViewport HistoryViewport
+  lastViewportL .= mVp
+
+-- Handle window resize - stick to bottom if we were already there
+handleEvent (T.VtyEvent (V.EvResize _ _)) = do
+  -- Check if we're at the bottom before resize
+  wasAtBottom <- use lastViewportL >>= \case
+    Nothing -> return True  -- Default to bottom if no viewport yet
+    Just vp -> do
+      let scrollTop = vp ^. T.vpTop
+          visibleHeight = snd (vp ^. T.vpSize)
+          totalContentHeight = snd (vp ^. T.vpContentSize)
+          scrollBottom = scrollTop + visibleHeight
+          atBottom = scrollBottom >= totalContentHeight
+      return atBottom
+
+  -- If we were at bottom, scroll to bottom after resize
+  when wasAtBottom $ do
+    M.vScrollToEnd (M.viewportScroll HistoryViewport)
+
+  -- Update viewport state after resize
+  chan <- use eventChanL
+  liftIO $ writeBChan chan UpdateViewport
+
+-- Page Up/Down for scrolling history
+handleEvent (T.VtyEvent (V.EvKey V.KPageUp [])) = do
+  M.vScrollPage (M.viewportScroll HistoryViewport) T.Up
+  chan <- use eventChanL
+  liftIO $ writeBChan chan UpdateViewport
+
+handleEvent (T.VtyEvent (V.EvKey V.KPageDown [])) = do
+  M.vScrollPage (M.viewportScroll HistoryViewport) T.Down
+  chan <- use eventChanL
+  liftIO $ writeBChan chan UpdateViewport
 
 -- Ctrl-T toggles input mode
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
@@ -280,3 +370,7 @@ sendMessage = do
 
       -- Scroll viewport to bottom
       M.vScrollToEnd (M.viewportScroll HistoryViewport)
+
+      -- Send event to update viewport indicators after render
+      chan <- use eventChanL
+      liftIO $ writeBChan chan UpdateViewport
