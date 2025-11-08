@@ -89,6 +89,7 @@ executable runix-code
 executable runix-code-tui
     import:           warnings, extensions
     main-is:          Main.hs
+    other-modules:    TUI.UI
     ghc-options:      -threaded
 
     build-depends:    base >=4.17 && <5
