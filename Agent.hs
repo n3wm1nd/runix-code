@@ -29,16 +29,14 @@ import Polysemy (Member, Sem)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, runReader, ask)
 import UniversalLLM.Core.Types (Message(..))
-import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList, ToolFunction(..), ToolParameter(..))
+import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
 import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
-import Runix.FileSystem.Effects (FileSystem)
 import Runix.Grep.Effects (Grep)
-import Runix.Bash.Effects (Bash)
 import Runix.Logging.Effects (Logging)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
@@ -103,9 +101,7 @@ instance ToolFunction (RunixCodeResult provider model) where
 runixCode
   :: forall provider model r.
      ( Member (LLM provider model) r
-     , Member FileSystem r
      , Member Grep r
-     , Member Bash r
      , Member Logging r
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
@@ -138,9 +134,7 @@ runixCode (UserPrompt userPrompt) = do
 runRunixCode
   :: forall provider model r.
      ( Member (LLM provider model) r
-     , Member FileSystem r
      , Member Grep r
-     , Member Bash r
      , Member Logging r
      , HasTools model provider
      , SupportsSystemPrompt provider
@@ -169,9 +163,7 @@ setTools tools configs =
 runixCodeAgentLoop
   :: forall provider model r.
      ( Member (LLM provider model) r
-     , Member FileSystem r
      , Member Grep r
-     , Member Bash r
      , Member Logging r
      , Member (Reader [ULL.ModelConfig provider model]) r
      , Member (Reader SystemPrompt) r
@@ -186,12 +178,7 @@ runixCodeAgentLoop = do
 
   let tools :: [LLMTool (Sem r)]
       tools =
-        [ LLMTool Tools.readFile
-        , LLMTool Tools.writeFile
-        , LLMTool Tools.editFile
-        , LLMTool Tools.glob
-        , LLMTool Tools.grep
-        , LLMTool Tools.bash
+        [ LLMTool Tools.grep
         , LLMTool Tools.todoWrite
         , LLMTool Tools.todoRead
         , LLMTool Tools.todoCheck
