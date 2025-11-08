@@ -40,7 +40,7 @@ import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects (HTTP)
 import Runix.Logging.Effects (Logging(..))
 import UI.Effects (UI, messageToDisplay)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputVar, uiStateVar, appendDisplayMessage, appendLog, setStatus)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, setDisplayMessages, appendLog, setStatus)
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import Control.Monad (forever)
@@ -111,13 +111,10 @@ agentLoop :: forall model provider.
           -> IO ()
 agentLoop uiVars historyRef runner = forever $ do
   -- Wait for user input
-  userInput <- atomically $ waitForUserInput (userInputVar uiVars)
+  userInput <- atomically $ waitForUserInput (userInputQueue uiVars)
 
   -- Get current history
   currentHistory <- readIORef historyRef
-
-  -- Add user message to display
-  appendDisplayMessage uiVars (messageToDisplay @model @provider (UserText userInput))
 
   -- Run the agent
   result <- runner $ runRunixCode @provider @model
@@ -130,13 +127,15 @@ agentLoop uiVars historyRef runner = forever $ do
       -- Show error in UI
       appendLog uiVars (T.pack $ "Agent error: " ++ err)
       setStatus uiVars (T.pack "Error occurred")
+      -- Still show the user's message even on error
+      let historyWithUser = currentHistory ++ [UserText userInput]
+      setDisplayMessages uiVars (map (messageToDisplay @model @provider) historyWithUser)
     Right (_result, newHistory) -> do
       -- Update history
       writeIORef historyRef newHistory
 
-      -- Add new messages to display (only the ones that weren't there before)
-      let newMessages = drop (length currentHistory) newHistory
-      mapM_ (\msg -> appendDisplayMessage uiVars (messageToDisplay @model @provider msg)) newMessages
+      -- Set complete message history to display
+      setDisplayMessages uiVars (map (messageToDisplay @model @provider) newHistory)
       setStatus uiVars (T.pack "Ready")
 
 --------------------------------------------------------------------------------

@@ -271,7 +271,7 @@ sendMessage = do
       vars <- use uiVarsL
 
       -- Send user input to the agent via TMVar
-      liftIO $ atomically $ provideUserInput (userInputVar vars) (Text.pack content)
+      liftIO $ atomically $ provideUserInput (userInputQueue vars) (Text.pack content)
 
       -- Clear input
       inputEditorL .= editor InputEditor Nothing ""

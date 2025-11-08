@@ -12,7 +12,8 @@ import Polysemy.Embed (embed)
 import Control.Concurrent.STM
 
 import UI.Effects
-import UI.State
+import qualified UI.State as State
+import UI.State (UIVars, userInputQueue, waitForUserInput)
 
 -- | Interpret UI effect using STM-based state
 --
@@ -25,14 +26,14 @@ interpretUI :: Member (Embed IO) r
             -> Sem (UI ': r) a
             -> Sem r a
 interpretUI uiVars = interpret $ \case
-  LogMessage msg -> embed $ appendLog uiVars msg
+  LogMessage msg -> embed $ State.appendLog uiVars msg
 
-  UpdateStatus status -> embed $ setStatus uiVars status
+  UpdateStatus status -> embed $ State.setStatus uiVars status
 
-  AddMessageDisplay msg -> embed $ appendDisplayMessage uiVars msg
+  SetDisplayMessages msgs -> embed $ State.setDisplayMessages uiVars msgs
 
   PromptUser prompt -> do
     -- First, update status to show we're waiting for input
-    embed $ setStatus uiVars prompt
+    embed $ State.setStatus uiVars prompt
     -- Then block until user provides input
-    embed $ atomically $ waitForUserInput (userInputVar uiVars)
+    embed $ atomically $ waitForUserInput (userInputQueue uiVars)

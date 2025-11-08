@@ -13,9 +13,9 @@ import qualified Data.Text as T
 
 -- | UI state shared between agent thread and UI thread
 data UIState = UIState
-  { uiLogs :: [Text]          -- ^ Log messages (most recent last)
-  , uiStatus :: Text           -- ^ Current status message
-  , uiDisplayMessages :: [Text] -- ^ Chat history as display text (most recent last)
+  { uiLogs :: [Text]            -- ^ Log messages (most recent last)
+  , uiStatus :: Text            -- ^ Current status message
+  , uiDisplayMessages :: [Text] -- ^ Complete chat history as display text (most recent last)
   }
 
 -- | Initial empty UI state
@@ -29,7 +29,7 @@ emptyUIState = UIState
 -- | Shared state variables for UI communication
 data UIVars = UIVars
   { uiStateVar :: TVar UIState      -- ^ Main UI state (agent writes, UI reads)
-  , userInputVar :: TMVar Text      -- ^ User input channel (UI writes, agent reads)
+  , userInputQueue :: TQueue Text   -- ^ User input queue (UI writes, agent reads)
   , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh
   }
 
@@ -38,8 +38,8 @@ data UIVars = UIVars
 newUIVars :: IO () -> IO UIVars
 newUIVars refreshCallback = do
   stateVar <- newTVarIO emptyUIState
-  inputVar <- newEmptyTMVarIO
-  return $ UIVars stateVar inputVar refreshCallback
+  inputQueue <- newTQueueIO
+  return $ UIVars stateVar inputQueue refreshCallback
 
 -- | Append a log message to the UI state and trigger refresh
 appendLog :: UIVars -> Text -> IO ()
@@ -55,11 +55,11 @@ setStatus vars status = do
     st { uiStatus = status }
   refreshSignal vars
 
--- | Add a display message to the chat history and trigger refresh
-appendDisplayMessage :: UIVars -> Text -> IO ()
-appendDisplayMessage vars msg = do
+-- | Set the complete display message history and trigger refresh
+setDisplayMessages :: UIVars -> [Text] -> IO ()
+setDisplayMessages vars messages = do
   atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiDisplayMessages = uiDisplayMessages st ++ [msg] }
+    st { uiDisplayMessages = messages }
   refreshSignal vars
 
 -- | Read the current UI state (for UI rendering)
@@ -67,9 +67,9 @@ readUIState :: TVar UIState -> STM UIState
 readUIState = readTVar
 
 -- | Block until user provides input
-waitForUserInput :: TMVar Text -> STM Text
-waitForUserInput = takeTMVar
+waitForUserInput :: TQueue Text -> STM Text
+waitForUserInput = readTQueue
 
 -- | Provide user input (from UI thread)
-provideUserInput :: TMVar Text -> Text -> STM ()
-provideUserInput = putTMVar
+provideUserInput :: TQueue Text -> Text -> STM ()
+provideUserInput = writeTQueue
