@@ -90,6 +90,10 @@ executable runix-code-tui
     import:           warnings, extensions
     main-is:          Main.hs
     other-modules:    TUI.UI
+                    , UI.Effects
+                    , UI.State
+                    , UI.Interpreter
+                    , UI.LoggingInterpreter
     ghc-options:      -threaded
 
     build-depends:    base >=4.17 && <5
@@ -104,6 +108,7 @@ executable runix-code-tui
                     , microlens
                     , microlens-mtl
                     , text-zipper
+                    , stm
 
     hs-source-dirs:   tui
     default-language: Haskell2010

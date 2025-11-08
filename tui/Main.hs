@@ -15,6 +15,8 @@ import Data.IORef
 import System.Environment (lookupEnv)
 import System.IO (hPutStr)
 import qualified System.IO as IO
+import Control.Concurrent (forkIO)
+import Control.Concurrent.STM
 
 import Polysemy
 import Polysemy.Error (runError, Error)
@@ -37,6 +39,11 @@ import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects (HTTP)
 import Runix.Logging.Effects (Logging(..))
+import UI.Effects (UI, messageToDisplay)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputVar, uiStateVar, appendDisplayMessage, appendLog, setStatus)
+import UI.Interpreter (interpretUI)
+import UI.LoggingInterpreter (interpretLoggingToUI)
+import Control.Monad (forever)
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderImplementation)
 
@@ -58,6 +65,7 @@ data AgentRunner where
 
 -- | Type alias for a runner that can execute computations and return IO results
 -- This is intentionally monomorphic - each runner works with its specific effect stack
+-- Logging effect is reinterpreted as UI effect in the TUI
 newtype Runner model provider = Runner
   { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystem, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a)
   }
@@ -72,60 +80,87 @@ main = do
   -- Load configuration
   cfg <- loadConfig
 
-  -- Create the appropriate runner based on config, and start UI in the same scope
-  -- where the concrete types are known
-  agentRunner <- createRunner (cfgModelSelection cfg) cfg
+  -- Create UI state variables
+  uiVars <- newUIVars
+
+  -- Create the appropriate runner
+  agentRunner <- createRunner (cfgModelSelection cfg) cfg uiVars
+
+  -- Start agent thread that processes user input
   case agentRunner of
     AgentRunner (historyRef :: IORef [Message model provider]) (Runner runner) -> do
-      -- Now we're in a scope where model and provider are concrete and in scope
-      -- (via ScopedTypeVariables from the pattern match)
+      -- Fork agent thread
+      _ <- forkIO $ agentLoop uiVars historyRef runner
 
-      let handleInput userInput = do
-            currentHistory <- readIORef historyRef
-            -- Pass a polymorphic computation to the runner
-            -- The runner will apply it to its specific effect stack
-            result <- runner $ runRunixCode @provider @model
-                                 (SystemPrompt "you are a helpful agent")
-                                 currentHistory
-                                 (UserPrompt (T.pack userInput))
-            case result of
-              Left err -> do
-                hPutStr IO.stderr $ "Agent error: " ++ err ++ "\n"
-                return currentHistory  -- Return current history on error
-              Right (_result, newHistory) -> do
-                writeIORef historyRef newHistory
-                return newHistory
+      -- Run UI in main thread
+      runUI uiVars
 
-      initialHistory <- readIORef historyRef
-      runUI initialHistory handleInput
+--------------------------------------------------------------------------------
+-- Agent Loop
+--------------------------------------------------------------------------------
+
+-- | Agent loop that processes user input from the UI
+agentLoop :: forall model provider.
+             ( HasTools model provider
+             , SupportsSystemPrompt provider
+             , ProviderImplementation provider model
+             )
+          => UIVars
+          -> IORef [Message model provider]
+          -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystem, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a))
+          -> IO ()
+agentLoop uiVars historyRef runner = forever $ do
+  -- Wait for user input
+  userInput <- atomically $ waitForUserInput (userInputVar uiVars)
+
+  -- Get current history
+  currentHistory <- readIORef historyRef
+
+  -- Add user message to display
+  atomically $ appendDisplayMessage (uiStateVar uiVars) (messageToDisplay @model @provider (UserText userInput))
+
+  -- Run the agent
+  result <- runner $ runRunixCode @provider @model
+                       (SystemPrompt "you are a helpful agent")
+                       currentHistory
+                       (UserPrompt userInput)
+
+  case result of
+    Left err -> do
+      -- Show error in UI
+      atomically $ do
+        appendLog (uiStateVar uiVars) (T.pack $ "Agent error: " ++ err)
+        setStatus (uiStateVar uiVars) (T.pack "Error occurred")
+    Right (_result, newHistory) -> do
+      -- Update history
+      writeIORef historyRef newHistory
+
+      -- Add new messages to display (only the ones that weren't there before)
+      let newMessages = drop (length currentHistory) newHistory
+      atomically $ do
+        mapM_ (\msg -> appendDisplayMessage (uiStateVar uiVars) (messageToDisplay @model @provider msg)) newMessages
+        setStatus (uiStateVar uiVars) (T.pack "Ready")
 
 --------------------------------------------------------------------------------
 -- Runner Creation
 --------------------------------------------------------------------------------
 
--- | Common effect interpretation stack
--- Takes a Sem computation with the base effects and runs it to IO
-runBaseEffects =
+-- | Effect interpretation stack for TUI
+-- Logging effect is reinterpreted as UI effect for display
+runBaseEffects uiVars =
   runM
     . runError
-    . interpretLoggingCustom
+    . interpretUI uiVars
+    . interpretLoggingToUI
     . failLog
     . httpIO (withRequestTimeout 300)
     . bashIO
     . filesystemIO
     . grepIO
 
--- | Custom logging interpreter that discards logs
--- TODO: Collect logs to pass to brick UI
-interpretLoggingCustom :: Sem (Logging : r) a -> Sem r a
-interpretLoggingCustom = interpret $ \case
-  Info _callStack _msg   -> pure ()
-  Warning _callStack _msg -> pure ()
-  Error _callStack _msg  -> pure ()
-
 -- | Create an AgentRunner based on the selected model
-createRunner :: ModelSelection -> Config -> IO AgentRunner
-createRunner UseClaudeSonnet45 _cfg = do
+createRunner :: ModelSelection -> Config -> UIVars -> IO AgentRunner
+createRunner UseClaudeSonnet45 _cfg uiVars = do
   historyRef <- newIORef ([] :: [Message ClaudeSonnet45 Anthropic])
   maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
   case maybeToken of
@@ -134,24 +169,24 @@ createRunner UseClaudeSonnet45 _cfg = do
       error "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr -> do
       let runner = Runner $ \agent ->
-            runBaseEffects
+            runBaseEffects uiVars
               . runSecret (pure tokenStr)
               . interpretAnthropicOAuth Anthropic ClaudeSonnet45
               $ agent
       return $ AgentRunner historyRef runner
 
-createRunner UseGLM45Air cfg = do
+createRunner UseGLM45Air cfg uiVars = do
   historyRef <- newIORef ([] :: [Message GLM45Air LlamaCpp])
   let runner = Runner $ \agent ->
-        runBaseEffects
+        runBaseEffects uiVars
           . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
           $ agent
   return $ AgentRunner historyRef runner
 
-createRunner UseQwen3Coder cfg = do
+createRunner UseQwen3Coder cfg uiVars = do
   historyRef <- newIORef ([] :: [Message Qwen3Coder LlamaCpp])
   let runner = Runner $ \agent ->
-        runBaseEffects
+        runBaseEffects uiVars
           . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
           $ agent
   return $ AgentRunner historyRef runner

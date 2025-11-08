@@ -9,6 +9,7 @@
 -- - Bracketed paste support
 -- - Scrollable history
 -- - Dynamic input sizing
+-- - STM-based state for concurrent updates from effect interpreters
 module TUI.UI
   ( -- * UI Entry Point
     runUI
@@ -27,12 +28,22 @@ import qualified Brick.AttrMap as A
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
 import qualified Data.Text as Text
+import Data.Text (Text)
 import qualified Data.Text.Encoding as Text
 import Data.Text.Zipper (cursorPosition, breakLine, deletePrevChar)
 import Lens.Micro
 import Lens.Micro.Mtl
-import UniversalLLM.Core.Types (Message(..))
 import Control.Monad.IO.Class (liftIO)
+import Control.Concurrent.STM
+import Control.Concurrent (forkIO, threadDelay)
+import Control.Monad (forever)
+import Brick.BChan (newBChan, writeBChan)
+
+import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState)
+
+-- | Custom events for the TUI
+data CustomEvent = RefreshUI
+  deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- Types
@@ -48,81 +59,68 @@ data InputMode = EnterSends | EnterNewline
 
 -- | TUI application state
 --
--- Generic over provider/model so it can work with any LLM backend.
-data AppState model provider = AppState
-  { _messages :: [Message model provider]  -- Message history (most recent last)
+-- Now uses STM-based state for concurrent updates from effect interpreters.
+data AppState = AppState
+  { _uiVars :: UIVars                      -- STM variables for UI state
   , _inputEditor :: Editor String Name     -- Input field
-  , _status :: String                      -- Status message
   , _inputMode :: InputMode                -- Current input mode
-  , _onSend :: String -> IO [Message model provider]  -- Callback when user sends message
+  , _cachedUIState :: UIState              -- Cached copy of UI state for rendering
   }
 
 --------------------------------------------------------------------------------
 -- Lenses
 --------------------------------------------------------------------------------
 
-inputEditorL :: Lens' (AppState model provider) (Editor String Name)
+uiVarsL :: Lens' AppState UIVars
+uiVarsL = lens _uiVars (\st v -> st { _uiVars = v })
+
+inputEditorL :: Lens' AppState (Editor String Name)
 inputEditorL = lens _inputEditor (\st e -> st { _inputEditor = e })
 
-messagesL :: Lens' (AppState model provider) [Message model provider]
-messagesL = lens _messages (\st m -> st { _messages = m })
-
-statusL :: Lens' (AppState model provider) String
-statusL = lens _status (\st s -> st { _status = s })
-
-inputModeL :: Lens' (AppState model provider) InputMode
+inputModeL :: Lens' AppState InputMode
 inputModeL = lens _inputMode (\st m -> st { _inputMode = m })
 
-onSendL :: Lens' (AppState model provider) (String -> IO [Message model provider])
-onSendL = lens _onSend (\st f -> st { _onSend = f })
+cachedUIStateL :: Lens' AppState UIState
+cachedUIStateL = lens _cachedUIState (\st s -> st { _cachedUIState = s })
 
 --------------------------------------------------------------------------------
--- Message Rendering
+-- Display Rendering
 --------------------------------------------------------------------------------
 
--- | Render a message to display string
+-- | Render display text to lines
 --
--- For now, simple text extraction. Can be enhanced later with
--- syntax highlighting, formatting, etc.
-renderMessage :: Message model provider -> [String]
-renderMessage (UserText t) =
-  ["You:"] ++ map ("  " ++) (lines (Text.unpack t))
-renderMessage (AssistantText t) =
-  ["Agent:"] ++ map ("  " ++) (lines (Text.unpack t))
-renderMessage (AssistantTool tc) =
-  ["Agent (tool call):"] ++ ["  " ++ show tc]
-renderMessage (ToolResultMsg tr) =
-  ["Tool result:"] ++ ["  " ++ show tr]
-renderMessage (UserImage _desc _img) =
-  ["[User sent image]"]
-renderMessage (UserRequestJSON query j) =
-  ["[User sent JSON]:"] ++ ["  Query: " ++ Text.unpack query] ++ ["  " ++ show j]
-renderMessage (AssistantReasoning r) =
-  ["[Agent reasoning]:"] ++ map ("  " ++) (lines (Text.unpack r))
-renderMessage (AssistantJSON j) =
-  ["[Agent sent JSON]:"] ++ ["  " ++ show j]
-renderMessage (SystemText t) =
-  ["[System]:"] ++ map ("  " ++) (lines (Text.unpack t))
+-- Display messages come pre-formatted from the effect interpreters.
+renderDisplayText :: Text -> [String]
+renderDisplayText = lines . Text.unpack
 
 --------------------------------------------------------------------------------
 -- UI Entry Point
 --------------------------------------------------------------------------------
 
--- | Run the TUI with initial messages and an agent callback
+-- | Run the TUI with STM-based state
 --
--- The agent callback takes user input and returns updated message history.
--- This keeps the UI generic - it doesn't know about LLM details.
-runUI :: [Message model provider]  -- ^ Initial message history
-      -> (String -> IO [Message model provider])  -- ^ Agent callback
+-- The UI reads from UIVars (written to by effect interpreters) and
+-- writes user input to the TMVar when user sends a message.
+runUI :: UIVars  -- ^ STM variables for UI state
       -> IO ()
-runUI initialMessages agentCallback = do
+runUI uiVars = do
+  -- Read initial UI state
+  initialUIState <- atomically $ readUIState (uiStateVar uiVars)
+
   let initialState = AppState
-        { _messages = initialMessages
+        { _uiVars = uiVars
         , _inputEditor = editor InputEditor Nothing ""
-        , _status = "Ready"
         , _inputMode = EnterSends
-        , _onSend = agentCallback
+        , _cachedUIState = initialUIState
         }
+
+  -- Create event channel for periodic refreshes
+  eventChan <- newBChan 10
+
+  -- Fork a thread that sends periodic refresh events
+  _ <- forkIO $ forever $ do
+    threadDelay 100000  -- 100ms = 10 FPS
+    writeBChan eventChan RefreshUI
 
   -- Create vty with bracketed paste enabled
   let buildVty = do
@@ -130,14 +128,14 @@ runUI initialMessages agentCallback = do
         V.setMode (V.outputIface v) V.BracketedPaste True
         return v
   initialVty <- buildVty
-  _finalState <- M.customMain initialVty buildVty Nothing app initialState
+  _finalState <- M.customMain initialVty buildVty (Just eventChan) app initialState
   return ()
 
 --------------------------------------------------------------------------------
 -- Brick App Definition
 --------------------------------------------------------------------------------
 
-app :: M.App (AppState model provider) e Name
+app :: M.App AppState CustomEvent Name
 app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
@@ -150,9 +148,10 @@ app = M.App
 -- UI Rendering
 --------------------------------------------------------------------------------
 
-drawUI :: AppState model provider -> [T.Widget Name]
+drawUI :: AppState -> [T.Widget Name]
 drawUI st = [ui]
   where
+    cached = _cachedUIState st
     ui = T.Widget T.Greedy T.Greedy $ do
       ctx <- T.getContext
       let availHeight = ctx ^. T.availHeightL
@@ -161,14 +160,17 @@ drawUI st = [ui]
           contentHeight = max 1 (length editorLines)
           inputHeight = min contentHeight maxInputHeight
 
-          historyHeight = availHeight - inputHeight - 2  -- -2 for border and status
+          historyHeight = availHeight - inputHeight - 3  -- -3 for border, status, logs
 
           modeStr = case _inputMode st of
                       EnterSends -> "Enter: send"
                       EnterNewline -> "Enter: newline (Ctrl-D: send)"
 
-          -- Render all messages
-          historyLines = concatMap renderMessage (_messages st)
+          -- Render all display messages
+          historyLines = concatMap renderDisplayText (uiDisplayMessages cached)
+
+          -- Render log messages (show last 5)
+          logLines = map Text.unpack $ reverse $ take 5 $ reverse $ uiLogs cached
 
           mainUI = vBox
             [ vLimit historyHeight $ viewport HistoryViewport T.Vertical $
@@ -176,7 +178,8 @@ drawUI st = [ui]
             , hBorder
             , vLimit inputHeight $
                 renderEditor (vBox . map renderLine) True (_inputEditor st)
-            , strWrap $ "Status: " ++ _status st ++ " | " ++ modeStr ++ " | \\<Enter>: newline | Ctrl-T: toggle | Ctrl-C: quit"
+            , strWrap $ "Status: " ++ Text.unpack (uiStatus cached) ++ " | " ++ modeStr ++ " | \\<Enter>: newline | Ctrl-T: toggle | Ctrl-C: quit"
+            , if null logLines then str "" else strWrap $ "Logs: " ++ unlines logLines
             ]
       T.render mainUI
 
@@ -189,9 +192,15 @@ drawUI st = [ui]
 -- Event Handling
 --------------------------------------------------------------------------------
 
-handleEvent :: T.BrickEvent Name e -> T.EventM Name (AppState model provider) ()
+handleEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
 handleEvent (T.VtyEvent (V.EvKey V.KEsc [])) = M.halt
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
+
+-- Periodically refresh UI state from STM
+handleEvent (T.AppEvent RefreshUI) = do
+  vars <- use uiVarsL
+  newUIState <- liftIO $ atomically $ readUIState (uiStateVar vars)
+  cachedUIStateL .= newUIState
 
 -- Ctrl-T toggles input mode
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
@@ -200,7 +209,6 @@ handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
         EnterSends -> EnterNewline
         EnterNewline -> EnterSends
   inputModeL .= newMode
-  statusL .= "Mode: " ++ show newMode
 
 -- Ctrl-D sends message (useful in EnterNewline mode)
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
@@ -252,7 +260,7 @@ handleEvent ev = do
 -- Message Sending
 --------------------------------------------------------------------------------
 
-sendMessage :: T.EventM Name (AppState model provider) ()
+sendMessage :: T.EventM Name AppState ()
 sendMessage = do
   ed <- use inputEditorL
   let contentLines = getEditContents ed
@@ -260,18 +268,14 @@ sendMessage = do
   if null (filter (/= ' ') content)
     then return ()  -- Don't send empty messages
     else do
-      -- Get the agent callback
-      agentCallback <- use onSendL
+      -- Get the UI vars
+      vars <- use uiVarsL
 
-      -- Call the agent in IO
-      newMessages <- liftIO $ agentCallback content
+      -- Send user input to the agent via TMVar
+      liftIO $ atomically $ provideUserInput (userInputVar vars) (Text.pack content)
 
-      -- Update history with new messages
-      messagesL .= newMessages
-
-      -- Clear input and update status
+      -- Clear input
       inputEditorL .= editor InputEditor Nothing ""
-      statusL .= "Message sent"
 
       -- Scroll viewport to bottom
       M.vScrollToEnd (M.viewportScroll HistoryViewport)
