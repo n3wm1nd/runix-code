@@ -17,7 +17,8 @@ import System.IO (hPutStr)
 import qualified System.IO as IO
 
 import Polysemy
-import Polysemy.Error (runError)
+import Polysemy.Error (runError, Error)
+import Polysemy (interpret, embed)
 
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
@@ -27,7 +28,7 @@ import Runix.Secret.Effects (runSecret)
 
 import Config
 import Models
-import Runix.Runner (filesystemIO, grepIO, bashIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, httpIO, withRequestTimeout, failLog)
 import TUI.UI (runUI)
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
@@ -35,7 +36,7 @@ import Runix.FileSystem.Effects (FileSystem)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects (HTTP)
-import Runix.Logging.Effects (Logging)
+import Runix.Logging.Effects (Logging(..))
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderImplementation)
 
@@ -102,6 +103,26 @@ main = do
 -- Runner Creation
 --------------------------------------------------------------------------------
 
+-- | Common effect interpretation stack
+-- Takes a Sem computation with the base effects and runs it to IO
+runBaseEffects =
+  runM
+    . runError
+    . interpretLoggingCustom
+    . failLog
+    . httpIO (withRequestTimeout 300)
+    . bashIO
+    . filesystemIO
+    . grepIO
+
+-- | Custom logging interpreter that discards logs
+-- TODO: Collect logs to pass to brick UI
+interpretLoggingCustom :: Sem (Logging : r) a -> Sem r a
+interpretLoggingCustom = interpret $ \case
+  Info _callStack _msg   -> pure ()
+  Warning _callStack _msg -> pure ()
+  Error _callStack _msg  -> pure ()
+
 -- | Create an AgentRunner based on the selected model
 createRunner :: ModelSelection -> Config -> IO AgentRunner
 createRunner UseClaudeSonnet45 _cfg = do
@@ -113,14 +134,7 @@ createRunner UseClaudeSonnet45 _cfg = do
       error "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr -> do
       let runner = Runner $ \agent ->
-            runM
-              . runError
-              . loggingIO
-              . failLog
-              . httpIO (withRequestTimeout 300)
-              . bashIO
-              . filesystemIO
-              . grepIO
+            runBaseEffects
               . runSecret (pure tokenStr)
               . interpretAnthropicOAuth Anthropic ClaudeSonnet45
               $ agent
@@ -129,14 +143,7 @@ createRunner UseClaudeSonnet45 _cfg = do
 createRunner UseGLM45Air cfg = do
   historyRef <- newIORef ([] :: [Message GLM45Air LlamaCpp])
   let runner = Runner $ \agent ->
-        runM
-          . runError
-          . loggingIO
-          . failLog
-          . httpIO (withRequestTimeout 300)
-          . bashIO
-          . filesystemIO
-          . grepIO
+        runBaseEffects
           . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
           $ agent
   return $ AgentRunner historyRef runner
@@ -144,14 +151,7 @@ createRunner UseGLM45Air cfg = do
 createRunner UseQwen3Coder cfg = do
   historyRef <- newIORef ([] :: [Message Qwen3Coder LlamaCpp])
   let runner = Runner $ \agent ->
-        runM
-          . runError
-          . loggingIO
-          . failLog
-          . httpIO (withRequestTimeout 300)
-          . bashIO
-          . filesystemIO
-          . grepIO
+        runBaseEffects
           . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
           $ agent
   return $ AgentRunner historyRef runner
