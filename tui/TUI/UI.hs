@@ -39,7 +39,8 @@ import Control.Concurrent (forkIO, threadDelay)
 import Control.Monad (forever)
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState)
+import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState, uiStateVar)
+import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage)
 
 -- | Custom events for the TUI
 data CustomEvent = RefreshUI
@@ -64,7 +65,7 @@ data AppState = AppState
   { _uiVars :: UIVars                      -- STM variables for UI state
   , _inputEditor :: Editor String Name     -- Input field
   , _inputMode :: InputMode                -- Current input mode
-  , _cachedUIState :: UIState              -- Cached copy of UI state for rendering
+  , _cachedUIState :: UIState              -- Cached copy updated on each refresh event
   }
 
 --------------------------------------------------------------------------------
@@ -100,7 +101,7 @@ renderDisplayText = lines . Text.unpack
 -- | Run the TUI with STM-based state
 --
 -- The UI reads from UIVars (written to by effect interpreters) and
--- writes user input to the TMVar when user sends a message.
+-- writes user input to the TQueue when user sends a message.
 -- Refreshes are triggered by the effect interpreters, not by polling.
 runUI :: (IO () -> IO UIVars)  -- ^ Function to create UIVars with refresh callback
       -> IO ()
@@ -165,11 +166,11 @@ drawUI st = [ui]
                       EnterSends -> "Enter: send"
                       EnterNewline -> "Enter: newline (Ctrl-D: send)"
 
-          -- Render all display messages
-          historyLines = concatMap renderDisplayText (uiDisplayMessages cached)
+          -- Filter and render output history
+          filteredOutput = filter (shouldDisplay (uiDisplayFilter cached)) (uiOutputHistory cached)
+          historyLines = concatMap (map Text.unpack . renderOutputMessage) filteredOutput
 
-          -- Render log messages (show last 5)
-          logLines = map Text.unpack $ reverse $ take 5 $ reverse $ uiLogs cached
+          statusText = Text.unpack (uiStatus cached)
 
           mainUI = vBox
             [ vLimit historyHeight $ viewport HistoryViewport T.Vertical $
@@ -177,8 +178,7 @@ drawUI st = [ui]
             , hBorder
             , vLimit inputHeight $
                 renderEditor (vBox . map renderLine) True (_inputEditor st)
-            , strWrap $ "Status: " ++ Text.unpack (uiStatus cached) ++ " | " ++ modeStr ++ " | \\<Enter>: newline | Ctrl-T: toggle | Ctrl-C: quit"
-            , if null logLines then str "" else strWrap $ "Logs: " ++ unlines logLines
+            , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | \\<Enter>: newline | Ctrl-T: toggle | Ctrl-C: quit"
             ]
       T.render mainUI
 
@@ -200,6 +200,8 @@ handleEvent (T.AppEvent RefreshUI) = do
   vars <- use uiVarsL
   newUIState <- liftIO $ atomically $ readUIState (uiStateVar vars)
   cachedUIStateL .= newUIState
+  -- Scroll viewport to bottom to show new content
+  M.vScrollToEnd (M.viewportScroll HistoryViewport)
 
 -- Ctrl-T toggles input mode
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do

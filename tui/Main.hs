@@ -40,7 +40,8 @@ import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects (HTTP)
 import Runix.Logging.Effects (Logging(..))
 import UI.Effects (UI, messageToDisplay)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, setDisplayMessages, appendLog, setStatus)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory)
+import UI.OutputHistory (patchOutputHistory)
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import Control.Monad (forever)
@@ -116,6 +117,12 @@ agentLoop uiVars historyRef runner = forever $ do
   -- Get current history
   currentHistory <- readIORef historyRef
 
+  -- Immediately show user message in UI before running agent
+  let historyWithUser = currentHistory ++ [UserText userInput]
+  currentOutput <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
+  let patchedWithUser = patchOutputHistory historyWithUser (messageToDisplay @model @provider) currentOutput
+  patchMessages uiVars patchedWithUser
+
   -- Run the agent
   result <- runner $ runRunixCode @provider @model
                        (SystemPrompt "you are a helpful agent")
@@ -127,15 +134,14 @@ agentLoop uiVars historyRef runner = forever $ do
       -- Show error in UI
       appendLog uiVars (T.pack $ "Agent error: " ++ err)
       setStatus uiVars (T.pack "Error occurred")
-      -- Still show the user's message even on error
-      let historyWithUser = currentHistory ++ [UserText userInput]
-      setDisplayMessages uiVars (map (messageToDisplay @model @provider) historyWithUser)
     Right (_result, newHistory) -> do
       -- Update history
       writeIORef historyRef newHistory
 
-      -- Set complete message history to display
-      setDisplayMessages uiVars (map (messageToDisplay @model @provider) newHistory)
+      -- Patch output history with complete response (preserving logs)
+      currentOutput2 <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
+      let patchedOutput = patchOutputHistory newHistory (messageToDisplay @model @provider) currentOutput2
+      patchMessages uiVars patchedOutput
       setStatus uiVars (T.pack "Ready")
 
 --------------------------------------------------------------------------------

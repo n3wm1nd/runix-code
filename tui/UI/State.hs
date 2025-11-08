@@ -10,20 +10,21 @@ module UI.State where
 import Control.Concurrent.STM
 import Data.Text (Text)
 import qualified Data.Text as T
+import UI.OutputHistory (OutputMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog)
 
 -- | UI state shared between agent thread and UI thread
 data UIState = UIState
-  { uiLogs :: [Text]            -- ^ Log messages (most recent last)
-  , uiStatus :: Text            -- ^ Current status message
-  , uiDisplayMessages :: [Text] -- ^ Complete chat history as display text (most recent last)
+  { uiOutputHistory :: [OutputMessage]  -- ^ Complete timeline of all output
+  , uiStatus :: Text                     -- ^ Current status message
+  , uiDisplayFilter :: DisplayFilter     -- ^ What to show in the UI
   }
 
 -- | Initial empty UI state
 emptyUIState :: UIState
 emptyUIState = UIState
-  { uiLogs = []
+  { uiOutputHistory = []
   , uiStatus = T.pack "Ready"
-  , uiDisplayMessages = []
+  , uiDisplayFilter = defaultFilter
   }
 
 -- | Shared state variables for UI communication
@@ -41,11 +42,11 @@ newUIVars refreshCallback = do
   inputQueue <- newTQueueIO
   return $ UIVars stateVar inputQueue refreshCallback
 
--- | Append a log message to the UI state and trigger refresh
+-- | Append a log message to output history and trigger refresh
 appendLog :: UIVars -> Text -> IO ()
 appendLog vars msg = do
   atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiLogs = uiLogs st ++ [msg] }
+    st { uiOutputHistory = addLog Info msg (uiOutputHistory st) }
   refreshSignal vars
 
 -- | Update the status line and trigger refresh
@@ -55,11 +56,18 @@ setStatus vars status = do
     st { uiStatus = status }
   refreshSignal vars
 
--- | Set the complete display message history and trigger refresh
-setDisplayMessages :: UIVars -> [Text] -> IO ()
-setDisplayMessages vars messages = do
+-- | Patch the output history with new messages and trigger refresh
+patchMessages :: UIVars -> [OutputMessage] -> IO ()
+patchMessages vars newOutput = do
   atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiDisplayMessages = messages }
+    st { uiOutputHistory = newOutput }
+  refreshSignal vars
+
+-- | Update the display filter and trigger refresh
+setDisplayFilter :: UIVars -> DisplayFilter -> IO ()
+setDisplayFilter vars filt = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiDisplayFilter = filt }
   refreshSignal vars
 
 -- | Read the current UI state (for UI rendering)

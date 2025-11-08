@@ -34,10 +34,6 @@ data UI (m :: Type -> Type) a where
   -- | Update the status line
   UpdateStatus :: Text -> UI m ()
 
-  -- | Set the complete message history
-  -- Note: This uses a display format to avoid polymorphic storage issues
-  SetDisplayMessages :: [Text] -> UI m ()
-
   -- | Prompt the user for input (blocks until user responds)
   PromptUser :: Text -> UI m Text
 
@@ -47,9 +43,6 @@ logMessage msg = send (LogMessage msg)
 
 updateStatus :: Member UI r => Text -> Sem r ()
 updateStatus status = send (UpdateStatus status)
-
-setDisplayMessages :: Member UI r => [Text] -> Sem r ()
-setDisplayMessages msgs = send (SetDisplayMessages msgs)
 
 promptUser :: Member UI r => Text -> Sem r Text
 promptUser prompt = send (PromptUser prompt)

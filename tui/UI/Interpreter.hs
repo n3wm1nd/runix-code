@@ -30,8 +30,6 @@ interpretUI uiVars = interpret $ \case
 
   UpdateStatus status -> embed $ State.setStatus uiVars status
 
-  SetDisplayMessages msgs -> embed $ State.setDisplayMessages uiVars msgs
-
   PromptUser prompt -> do
     -- First, update status to show we're waiting for input
     embed $ State.setStatus uiVars prompt
