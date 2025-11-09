@@ -33,10 +33,11 @@ import Polysemy
 import Polysemy.Fail
 import Polysemy.Error
 
-import Runix.Runner (filesystemIO, grepIO, bashIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem.Effects (FileSystem, readFile, writeFile, fileExists)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
+import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP)
 import Runix.Logging.Effects (Logging)
 import qualified Runix.Logging.Effects as Log
@@ -163,6 +164,7 @@ runWithEffects action =
     . loggingIO
     . failLog
     . httpIO (withRequestTimeout 300)
+    . cmdIO
     . bashIO
     . filesystemIO
     . grepIO

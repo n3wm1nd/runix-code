@@ -30,7 +30,7 @@ import Runix.Secret.Effects (runSecret)
 
 import Config
 import Models
-import Runix.Runner (filesystemIO, grepIO, bashIO, httpIO, withRequestTimeout, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, withRequestTimeout, failLog)
 import TUI.UI (runUI)
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
@@ -157,6 +157,7 @@ runBaseEffects uiVars =
     . interpretLoggingToUI
     . failLog
     . httpIO (withRequestTimeout 300)
+    . cmdIO
     . bashIO
     . filesystemIO
     . grepIO
