@@ -16,7 +16,7 @@ import Polysemy.Fail
 
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter hiding (SystemPrompt)
-import Runix.FileSystem.Effects (FileSystem)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects ()
@@ -110,7 +110,7 @@ runWithQwen3Coder cfg userInput =
 -- It just loads config, runs the agent, and saves the session.
 runAgent :: forall provider model r.
             ( Member (LLM provider model) r
-            , Member FileSystem r
+            , Members [FileSystemRead, FileSystemWrite] r
             , Member Grep r
             , Member Bash r
             , Member Logging r

@@ -54,13 +54,12 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Lazy as BL
-import Polysemy (Sem, Member, embed)
+import Polysemy (Sem, Member, Members)
 import Polysemy.State (State, modify, get, put)
-import Polysemy.Embed (Embed)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem.Effects (FileSystem)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem.Effects
 import Runix.Grep.Effects (Grep)
 import qualified Runix.Grep.Effects
@@ -296,7 +295,7 @@ instance ToolFunction TodoDeleteResult where
 
 -- | Read a file from the filesystem
 readFile
-  :: forall r. (Member FileSystem r) => FilePath
+  :: forall r. (Members [FileSystemRead, FileSystemWrite] r) => FilePath
   -> Sem r ReadFileResult
 readFile (FilePath path) = do
   contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
@@ -304,7 +303,7 @@ readFile (FilePath path) = do
 
 -- | Write a new file
 writeFile
-  :: Member FileSystem r
+  :: Members [FileSystemRead, FileSystemWrite] r
   => FilePath
   -> FileContent
   -> Sem r WriteFileResult
@@ -316,7 +315,7 @@ writeFile (FilePath path) (FileContent content) = do
 -- | Edit existing file via string replacement
 -- Returns error if old_string matches 0 or >1 times (must match exactly once)
 editFile
-  :: Member FileSystem r
+  :: Members [FileSystemRead, FileSystemWrite] r
   => FilePath
   -> OldString
   -> NewString
@@ -353,7 +352,7 @@ replaceAndCount old new haystack
 
 -- | Find files matching a pattern
 glob
-  :: Member FileSystem r
+  :: Members [FileSystemRead, FileSystemWrite] r
   => Pattern
   -> Sem r GlobResult
 glob (Pattern pattern) = do

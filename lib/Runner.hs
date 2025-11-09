@@ -34,7 +34,7 @@ import Polysemy.Fail
 import Polysemy.Error
 
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, withRequestTimeout, loggingIO, failLog)
-import Runix.FileSystem.Effects (FileSystem, readFile, writeFile, fileExists)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, readFile, writeFile, fileExists)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
@@ -54,7 +54,7 @@ import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage,
 -- We deserialize with a specific model/provider type for type safety, but
 -- the messages can be used with any compatible model.
 loadSession :: forall provider model r.
-               ( Member FileSystem r
+               ( Members [FileSystemRead, FileSystemWrite] r
                , Member Logging r
                , Member Fail r
                , ProviderImplementation provider model
@@ -83,7 +83,7 @@ loadSession path = do
 
 -- | Save session to file
 saveSession :: forall provider model r.
-               ( Member FileSystem r
+               ( Members [FileSystemRead, FileSystemWrite] r
                , Member Logging r
                , ProviderImplementation provider model
                )
@@ -131,7 +131,7 @@ deserializeMessages val = case val of
 --------------------------------------------------------------------------------
 
 -- | Load system prompt from file or use default
-loadSystemPrompt :: (Member FileSystem r, Member Logging r)
+loadSystemPrompt :: (Members [FileSystemRead, FileSystemWrite] r, Member Logging r)
                  => FilePath  -- ^ Path to system prompt file
                  -> Text      -- ^ Default prompt if file doesn't exist
                  -> Sem r Text
@@ -155,7 +155,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: HasCallStack
-               => (forall r. Members '[FileSystem, Grep, Bash, HTTP, Logging, Fail, Embed IO] r
+               => (forall r. Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail, Embed IO] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =

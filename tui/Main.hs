@@ -34,7 +34,7 @@ import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, withRequestTim
 import TUI.UI (runUI)
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
-import Runix.FileSystem.Effects (FileSystem)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects (HTTP)
@@ -68,7 +68,7 @@ data AgentRunner where
 -- This is intentionally monomorphic - each runner works with its specific effect stack
 -- Logging effect is reinterpreted as UI effect in the TUI
 newtype Runner model provider = Runner
-  { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystem, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a)
   }
 
 --------------------------------------------------------------------------------
@@ -108,7 +108,7 @@ agentLoop :: forall model provider.
              )
           => UIVars
           -> IORef [Message model provider]
-          -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystem, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a))
+          -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a))
           -> IO ()
 agentLoop uiVars historyRef runner = forever $ do
   -- Wait for user input
