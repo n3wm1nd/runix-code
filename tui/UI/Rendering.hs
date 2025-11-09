@@ -15,8 +15,12 @@ import Text.Pandoc
 import Text.Pandoc.Readers.CommonMark (readCommonMark)
 import Brick.Types (Widget, Context, getContext, availWidthL, attrL, imageL, emptyResult, ctxAttrMapL, Size(..))
 import qualified Brick.Types
-import Brick.Widgets.Core (txt, str, withAttr, (<+>), vBox, emptyWidget, padLeft)
+import Brick.Widgets.Core (txt, str, withAttr, (<+>), vBox, emptyWidget, padLeft, hBox)
 import Brick.Widgets.Core (Padding(..))
+import Skylighting (tokenize, TokenizerConfig(..), defaultSyntaxMap, lookupSyntax)
+import Skylighting.Types (Token(..), TokenType(..), SourceLine)
+import qualified Graphics.Vty as V
+import Data.Maybe (fromMaybe)
 import Brick.AttrMap (attrMapLookup, AttrName)
 import qualified Graphics.Vty as V
 import Lens.Micro ((^.), (&), (.~))
@@ -132,8 +136,7 @@ renderBlock (Header level _attr inlines) =
                      3 -> header3Attr
                      _ -> header3Attr
   in withAttr headerAttr $ txt headerText
-renderBlock (CodeBlock _attr code) =
-  withAttr codeBlockAttr $ vBox $ map (txt . ("  " <>)) (T.lines code)
+renderBlock (CodeBlock attr code) = renderCodeBlock attr code
 renderBlock (BlockQuote blocks) =
   vBox $ map (\b -> txt "> " <+> renderBlock b) blocks
 renderBlock (BulletList items) =
@@ -270,3 +273,78 @@ renderInlinesToText = T.concat . map renderInlineToText
     renderInlineToText (Subscript inlines) = "_" <> renderInlinesToText inlines
     renderInlineToText (SmallCaps inlines) = renderInlinesToText inlines
     renderInlineToText Note{} = ""
+
+-- | Render a code block with syntax highlighting
+renderCodeBlock :: forall n. Attr -> Text -> Widget n
+renderCodeBlock (_, classes, _) code =
+  let lang = case classes of
+               (l:_) -> l
+               [] -> ""
+      header = if T.null lang
+                 then txt "┌─ code"
+                 else txt $ "┌─ " <> lang
+      footer = txt "└─"
+  in vBox $
+       [header] ++
+       renderHighlightedCode lang code ++
+       [footer]
+
+-- | Render code with syntax highlighting
+renderHighlightedCode :: forall n. Text -> Text -> [Widget n]
+renderHighlightedCode lang code =
+  case lookupSyntax lang defaultSyntaxMap of
+    Nothing -> renderPlainCode code  -- No syntax definition, render plain
+    Just syntax ->
+      case tokenize (TokenizerConfig defaultSyntaxMap False) syntax code of
+        Left _err -> renderPlainCode code  -- Tokenization failed, render plain
+        Right sourceLines -> map renderSourceLine sourceLines
+  where
+    renderPlainCode :: Text -> [Widget n]
+    renderPlainCode c = map (txt . ("│ " <>)) (T.lines c)
+
+-- | Render a single source line with syntax highlighting
+renderSourceLine :: forall n. SourceLine -> Widget n
+renderSourceLine tokens =
+  txt "│ " <+> hBox (map renderToken tokens)
+
+-- | Render a single token with appropriate color
+renderToken :: forall n. Token -> Widget n
+renderToken (tokenType, tokenText) =
+  let color = tokenTypeToColor tokenType
+      attr = V.defAttr `V.withForeColor` color
+  in Brick.Types.Widget Brick.Types.Fixed Brick.Types.Fixed $ do
+       return $ emptyResult & imageL .~ V.text' attr tokenText
+
+-- | Map Skylighting token types to Vty colors
+tokenTypeToColor :: TokenType -> V.Color
+tokenTypeToColor KeywordTok = V.cyan
+tokenTypeToColor DataTypeTok = V.green
+tokenTypeToColor DecValTok = V.magenta
+tokenTypeToColor BaseNTok = V.magenta
+tokenTypeToColor FloatTok = V.magenta
+tokenTypeToColor ConstantTok = V.magenta
+tokenTypeToColor CharTok = V.yellow
+tokenTypeToColor StringTok = V.yellow
+tokenTypeToColor CommentTok = V.brightBlack
+tokenTypeToColor OtherTok = V.white
+tokenTypeToColor AlertTok = V.red
+tokenTypeToColor FunctionTok = V.blue
+tokenTypeToColor RegionMarkerTok = V.white
+tokenTypeToColor ErrorTok = V.red
+tokenTypeToColor BuiltInTok = V.cyan
+tokenTypeToColor ExtensionTok = V.white
+tokenTypeToColor PreprocessorTok = V.brightMagenta
+tokenTypeToColor AttributeTok = V.white
+tokenTypeToColor DocumentationTok = V.brightBlack
+tokenTypeToColor AnnotationTok = V.white
+tokenTypeToColor CommentVarTok = V.brightBlack
+tokenTypeToColor VariableTok = V.white
+tokenTypeToColor ControlFlowTok = V.cyan
+tokenTypeToColor OperatorTok = V.white
+tokenTypeToColor SpecialCharTok = V.yellow
+tokenTypeToColor VerbatimStringTok = V.yellow
+tokenTypeToColor SpecialStringTok = V.yellow
+tokenTypeToColor ImportTok = V.cyan
+tokenTypeToColor InformationTok = V.brightBlack
+tokenTypeToColor WarningTok = V.yellow
+tokenTypeToColor NormalTok = V.white

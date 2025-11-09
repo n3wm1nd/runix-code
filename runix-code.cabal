@@ -115,6 +115,8 @@ executable runix-code-tui
                     , pandoc >=3.0
                     , pandoc-types >=1.23
                     , ansi-terminal >=1.0
+                    , skylighting >=0.14
+                    , containers
 
     hs-source-dirs:   tui
     default-language: Haskell2010
