@@ -11,9 +11,10 @@ module UI.OutputHistory where
 import Data.Text (Text)
 import qualified Data.Text as T
 import UniversalLLM.Core.Types (Message)
-import UI.Rendering (markdownToWidgets)
+import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
 import Brick.Types (Widget)
-import Brick.Widgets.Core (txt)
+import Brick.Widgets.Core (txt, padLeft, (<+>), vBox)
+import Brick.Widgets.Core (Padding(..))
 
 -- | A single entry in the output timeline
 data OutputMessage where
@@ -64,20 +65,83 @@ shouldDisplay filt (SystemEvent _) = showSystemEvents filt
 shouldDisplay filt (ToolExecution _) = showToolCalls filt
 
 -- | Render an output message to Brick widgets with markdown formatting
+-- Message content is indented by 1 space, with markers at column 0
+-- Note: Spacing is handled by renderOutputMessages, not here
 renderOutputMessage :: forall n. OutputMessage -> [Widget n]
-renderOutputMessage (ConversationMessage _ text) = markdownToWidgets text
-renderOutputMessage (LogEntry _level msg) = markdownToWidgets msg  -- msg already contains the level from appendLog
-renderOutputMessage (StreamingChunk text) = markdownToWidgets text
-renderOutputMessage (SystemEvent msg) = markdownToWidgets (T.pack "[System] " <> msg)
-renderOutputMessage (ToolExecution name) = markdownToWidgets (T.pack "[Tool] " <> name)
+renderOutputMessage (ConversationMessage _ text) =
+  -- Extract "You:" or "Agent:" prefix and render separately
+  -- The content after the prefix has "  " indent that we need to strip
+  case T.stripPrefix "You:\n  " text of
+    Just content ->
+      let contentWidgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+      in combineMarkerWithContent "<" contentWidgets
+    Nothing -> case T.stripPrefix "Agent:\n  " text of
+      Just content ->
+        let contentWidgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+        in combineMarkerWithContent ">" contentWidgets
+      Nothing -> markdownToWidgetsWithIndent 1 text  -- Fallback
+  where
+    -- Combine marker with first line of content, keep rest as-is
+    combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
+    combineMarkerWithContent marker [] = [txt marker]
+    combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
+
+renderOutputMessage (LogEntry level msg) =
+  let marker = case level of
+                 Info -> "I "
+                 Warning -> "W "
+                 Error -> "E "
+  in [txt marker <+> vBox (markdownToWidgets msg)]
+renderOutputMessage (StreamingChunk text) =
+  let contentWidgets = markdownToWidgetsWithIndent 1 text
+  in combineMarkerWithContent ">" contentWidgets
+  where
+    combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
+    combineMarkerWithContent marker [] = [txt marker]
+    combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
+renderOutputMessage (SystemEvent msg) =
+  [txt "S " <+> vBox (markdownToWidgets msg)]
+renderOutputMessage (ToolExecution name) =
+  [txt "T " <+> vBox (markdownToWidgets name)]
+
+-- | Render a list of output messages with appropriate spacing
+-- Adds blank lines before and after conversation messages
+renderOutputMessages :: forall n. (OutputMessage -> [Widget n]) -> [OutputMessage] -> [Widget n]
+renderOutputMessages renderFunc messages = go messages
+  where
+    go :: [OutputMessage] -> [Widget n]
+    go [] = []
+    go (msg:rest) =
+      case msg of
+        ConversationMessage _ _ ->
+          -- Add blank line before, render message, add blank line after
+          -- Use txt " " instead of emptyWidget to ensure it takes vertical space
+          txt " " : renderFunc msg ++ [txt " "] ++ go rest
+        _ ->
+          -- No spacing for logs, system events, tool executions
+          renderFunc msg ++ go rest
 
 -- | Render an output message as raw text (no markdown processing)
+-- Note: Spacing is handled by renderOutputMessages, not here
 renderOutputMessageRaw :: forall n. OutputMessage -> [Widget n]
-renderOutputMessageRaw (ConversationMessage _ text) = [txt text]
-renderOutputMessageRaw (LogEntry _level msg) = [txt msg]
-renderOutputMessageRaw (StreamingChunk text) = [txt text]
-renderOutputMessageRaw (SystemEvent msg) = [txt (T.pack "[System] " <> msg)]
-renderOutputMessageRaw (ToolExecution name) = [txt (T.pack "[Tool] " <> name)]
+renderOutputMessageRaw (ConversationMessage _ text) =
+  case T.stripPrefix "You:\n  " text of
+    Just content ->
+      [txt "<" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
+    Nothing -> case T.stripPrefix "Agent:\n  " text of
+      Just content ->
+        [txt ">" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
+      Nothing -> [padLeft (Pad 1) (txt text)]
+renderOutputMessageRaw (LogEntry level msg) =
+  let marker = case level of
+                 Info -> "I "
+                 Warning -> "W "
+                 Error -> "E "
+  in [txt marker <+> txt msg]
+renderOutputMessageRaw (StreamingChunk text) =
+  [txt ">" <+> padLeft (Pad 1) (txt text)]
+renderOutputMessageRaw (SystemEvent msg) = [txt "S " <+> txt msg]
+renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
 -- | Patch the output history with a new message list
 --

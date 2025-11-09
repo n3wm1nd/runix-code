@@ -6,6 +6,7 @@
 -- the Pandoc AST, with support for inline formatting and proper word wrapping.
 module UI.Rendering
   ( markdownToWidgets
+  , markdownToWidgetsWithIndent
   ) where
 
 import Data.Text (Text)
@@ -14,7 +15,8 @@ import Text.Pandoc
 import Text.Pandoc.Readers.CommonMark (readCommonMark)
 import Brick.Types (Widget, Context, getContext, availWidthL, attrL, imageL, emptyResult, ctxAttrMapL, Size(..))
 import qualified Brick.Types
-import Brick.Widgets.Core (txt, str, withAttr, (<+>), vBox, emptyWidget)
+import Brick.Widgets.Core (txt, str, withAttr, (<+>), vBox, emptyWidget, padLeft)
+import Brick.Widgets.Core (Padding(..))
 import Brick.AttrMap (attrMapLookup, AttrName)
 import qualified Graphics.Vty as V
 import Lens.Micro ((^.), (&), (.~))
@@ -27,20 +29,26 @@ data TextSegment = TextSegment
   , segmentText :: Text
   }
 
--- | Convert markdown text to a list of Brick widgets (one per block)
+-- | Convert markdown text to a list of Brick widgets with hierarchical section structure
 --
--- Parses markdown using CommonMark and converts the Pandoc AST to widgets.
--- Returns a list of widgets, one for each block-level element.
--- On parse errors, returns a single widget with the original text.
+-- Uses no base indentation (starts at column 0).
 markdownToWidgets :: forall n. Text -> [Widget n]
-markdownToWidgets text = case runPure (readCommonMark readerOpts text) of
-  Right (Pandoc _ blocks) -> addSpacing $ map renderBlock blocks
-  Left _err -> [txt text]  -- Fallback to plain text on error
-  where
-    -- Add empty widget spacing between blocks
-    addSpacing [] = []
-    addSpacing [x] = [x]
-    addSpacing (x:xs) = x : emptyWidget : addSpacing xs
+markdownToWidgets = markdownToWidgetsWithIndent 0
+
+-- | Convert markdown text to widgets with a base indentation offset
+--
+-- Parses markdown using CommonMark and renders with hierarchical indentation:
+-- - Base indent: specified offset (e.g., 1 for message content)
+-- - H1 sections: base + 0 spaces
+-- - H2 sections: base + 2 spaces
+-- - H3 sections: base + 4 spaces
+-- - H4-H6 sections: base + 6 spaces
+--
+-- On parse errors, returns a single widget with the original text.
+markdownToWidgetsWithIndent :: forall n. Int -> Text -> [Widget n]
+markdownToWidgetsWithIndent baseIndent text = case runPure (readCommonMark readerOpts text) of
+  Right (Pandoc _ blocks) -> renderBlocksHierarchical baseIndent blocks
+  Left _err -> [padLeft (Pad baseIndent) (txt text)]  -- Fallback to plain text on error
 
 -- | Reader options for markdown parsing
 readerOpts :: ReaderOptions
@@ -48,19 +56,81 @@ readerOpts = def
   { readerExtensions = pandocExtensions  -- Enable common markdown extensions
   }
 
+-- | Render blocks with hierarchical section structure
+--
+-- Headers create sections, and all content following a header is indented
+-- to show it belongs to that section. Nested headers create nested indentation.
+--
+-- Indentation scheme (relative to base indent):
+-- - H1: base + 0 spaces
+-- - H2: base + 2 spaces
+-- - H3: base + 4 spaces
+-- - H4-H6: base + 6 spaces
+renderBlocksHierarchical :: forall n. Int -> [Block] -> [Widget n]
+renderBlocksHierarchical baseIndent blocks = renderSections baseIndent 0 blocks
+  where
+    -- Render a list of blocks at a given nesting level
+    renderSections :: Int -> Int -> [Block] -> [Widget n]
+    renderSections _base _level [] = []
+    renderSections base level (Header hLevel _attr inlines : rest) =
+      -- Found a header - create a section
+      let (sectionBlocks, afterSection) = span (not . isHeaderAtOrAbove hLevel) rest
+          headerWidget = renderHeaderAtLevel hLevel inlines
+          -- Content within this section gets rendered at the header's indent level
+          -- (not nested deeper - we want absolute positioning)
+          contentWidgets = renderSections base hLevel sectionBlocks
+          -- Use absolute indentation based on header level + base
+          indent = base + indentForLevel hLevel
+          -- Don't wrap with padLeft - children handle their own indentation
+          sectionWidget = vBox (padLeft (Pad indent) headerWidget : contentWidgets)
+      -- Continue rendering remaining blocks at the current level
+      in sectionWidget : renderSections base level afterSection
+    renderSections base level (block : rest) =
+      -- Non-header block at current level
+      let indent = base + indentForLevel level
+          widget = padLeft (Pad indent) (renderBlock block)
+      in widget : renderSections base level rest
+
+    -- Calculate relative indentation for a given header level
+    -- Level 0 (root/no header) = 0
+    -- H1=0, H2=2, H3=4, H4+=6
+    indentForLevel :: Int -> Int
+    indentForLevel 0 = 0  -- Root level / no header
+    indentForLevel 1 = 0  -- H1
+    indentForLevel 2 = 2  -- H2
+    indentForLevel 3 = 4  -- H3
+    indentForLevel _ = 6  -- H4-H6
+
+    -- Check if a block is a header at or above the given level
+    isHeaderAtOrAbove :: Int -> Block -> Bool
+    isHeaderAtOrAbove targetLevel (Header level _ _) = level <= targetLevel
+    isHeaderAtOrAbove _ _ = False
+
+    -- Render a header with appropriate styling based on level
+    renderHeaderAtLevel :: Int -> [Inline] -> Widget n
+    renderHeaderAtLevel level inlines =
+      let headerText = renderInlinesToText inlines
+          headerAttr = case level of
+                         1 -> header1Attr
+                         2 -> header2Attr
+                         3 -> header3Attr
+                         _ -> header3Attr  -- Use header3 style for levels 4-6
+      in withAttr headerAttr $ txt headerText
+
 -- | Render a Pandoc block element to a Brick widget
 renderBlock :: forall n. Block -> Widget n
 -- For paragraphs, we need to render with formatting while still wrapping
 -- We'll use a horizontal box of inline widgets with proper text wrapping
 renderBlock (Para inlines) = renderWrappedInlines inlines
 renderBlock (Plain inlines) = renderWrappedInlines inlines
-renderBlock (Header _level _attr inlines) =
+-- Headers are handled by renderBlocksHierarchical, but we need a fallback case
+renderBlock (Header level _attr inlines) =
   let headerText = renderInlinesToText inlines
-      headerAttr = case _level of
+      headerAttr = case level of
                      1 -> header1Attr
                      2 -> header2Attr
                      3 -> header3Attr
-                     _ -> header3Attr  -- Use header3 style for levels 4-6
+                     _ -> header3Attr
   in withAttr headerAttr $ txt headerText
 renderBlock (CodeBlock _attr code) =
   withAttr codeBlockAttr $ vBox $ map (txt . ("  " <>)) (T.lines code)

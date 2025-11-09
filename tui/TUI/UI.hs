@@ -40,7 +40,7 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState, uiStateVar)
-import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage, renderOutputMessageRaw)
+import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage, renderOutputMessageRaw, renderOutputMessages)
 import qualified UI.Attributes as Attrs
 
 -- | Custom events for the TUI
@@ -194,7 +194,7 @@ drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
     renderFunc = case _markdownMode st of
                    RenderMarkdown -> renderOutputMessage
                    ShowRaw -> renderOutputMessageRaw
-    historyWidgets = concatMap renderFunc filteredOutput
+    historyWidgets = renderOutputMessages renderFunc filteredOutput
 
     statusText = Text.unpack (uiStatus cached)
 
