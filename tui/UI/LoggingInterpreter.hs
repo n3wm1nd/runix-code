@@ -12,7 +12,7 @@ import Polysemy
 import qualified Data.Text as T
 import GHC.Stack (CallStack, prettyCallStack)
 
-import Runix.Logging.Effects (Logging(..))
+import Runix.Logging.Effects (Logging(..), Level(..))
 import UI.Effects (UI, logMessage)
 
 -- | Reinterpret Logging effect as UI effect
@@ -21,25 +21,21 @@ import UI.Effects (UI, logMessage)
 -- sent to the UI via the logMessage operation.
 interpretLoggingToUI :: Member UI r => Sem (Logging ': r) a -> Sem r a
 interpretLoggingToUI = interpret $ \case
-  Info _callStack msg ->
-    logMessage $ T.pack "[INFO] " <> msg
-
-  Warning _callStack msg ->
-    logMessage $ T.pack "[WARNING] " <> msg
-
-  Runix.Logging.Effects.Error _callStack msg ->
-    logMessage $ T.pack "[ERROR] " <> msg
+  Log level _callStack msg ->
+    logMessage $ levelPrefix level <> msg
+  where
+    levelPrefix Info = T.pack "[INFO] "
+    levelPrefix Warning = T.pack "[WARNING] "
+    levelPrefix Error = T.pack "[ERROR] "
 
 -- | Reinterpret Logging with call stack information
 --
 -- Includes the call stack in the log message for better debugging.
 interpretLoggingToUIWithStack :: Member UI r => Sem (Logging ': r) a -> Sem r a
 interpretLoggingToUIWithStack = interpret $ \case
-  Info callStack msg ->
-    logMessage $ T.pack "[INFO] " <> msg <> T.pack "\n  " <> T.pack (prettyCallStack callStack)
-
-  Warning callStack msg ->
-    logMessage $ T.pack "[WARNING] " <> msg <> T.pack "\n  " <> T.pack (prettyCallStack callStack)
-
-  Runix.Logging.Effects.Error callStack msg ->
-    logMessage $ T.pack "[ERROR] " <> msg <> T.pack "\n  " <> T.pack (prettyCallStack callStack)
+  Log level callStack msg ->
+    logMessage $ levelPrefix level <> msg <> T.pack "\n  " <> T.pack (prettyCallStack callStack)
+  where
+    levelPrefix Info = T.pack "[INFO] "
+    levelPrefix Warning = T.pack "[WARNING] "
+    levelPrefix Error = T.pack "[ERROR] "
