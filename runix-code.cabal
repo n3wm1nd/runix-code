@@ -94,6 +94,9 @@ executable runix-code-tui
                     , UI.State
                     , UI.Interpreter
                     , UI.LoggingInterpreter
+                    , UI.OutputHistory
+                    , UI.Rendering
+                    , UI.Attributes
     ghc-options:      -threaded
 
     build-depends:    base >=4.17 && <5
@@ -109,6 +112,9 @@ executable runix-code-tui
                     , microlens-mtl
                     , text-zipper
                     , stm
+                    , pandoc >=3.0
+                    , pandoc-types >=1.23
+                    , ansi-terminal >=1.0
 
     hs-source-dirs:   tui
     default-language: Haskell2010

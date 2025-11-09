@@ -11,6 +11,9 @@ module UI.OutputHistory where
 import Data.Text (Text)
 import qualified Data.Text as T
 import UniversalLLM.Core.Types (Message)
+import UI.Rendering (markdownToWidgets)
+import Brick.Types (Widget)
+import Brick.Widgets.Core (txt)
 
 -- | A single entry in the output timeline
 data OutputMessage where
@@ -60,13 +63,21 @@ shouldDisplay filt (StreamingChunk _) = showStreaming filt
 shouldDisplay filt (SystemEvent _) = showSystemEvents filt
 shouldDisplay filt (ToolExecution _) = showToolCalls filt
 
--- | Render an output message to display text
-renderOutputMessage :: OutputMessage -> [Text]
-renderOutputMessage (ConversationMessage _ text) = T.lines text
-renderOutputMessage (LogEntry _level msg) = [msg]  -- msg already contains the level from appendLog
-renderOutputMessage (StreamingChunk text) = T.lines text
-renderOutputMessage (SystemEvent msg) = [T.pack "[System] " <> msg]
-renderOutputMessage (ToolExecution name) = [T.pack "[Tool] " <> name]
+-- | Render an output message to Brick widgets with markdown formatting
+renderOutputMessage :: forall n. OutputMessage -> [Widget n]
+renderOutputMessage (ConversationMessage _ text) = markdownToWidgets text
+renderOutputMessage (LogEntry _level msg) = markdownToWidgets msg  -- msg already contains the level from appendLog
+renderOutputMessage (StreamingChunk text) = markdownToWidgets text
+renderOutputMessage (SystemEvent msg) = markdownToWidgets (T.pack "[System] " <> msg)
+renderOutputMessage (ToolExecution name) = markdownToWidgets (T.pack "[Tool] " <> name)
+
+-- | Render an output message as raw text (no markdown processing)
+renderOutputMessageRaw :: forall n. OutputMessage -> [Widget n]
+renderOutputMessageRaw (ConversationMessage _ text) = [txt text]
+renderOutputMessageRaw (LogEntry _level msg) = [txt msg]
+renderOutputMessageRaw (StreamingChunk text) = [txt text]
+renderOutputMessageRaw (SystemEvent msg) = [txt (T.pack "[System] " <> msg)]
+renderOutputMessageRaw (ToolExecution name) = [txt (T.pack "[Tool] " <> name)]
 
 -- | Patch the output history with a new message list
 --

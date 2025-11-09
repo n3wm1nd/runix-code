@@ -40,7 +40,8 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState, uiStateVar)
-import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage)
+import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage, renderOutputMessageRaw)
+import qualified UI.Attributes as Attrs
 
 -- | Custom events for the TUI
 data CustomEvent = RefreshUI | UpdateViewport
@@ -58,6 +59,10 @@ data Name = InputEditor | HistoryViewport
 data InputMode = EnterSends | EnterNewline
   deriving stock (Eq, Show)
 
+-- | Markdown rendering mode
+data MarkdownMode = RenderMarkdown | ShowRaw
+  deriving stock (Eq, Show)
+
 -- | TUI application state
 --
 -- Now uses STM-based state for concurrent updates from effect interpreters.
@@ -65,6 +70,7 @@ data AppState = AppState
   { _uiVars :: UIVars                      -- STM variables for UI state
   , _inputEditor :: Editor String Name     -- Input field
   , _inputMode :: InputMode                -- Current input mode
+  , _markdownMode :: MarkdownMode          -- Whether to render markdown or show raw
   , _cachedUIState :: UIState              -- Cached copy updated on each refresh event
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
   , _eventChan :: Brick.BChan.BChan CustomEvent  -- Event channel for sending custom events
@@ -82,6 +88,9 @@ inputEditorL = lens _inputEditor (\st e -> st { _inputEditor = e })
 
 inputModeL :: Lens' AppState InputMode
 inputModeL = lens _inputMode (\st m -> st { _inputMode = m })
+
+markdownModeL :: Lens' AppState MarkdownMode
+markdownModeL = lens _markdownMode (\st m -> st { _markdownMode = m })
 
 cachedUIStateL :: Lens' AppState UIState
 cachedUIStateL = lens _cachedUIState (\st s -> st { _cachedUIState = s })
@@ -115,7 +124,8 @@ runUI :: (IO () -> IO UIVars)  -- ^ Function to create UIVars with refresh callb
       -> IO ()
 runUI mkUIVars = do
   -- Create event channel for UI refreshes
-  eventChan <- newBChan 10
+  -- Larger buffer to handle rapid resize events without blocking
+  eventChan <- newBChan 100
 
   -- Create UI vars with refresh callback
   uiVars <- mkUIVars $ writeBChan eventChan RefreshUI
@@ -127,6 +137,7 @@ runUI mkUIVars = do
         { _uiVars = uiVars
         , _inputEditor = editor InputEditor Nothing ""
         , _inputMode = EnterSends
+        , _markdownMode = RenderMarkdown
         , _cachedUIState = initialUIState
         , _lastViewport = Nothing
         , _eventChan = eventChan
@@ -150,7 +161,7 @@ app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
   , M.appStartEvent = return ()
-  , M.appAttrMap = const $ A.attrMap V.defAttr []
+  , M.appAttrMap = const Attrs.theMap
   , M.appChooseCursor = M.showFirstCursor
   }
 
@@ -174,9 +185,16 @@ drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
               EnterSends -> "Enter: send"
               EnterNewline -> "Enter: newline (Ctrl-D: send)"
 
+    markdownStr = case _markdownMode st of
+                    RenderMarkdown -> "Markdown: rendered"
+                    ShowRaw -> "Markdown: raw"
+
     -- Filter and render output history
     filteredOutput = filter (shouldDisplay (uiDisplayFilter cached)) (uiOutputHistory cached)
-    historyLines = concatMap (map Text.unpack . renderOutputMessage) filteredOutput
+    renderFunc = case _markdownMode st of
+                   RenderMarkdown -> renderOutputMessage
+                   ShowRaw -> renderOutputMessageRaw
+    historyWidgets = concatMap renderFunc filteredOutput
 
     statusText = Text.unpack (uiStatus cached)
 
@@ -188,11 +206,11 @@ drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
 
           mainUI = vBox
             [ vLimit historyH $ viewport HistoryViewport T.Vertical $
-                vBox $ map strWrap historyLines
+                vBox historyWidgets
             , hBorder
             , vLimit inputHeight $
                 renderEditor (vBox . map renderLine) True (_inputEditor st)
-            , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | \\<Enter>: newline | Ctrl-T: toggle | Ctrl-C: quit"
+            , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: toggle input | Ctrl-R: toggle markdown | Ctrl-C: quit"
             ]
       T.render mainUI
 
@@ -300,6 +318,14 @@ handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
         EnterSends -> EnterNewline
         EnterNewline -> EnterSends
   inputModeL .= newMode
+
+-- Ctrl-R toggles markdown rendering mode (R for "raw")
+handleEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
+  mode <- use markdownModeL
+  let newMode = case mode of
+        RenderMarkdown -> ShowRaw
+        ShowRaw -> RenderMarkdown
+  markdownModeL .= newMode
 
 -- Ctrl-D sends message (useful in EnterNewline mode)
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
