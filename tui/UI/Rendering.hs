@@ -15,17 +15,15 @@ import Text.Pandoc
 import Text.Pandoc.Readers.CommonMark (readCommonMark)
 import Brick.Types (Widget, Context, getContext, availWidthL, attrL, imageL, emptyResult, ctxAttrMapL, Size(..))
 import qualified Brick.Types
-import Brick.Widgets.Core (txt, str, withAttr, (<+>), vBox, emptyWidget, padLeft, hBox)
+import Brick.Widgets.Core (txt, withAttr, (<+>), vBox, padLeft, hBox)
 import Brick.Widgets.Core (Padding(..))
 import Skylighting (tokenize, TokenizerConfig(..), defaultSyntaxMap, lookupSyntax)
-import Skylighting.Types (Token(..), TokenType(..), SourceLine)
+import Skylighting.Types (Token, TokenType(..), SourceLine)
 import qualified Graphics.Vty as V
-import Data.Maybe (fromMaybe)
 import Brick.AttrMap (attrMapLookup, AttrName)
-import qualified Graphics.Vty as V
 import Lens.Micro ((^.), (&), (.~))
 import UI.Attributes (header1Attr, header2Attr, header3Attr, boldAttr, italicAttr,
-                      underlineAttr, codeAttr, codeBlockAttr, linkAttr, strikethroughAttr)
+                      underlineAttr, codeAttr, linkAttr, strikethroughAttr)
 
 -- | A text segment with an attribute
 data TextSegment = TextSegment
@@ -112,14 +110,18 @@ renderBlocksHierarchical baseIndent blocks = renderSections baseIndent 0 blocks
 
     -- Render a header with appropriate styling based on level
     renderHeaderAtLevel :: Int -> [Inline] -> Widget n
-    renderHeaderAtLevel level inlines =
-      let headerText = renderInlinesToText inlines
-          headerAttr = case level of
-                         1 -> header1Attr
-                         2 -> header2Attr
-                         3 -> header3Attr
-                         _ -> header3Attr  -- Use header3 style for levels 4-6
-      in withAttr headerAttr $ txt headerText
+    renderHeaderAtLevel level inlines = renderHeader level inlines
+
+-- | Render a header with appropriate styling based on level
+renderHeader :: forall n. Int -> [Inline] -> Widget n
+renderHeader level inlines =
+  let headerText = renderInlinesToText inlines
+      headerAttr = case level of
+                     1 -> header1Attr
+                     2 -> header2Attr
+                     3 -> header3Attr
+                     _ -> header3Attr  -- Use header3 style for levels 4-6
+  in withAttr headerAttr $ txt headerText
 
 -- | Render a Pandoc block element to a Brick widget
 renderBlock :: forall n. Block -> Widget n
@@ -128,14 +130,7 @@ renderBlock :: forall n. Block -> Widget n
 renderBlock (Para inlines) = renderWrappedInlines inlines
 renderBlock (Plain inlines) = renderWrappedInlines inlines
 -- Headers are handled by renderBlocksHierarchical, but we need a fallback case
-renderBlock (Header level _attr inlines) =
-  let headerText = renderInlinesToText inlines
-      headerAttr = case level of
-                     1 -> header1Attr
-                     2 -> header2Attr
-                     3 -> header3Attr
-                     _ -> header3Attr
-  in withAttr headerAttr $ txt headerText
+renderBlock (Header level _attr inlines) = renderHeader level inlines
 renderBlock (CodeBlock attr code) = renderCodeBlock attr code
 renderBlock (BlockQuote blocks) =
   vBox $ map (\b -> txt "> " <+> renderBlock b) blocks

@@ -6,7 +6,25 @@
 -- messages, logs, streaming updates, etc. The timeline can be patched
 -- when the underlying message history changes while preserving logs
 -- and other events.
-module UI.OutputHistory where
+module UI.OutputHistory
+  ( -- * Types
+    OutputMessage(..)
+  , LogLevel(..)
+  , DisplayFilter(..)
+    -- * Filters
+  , defaultFilter
+  , shouldDisplay
+    -- * Rendering
+  , renderOutputMessage
+  , renderOutputMessageRaw
+  , renderOutputMessages
+    -- * History Management
+  , patchOutputHistory
+  , addLog
+  , addSystemEvent
+  , addStreamingChunk
+  , addToolExecution
+  ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -64,6 +82,12 @@ shouldDisplay filt (StreamingChunk _) = showStreaming filt
 shouldDisplay filt (SystemEvent _) = showSystemEvents filt
 shouldDisplay filt (ToolExecution _) = showToolCalls filt
 
+-- | Combine a marker with the first line of content, keeping rest as-is
+-- Used for adding column 0 markers to messages
+combineMarkerWithContent :: forall n. Text -> [Widget n] -> [Widget n]
+combineMarkerWithContent marker [] = [txt marker]
+combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
+
 -- | Render an output message to Brick widgets with markdown formatting
 -- Message content is indented by 1 space, with markers at column 0
 -- Note: Spacing is handled by renderOutputMessages, not here
@@ -80,11 +104,6 @@ renderOutputMessage (ConversationMessage _ text) =
         let contentWidgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
         in combineMarkerWithContent ">" contentWidgets
       Nothing -> markdownToWidgetsWithIndent 1 text  -- Fallback
-  where
-    -- Combine marker with first line of content, keep rest as-is
-    combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
-    combineMarkerWithContent marker [] = [txt marker]
-    combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
 
 renderOutputMessage (LogEntry level msg) =
   let marker = case level of
@@ -95,10 +114,6 @@ renderOutputMessage (LogEntry level msg) =
 renderOutputMessage (StreamingChunk text) =
   let contentWidgets = markdownToWidgetsWithIndent 1 text
   in combineMarkerWithContent ">" contentWidgets
-  where
-    combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
-    combineMarkerWithContent marker [] = [txt marker]
-    combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
 renderOutputMessage (SystemEvent msg) =
   [txt "S " <+> vBox (markdownToWidgets msg)]
 renderOutputMessage (ToolExecution name) =
@@ -161,8 +176,8 @@ patchOutputHistory newMessages renderMsg currentOutput =
     -- Extract conversation messages with their positions in output list
     currentMsgIndices :: [(Int, Int, Text)]  -- (output index, msg index, text)
     currentMsgIndices =
-      [(outIdx, msgIdx, txt)
-      | (outIdx, ConversationMessage msgIdx txt) <- zip [0..] currentOutput]
+      [(outIdx, msgIdx, msgText)
+      | (outIdx, ConversationMessage msgIdx msgText) <- zip [0..] currentOutput]
 
     -- Render new messages
     newRendered :: [(Int, Text)]  -- (msg index, text)
@@ -171,8 +186,8 @@ patchOutputHistory newMessages renderMsg currentOutput =
     -- Find the longest matching prefix
     matchingPrefix :: Int  -- How many messages match
     matchingPrefix = length $ takeWhile id
-      [ txt == txt'
-      | ((_, msgIdx, txt), (msgIdx', txt')) <- zip currentMsgIndices newRendered
+      [ msgText == newText
+      | ((_, msgIdx, msgText), (msgIdx', newText)) <- zip currentMsgIndices newRendered
       , msgIdx == msgIdx'
       ]
 
@@ -185,7 +200,7 @@ patchOutputHistory newMessages renderMsg currentOutput =
 
     -- Create new conversation messages
     newMsgOutput =
-      [ConversationMessage idx txt | (idx, txt) <- drop matchingPrefix newRendered]
+      [ConversationMessage idx msgText | (idx, msgText) <- drop matchingPrefix newRendered]
 
   in beforeDivergence ++ nonMessageEntries ++ newMsgOutput
 
