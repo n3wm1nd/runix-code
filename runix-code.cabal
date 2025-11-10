@@ -90,6 +90,7 @@ executable runix-code-tui
     import:           warnings, extensions
     main-is:          Main.hs
     other-modules:    TUI.UI
+                    , TUI.Widgets.MessageHistory
                     , UI.Effects
                     , UI.State
                     , UI.Interpreter

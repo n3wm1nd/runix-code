@@ -42,6 +42,7 @@ import Brick.BChan (newBChan, writeBChan)
 import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar)
 import UI.OutputHistory (RenderedMessage(..), shouldDisplay, renderOutputMessage, renderOutputMessageRaw)
 import qualified UI.Attributes as Attrs
+import qualified TUI.Widgets.MessageHistory as MH
 
 -- | Custom events for the TUI
 data CustomEvent = RefreshUI | UpdateViewport
@@ -170,7 +171,7 @@ app = M.App
 --------------------------------------------------------------------------------
 
 drawUI :: AppState -> [T.Widget Name]
-drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
+drawUI st = [indicatorLayer, baseLayer]
   where
     cached = _cachedUIState st
 
@@ -207,57 +208,26 @@ drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
 
     statusText = Text.unpack (uiStatus cached)
 
-    -- Base layer: main UI without indicators
+    -- MessageHistory returns (base, indicators) for Brick's layer system
+    (historyBase, historyIndicators) = MH.messageHistory HistoryViewport (_lastViewport st) historyWidgets
+
+    -- Base layer: main UI
     baseLayer = T.Widget T.Greedy T.Greedy $ do
       ctx <- T.getContext
       let availH = ctx ^. T.availHeightL
           historyH = availH - inputHeight - 3  -- -3 for border, status
 
-          mainUI = vBox
-            [ vLimit historyH $ viewport HistoryViewport T.Vertical $
-                vBox historyWidgets
+          ui = vBox
+            [ vLimit historyH historyBase
             , hBorder
             , vLimit inputHeight $
                 renderEditor (vBox . map renderLine) True (_inputEditor st)
             , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: toggle input | Ctrl-R: toggle markdown | Ctrl-C: quit"
             ]
-      T.render mainUI
+      T.render ui
 
-    -- Indicator layer: use translateBy to position indicators without affecting layout
-    indicatorLayer = T.Widget T.Fixed T.Fixed $ do
-      ctx <- T.getContext
-      let screenWidth = ctx ^. T.availWidthL
-
-      case _lastViewport st of
-        Nothing -> return T.emptyResult  -- No indicators if viewport not available
-        Just vp -> do
-          let scrollTop = vp ^. T.vpTop
-              visibleHeight = snd (vp ^. T.vpSize)
-              totalContentHeight = snd (vp ^. T.vpContentSize)
-              scrollBottom = scrollTop + visibleHeight
-
-              rowsAbove = scrollTop
-              rowsBelow = max 0 (totalContentHeight - scrollBottom)
-
-              topText = "↑" ++ show rowsAbove ++ "↑"
-              bottomText = "↓" ++ show rowsBelow ++ "↓"
-
-          -- Create Vty images at absolute positions - these overlay without affecting layout
-          let topImg = if rowsAbove > 0
-                      then V.translateX (screenWidth - length topText) $
-                           V.translateY 0 $
-                           V.string V.defAttr topText
-                      else V.emptyImage
-
-              bottomImg = if rowsBelow > 0
-                         then V.translateX (screenWidth - length bottomText) $
-                              V.translateY (visibleHeight - 1) $
-                              V.string V.defAttr bottomText
-                         else V.emptyImage
-
-              combinedImg = topImg V.<-> bottomImg
-
-          return $ T.emptyResult & T.imageL .~ combinedImg
+    -- Indicator layer: rendered on top by Brick's renderFinal
+    indicatorLayer = historyIndicators
 
     -- Render a line, showing empty lines as a space to preserve them
     renderLine :: String -> T.Widget Name
@@ -293,13 +263,7 @@ handleEvent (T.VtyEvent (V.EvResize _ _)) = do
   -- Check if we're at the bottom before resize
   wasAtBottom <- use lastViewportL >>= \case
     Nothing -> return True  -- Default to bottom if no viewport yet
-    Just vp -> do
-      let scrollTop = vp ^. T.vpTop
-          visibleHeight = snd (vp ^. T.vpSize)
-          totalContentHeight = snd (vp ^. T.vpContentSize)
-          scrollBottom = scrollTop + visibleHeight
-          atBottom = scrollBottom >= totalContentHeight
-      return atBottom
+    Just vp -> return $ MH.isAtBottom vp
 
   -- If we were at bottom, scroll to bottom after resize
   when wasAtBottom $ do
