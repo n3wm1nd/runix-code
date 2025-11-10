@@ -83,8 +83,12 @@ renderBlocksHierarchical baseIndent blocks = renderSections baseIndent 0 blocks
           contentWidgets = renderSections base hLevel sectionBlocks
           -- Use absolute indentation based on header level + base
           indent = base + indentForLevel hLevel
-          -- Don't wrap with padLeft - children handle their own indentation
-          sectionWidget = vBox (padLeft (Pad indent) headerWidget : contentWidgets)
+          -- Add spacing: blank line before header (if not first), header, blank line after
+          blankLine = padLeft (Pad indent) (txt " ")
+          headerWithSpacing = if level == 0 && hLevel == 1
+                                then [padLeft (Pad indent) headerWidget, blankLine]  -- First H1, no space before
+                                else [blankLine, padLeft (Pad indent) headerWidget, blankLine]
+          sectionWidget = vBox (headerWithSpacing ++ contentWidgets)
       -- Continue rendering remaining blocks at the current level
       in sectionWidget : renderSections base level afterSection
     renderSections base level (block : rest) =
