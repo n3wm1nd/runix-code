@@ -157,17 +157,17 @@ instance ProviderImplementation LlamaCpp GLM45Air where
 
 -- | Qwen3-Coder model (via llama.cpp)
 --
--- This model uses a hybrid approach:
--- - Request: Uses native OpenAI tool format (llamacpp understands it)
--- - Response: Model outputs XML, we parse it (llamacpp doesn't recognize it)
+-- This model generates XML tool calls natively, but llama.cpp's chat template
+-- automatically converts them to OpenAI format for us. We receive standard
+-- OpenAI-style tool calls in both streaming and non-streaming responses.
 data Qwen3Coder = Qwen3Coder deriving stock (Show, Eq)
 
 instance ModelName LlamaCpp Qwen3Coder where
   modelName _ = "qwen3-coder"
 
 instance HasTools Qwen3Coder LlamaCpp where
-  withTools = withXMLResponseParsing
+  withTools = OpenAI.openAIWithTools
 
 instance ProviderImplementation LlamaCpp Qwen3Coder where
-  -- Chain: base -> openAIWithTools (native tool format) -> withXMLResponseParsing (parse XML in responses)
-  getComposableProvider = withTools $ OpenAI.openAIWithTools OpenAI.baseComposableProvider
+  -- Chain: base -> openAIWithTools (handles OpenAI-format tool calls from llama.cpp's template)
+  getComposableProvider = withTools OpenAI.baseComposableProvider
