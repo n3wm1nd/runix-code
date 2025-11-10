@@ -51,7 +51,7 @@ emptyUIState = UIState
 data UIVars = UIVars
   { uiStateVar :: TVar UIState      -- ^ Main UI state (agent writes, UI reads)
   , userInputQueue :: TQueue Text   -- ^ User input queue (UI writes, agent reads)
-  , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh
+  , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh (non-blocking, coalesces multiple requests)
   }
 
 -- | Create fresh UI state variables

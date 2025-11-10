@@ -34,7 +34,7 @@ import Data.Text.Zipper (cursorPosition, breakLine, deletePrevChar)
 import Lens.Micro
 import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (when)
+import Control.Monad (when, void)
 import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
@@ -120,11 +120,15 @@ runUI :: (IO () -> IO UIVars)  -- ^ Function to create UIVars with refresh callb
       -> IO ()
 runUI mkUIVars = do
   -- Create event channel for UI refreshes
-  -- Larger buffer to handle rapid resize events without blocking
-  eventChan <- newBChan 100
+  -- Size 1 to coalesce multiple refresh requests - if channel has a pending refresh,
+  -- we don't need to queue another one (writeBChanNonBlocking will return False)
+  eventChan <- newBChan 1
 
-  -- Create UI vars with refresh callback
-  uiVars <- mkUIVars $ writeBChan eventChan RefreshUI
+  -- Create UI vars with refresh callback that coalesces requests
+  uiVars <- mkUIVars $ do
+    -- Non-blocking write - if channel is full (already has a pending refresh), returns False
+    _ <- Brick.BChan.writeBChanNonBlocking eventChan RefreshUI
+    return ()
 
   -- Read initial UI state
   initialUIState <- atomically $ readUIState (uiStateVar uiVars)
@@ -275,9 +279,9 @@ handleEvent (T.AppEvent RefreshUI) = do
   cachedUIStateL .= newUIState
   -- Scroll viewport to bottom to show new content
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
-  -- Send event to update viewport indicators after render
+  -- Send event to update viewport indicators after render (non-blocking)
   chan <- use eventChanL
-  liftIO $ writeBChan chan UpdateViewport
+  liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 -- Update cached viewport state (called after scrolling/rendering)
 handleEvent (T.AppEvent UpdateViewport) = do
@@ -301,20 +305,20 @@ handleEvent (T.VtyEvent (V.EvResize _ _)) = do
   when wasAtBottom $ do
     M.vScrollToEnd (M.viewportScroll HistoryViewport)
 
-  -- Update viewport state after resize
+  -- Update viewport state after resize (non-blocking)
   chan <- use eventChanL
-  liftIO $ writeBChan chan UpdateViewport
+  liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 -- Page Up/Down for scrolling history
 handleEvent (T.VtyEvent (V.EvKey V.KPageUp [])) = do
   M.vScrollPage (M.viewportScroll HistoryViewport) T.Up
   chan <- use eventChanL
-  liftIO $ writeBChan chan UpdateViewport
+  liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 handleEvent (T.VtyEvent (V.EvKey V.KPageDown [])) = do
   M.vScrollPage (M.viewportScroll HistoryViewport) T.Down
   chan <- use eventChanL
-  liftIO $ writeBChan chan UpdateViewport
+  liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 -- Ctrl-T toggles input mode
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
@@ -402,6 +406,6 @@ sendMessage = do
       -- Scroll viewport to bottom
       M.vScrollToEnd (M.viewportScroll HistoryViewport)
 
-      -- Send event to update viewport indicators after render
+      -- Send event to update viewport indicators after render (non-blocking)
       chan <- use eventChanL
-      liftIO $ writeBChan chan UpdateViewport
+      liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
