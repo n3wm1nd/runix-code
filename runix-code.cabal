@@ -150,8 +150,10 @@ benchmark runix-code-bench
                     , microlens
                     , containers
                     , deepseq
+                    , stm
 
     -- Need access to TUI modules for benchmarking
     other-modules:    UI.Rendering
                     , UI.OutputHistory
                     , UI.Attributes
+                    , UI.State

@@ -13,7 +13,7 @@
 module TUI.UI
   ( -- * UI Entry Point
     runUI
-    -- * Types
+    -- * Types (re-export from UI.State)
   , Name(..)
   , InputMode(..)
   , AppState(..)
@@ -39,8 +39,8 @@ import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), UIState(..), provideUserInput, readUIState, uiStateVar)
-import UI.OutputHistory (OutputMessage, shouldDisplay, renderOutputMessage, renderOutputMessageRaw, renderOutputMessages)
+import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar)
+import UI.OutputHistory (RenderedMessage(..), shouldDisplay, renderOutputMessage, renderOutputMessageRaw)
 import qualified UI.Attributes as Attrs
 
 -- | Custom events for the TUI
@@ -50,10 +50,6 @@ data CustomEvent = RefreshUI | UpdateViewport
 --------------------------------------------------------------------------------
 -- Types
 --------------------------------------------------------------------------------
-
--- | Resource names for widgets
-data Name = InputEditor | HistoryViewport
-  deriving stock (Eq, Ord, Show)
 
 -- | Input mode: what Enter key does
 data InputMode = EnterSends | EnterNewline
@@ -189,12 +185,21 @@ drawUI st = [indicatorLayer, baseLayer]  -- Try reversed order
                     RenderMarkdown -> "Markdown: rendered"
                     ShowRaw -> "Markdown: raw"
 
-    -- Filter and render output history
-    filteredOutput = filter (shouldDisplay (uiDisplayFilter cached)) (uiOutputHistory cached)
-    renderFunc = case _markdownMode st of
-                   RenderMarkdown -> renderOutputMessage
-                   ShowRaw -> renderOutputMessageRaw
-    historyWidgets = renderOutputMessages renderFunc filteredOutput
+    -- Filter and extract cached widgets from output history
+    filteredOutput = filter (shouldDisplay (uiDisplayFilter cached) . rmMessage) (uiOutputHistory cached)
+
+    -- Extract cached widgets based on markdown mode (NO re-rendering!)
+    historyWidgets = case _markdownMode st of
+      RenderMarkdown ->
+        -- Use cached markdown widgets, reverse to oldest-first for display, add spacing
+        renderHistoryWithSpacing (map rmMarkdownWidgets (reverse filteredOutput))
+      ShowRaw ->
+        -- Use cached raw widgets, reverse to oldest-first for display, add spacing
+        renderHistoryWithSpacing (map rmRawWidgets (reverse filteredOutput))
+
+    -- Add spacing between messages (blank lines before/after)
+    renderHistoryWithSpacing :: [[T.Widget Name]] -> [T.Widget Name]
+    renderHistoryWithSpacing = concatMap (\widgets -> txt " " : widgets ++ [txt " "])
 
     statusText = Text.unpack (uiStatus cached)
 

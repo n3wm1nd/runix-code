@@ -5,18 +5,38 @@
 -- This module defines the shared state between the effect interpreter stack
 -- and the brick UI thread. The effect interpreters write to this state,
 -- and the UI reads from it.
-module UI.State where
+module UI.State
+  ( UIState(..)
+  , UIVars(..)
+  , Name(..)
+  , emptyUIState
+  , newUIVars
+  , appendLog
+  , appendStreamingChunk
+  , setStatus
+  , patchMessages
+  , setDisplayFilter
+  , readUIState
+  , waitForUserInput
+  , provideUserInput
+  , uiStateVar
+  , userInputQueue
+  ) where
 
 import Control.Concurrent.STM
 import Data.Text (Text)
 import qualified Data.Text as T
-import UI.OutputHistory (OutputMessage(..), DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk)
+import UI.OutputHistory (OutputHistory, RenderedMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk)
+
+-- | Resource names for widgets (defined here to avoid circular dependency)
+data Name = InputEditor | HistoryViewport
+  deriving stock (Eq, Ord, Show)
 
 -- | UI state shared between agent thread and UI thread
 data UIState = UIState
-  { uiOutputHistory :: [OutputMessage]  -- ^ Complete timeline of all output
-  , uiStatus :: Text                     -- ^ Current status message
-  , uiDisplayFilter :: DisplayFilter     -- ^ What to show in the UI
+  { uiOutputHistory :: OutputHistory Name  -- ^ Complete timeline with cached widgets (newest first)
+  , uiStatus :: Text                        -- ^ Current status message
+  , uiDisplayFilter :: DisplayFilter        -- ^ What to show in the UI
   }
 
 -- | Initial empty UI state
@@ -63,8 +83,8 @@ setStatus vars status = do
     st { uiStatus = status }
   refreshSignal vars
 
--- | Patch the output history with new messages and trigger refresh
-patchMessages :: UIVars -> [OutputMessage] -> IO ()
+-- | Patch the output history with new rendered messages and trigger refresh
+patchMessages :: UIVars -> OutputHistory Name -> IO ()
 patchMessages vars newOutput = do
   atomically $ modifyTVar' (uiStateVar vars) $ \st ->
     st { uiOutputHistory = newOutput }
