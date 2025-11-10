@@ -30,7 +30,7 @@ import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, runReader, ask)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
-import UniversalLLM (HasTools, SupportsSystemPrompt)
+import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
@@ -107,6 +107,7 @@ runixCode
      , Member (Reader SystemPrompt) r
      , HasTools model provider
      , SupportsSystemPrompt provider
+     , SupportsStreaming provider
      )
   => UserPrompt
   -> Sem r (RunixCodeResult provider model)
@@ -116,6 +117,7 @@ runixCode (UserPrompt userPrompt) = do
 
   let baseConfigs :: [ULL.ModelConfig provider model]
       baseConfigs = [ ULL.SystemPrompt sysPrompt
+                    , ULL.Streaming True  -- Enable streaming for real-time updates
                     ]
       newHistory = currentHistory ++ [UserText userPrompt]
 
@@ -138,6 +140,7 @@ runRunixCode
      , Member Logging r
      , HasTools model provider
      , SupportsSystemPrompt provider
+     , SupportsStreaming provider
      )
   => SystemPrompt
   -> [Message model provider]
@@ -171,6 +174,7 @@ runixCodeAgentLoop
      , Member (State [Tools.Todo]) r
      , HasTools model provider
      , SupportsSystemPrompt provider
+     , SupportsStreaming provider
      )
   => Sem r (RunixCodeResult provider model)
 runixCodeAgentLoop = do

@@ -24,6 +24,7 @@ module UI.OutputHistory
   , addSystemEvent
   , addStreamingChunk
   , addToolExecution
+  , removeStreamingChunks
   ) where
 
 import Data.Text (Text)
@@ -113,7 +114,7 @@ renderOutputMessage (LogEntry level msg) =
   in [txt marker <+> vBox (markdownToWidgets msg)]
 renderOutputMessage (StreamingChunk text) =
   let contentWidgets = markdownToWidgetsWithIndent 1 text
-  in combineMarkerWithContent ">" contentWidgets
+  in combineMarkerWithContent "}" contentWidgets
 renderOutputMessage (SystemEvent msg) =
   [txt "S " <+> vBox (markdownToWidgets msg)]
 renderOutputMessage (ToolExecution name) =
@@ -131,6 +132,9 @@ renderOutputMessages renderFunc messages = go messages
         ConversationMessage _ _ ->
           -- Add blank line before, render message, add blank line after
           -- Use txt " " instead of emptyWidget to ensure it takes vertical space
+          txt " " : renderFunc msg ++ [txt " "] ++ go rest
+        StreamingChunk _ ->
+          -- Add blank line before streaming chunk (same as conversation message)
           txt " " : renderFunc msg ++ [txt " "] ++ go rest
         _ ->
           -- No spacing for logs, system events, tool executions
@@ -154,24 +158,34 @@ renderOutputMessageRaw (LogEntry level msg) =
                  Error -> "E "
   in [txt marker <+> txt msg]
 renderOutputMessageRaw (StreamingChunk text) =
-  [txt ">" <+> padLeft (Pad 1) (txt text)]
+  [txt "}" <+> padLeft (Pad 1) (txt text)]
 renderOutputMessageRaw (SystemEvent msg) = [txt "S " <+> txt msg]
 renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
 -- | Patch the output history with a new message list
 --
 -- Strategy:
--- 1. Extract current conversation messages and their indices
--- 2. Compare with new messages
--- 3. Keep matching prefix unchanged
--- 4. For diverging messages: replace old messages but keep non-message entries (logs, etc.)
--- 5. Preserve all non-message entries throughout the history
+-- 1. Remove all streaming chunks (they were just a preview)
+-- 2. Extract current conversation messages and their indices
+-- 3. Compare with new messages
+-- 4. Keep matching prefix unchanged
+-- 5. For diverging messages: replace old messages but keep non-message entries (logs, etc.)
+-- 6. Preserve all non-message entries throughout the history
 patchOutputHistory :: forall model provider.
                       [Message model provider]  -- ^ New message list
                    -> (Message model provider -> Text)  -- ^ Message renderer
                    -> [OutputMessage]  -- ^ Current output history
                    -> [OutputMessage]  -- ^ Patched output history
 patchOutputHistory newMessages renderMsg currentOutput =
+  let currentOutputClean = removeStreamingChunks currentOutput
+  in patchOutputHistory' newMessages renderMsg currentOutputClean
+
+patchOutputHistory' :: forall model provider.
+                      [Message model provider]  -- ^ New message list
+                   -> (Message model provider -> Text)  -- ^ Message renderer
+                   -> [OutputMessage]  -- ^ Current output history
+                   -> [OutputMessage]  -- ^ Patched output history
+patchOutputHistory' newMessages renderMsg currentOutput =
   let
     -- Extract conversation messages with their positions in output list
     currentMsgIndices :: [(Int, Int, Text)]  -- (output index, msg index, text)
@@ -230,9 +244,26 @@ addLog level msg output = output ++ [LogEntry level msg]
 addSystemEvent :: Text -> [OutputMessage] -> [OutputMessage]
 addSystemEvent msg output = output ++ [SystemEvent msg]
 
--- | Add a streaming chunk to the output history
+-- | Add or update streaming chunk in the output history
+-- If the last entry is a StreamingChunk, append to it
+-- Otherwise, create a new StreamingChunk entry
 addStreamingChunk :: Text -> [OutputMessage] -> [OutputMessage]
-addStreamingChunk chunk output = output ++ [StreamingChunk chunk]
+addStreamingChunk chunk output =
+  case reverse output of
+    (StreamingChunk existing : rest) ->
+      -- Append to existing streaming chunk
+      reverse (StreamingChunk (existing <> chunk) : rest)
+    _ ->
+      -- Create new streaming chunk
+      output ++ [StreamingChunk chunk]
+
+-- | Remove all streaming chunks from output history
+-- Used when the final response arrives to replace the preview
+removeStreamingChunks :: [OutputMessage] -> [OutputMessage]
+removeStreamingChunks = filter (not . isStreamingChunk)
+  where
+    isStreamingChunk (StreamingChunk _) = True
+    isStreamingChunk _ = False
 
 -- | Add a tool execution indicator
 addToolExecution :: Text -> [OutputMessage] -> [OutputMessage]

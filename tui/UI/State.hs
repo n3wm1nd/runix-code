@@ -10,7 +10,7 @@ module UI.State where
 import Control.Concurrent.STM
 import Data.Text (Text)
 import qualified Data.Text as T
-import UI.OutputHistory (OutputMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog)
+import UI.OutputHistory (OutputMessage(..), DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk)
 
 -- | UI state shared between agent thread and UI thread
 data UIState = UIState
@@ -47,6 +47,13 @@ appendLog :: UIVars -> Text -> IO ()
 appendLog vars msg = do
   atomically $ modifyTVar' (uiStateVar vars) $ \st ->
     st { uiOutputHistory = addLog Info msg (uiOutputHistory st) }
+  refreshSignal vars
+
+-- | Append a streaming chunk to output history and trigger refresh
+appendStreamingChunk :: UIVars -> Text -> IO ()
+appendStreamingChunk vars chunk = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiOutputHistory = addStreamingChunk chunk (uiOutputHistory st) }
   refreshSignal vars
 
 -- | Update the status line and trigger refresh

@@ -30,23 +30,27 @@ import Runix.Secret.Effects (runSecret)
 
 import Config
 import Models
-import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, withRequestTimeout, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
 import TUI.UI (runUI)
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
-import Runix.HTTP.Effects (HTTP)
+import Runix.HTTP.Effects (HTTP, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..))
+import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
+import Runix.Streaming.SSE (extractTextFromChunk)
 import UI.Effects (UI, messageToDisplay)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory, appendStreamingChunk)
 import UI.OutputHistory (patchOutputHistory)
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import Control.Monad (forever)
 import Polysemy.Fail (Fail)
-import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderImplementation)
+import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming, ProviderImplementation)
+import qualified Data.ByteString as BS
+import qualified Data.Text.Encoding as TE
 
 --------------------------------------------------------------------------------
 -- Existential wrapper for history + runner
@@ -58,6 +62,7 @@ data AgentRunner where
   AgentRunner :: forall model provider.
     ( HasTools model provider
     , SupportsSystemPrompt provider
+    , SupportsStreaming provider
     , ProviderImplementation provider model
     )
     => IORef [Message model provider]  -- History storage
@@ -104,6 +109,7 @@ main = do
 agentLoop :: forall model provider.
              ( HasTools model provider
              , SupportsSystemPrompt provider
+             , SupportsStreaming provider
              , ProviderImplementation provider model
              )
           => UIVars
@@ -148,15 +154,36 @@ agentLoop uiVars historyRef runner = forever $ do
 -- Runner Creation
 --------------------------------------------------------------------------------
 
+-- | Reinterpret StreamChunk BS.ByteString to StreamChunk Text by extracting SSE text deltas
+reinterpretSSEChunks :: Sem (StreamChunk BS.ByteString : r) a
+                     -> Sem (StreamChunk T.Text : r) a
+reinterpretSSEChunks = reinterpret $ \case
+  EmitChunk chunk ->
+    case extractTextFromChunk chunk of
+      Just text -> emitChunk text
+      Nothing -> return ()  -- Ignore non-text chunks (like message_start events)
+
+-- | Interpret StreamChunk Text by sending to UI
+interpretStreamChunkToUI :: Member (Embed IO) r
+                         => UIVars
+                         -> Sem (StreamChunk T.Text : r) a
+                         -> Sem r a
+interpretStreamChunkToUI uiVars = interpret $ \case
+  EmitChunk text ->
+    embed $ appendStreamingChunk uiVars text
+
 -- | Effect interpretation stack for TUI
 -- Logging effect is reinterpreted as UI effect for display
+-- HTTP emits StreamChunk BS -> reinterpret to Text -> interpret to UI
 runBaseEffects uiVars =
   runM
     . runError
     . interpretUI uiVars
     . interpretLoggingToUI
     . failLog
-    . httpIO (withRequestTimeout 300)
+    . interpretStreamChunkToUI uiVars  -- Handle StreamChunk Text
+    . reinterpretSSEChunks              -- Convert StreamChunk BS -> StreamChunk Text
+    . httpIOStreaming (withRequestTimeout 300)  -- Emit StreamChunk BS
     . cmdIO
     . bashIO
     . filesystemIO
