@@ -91,7 +91,16 @@ renderBlocksHierarchical baseIndent blocks = renderSections baseIndent 0 blocks
       -- Non-header block at current level
       let indent = base + indentForLevel level
           widget = padLeft (Pad indent) (renderBlock block)
-      in widget : renderSections base level rest
+          -- Add spacing between blocks (except between consecutive list items)
+          widgets = case (block, rest) of
+                      -- No extra spacing between list items
+                      (BulletList _, BulletList _ : _) -> [widget]
+                      (OrderedList _ _, OrderedList _ _ : _) -> [widget]
+                      -- Add blank line after other blocks if there's more content
+                      (_, _:_) -> [widget, padLeft (Pad indent) (txt " ")]
+                      -- Last block, no spacing needed
+                      (_, []) -> [widget]
+      in widgets ++ renderSections base level rest
 
     -- Calculate relative indentation for a given header level
     -- Level 0 (root/no header) = 0
@@ -141,9 +150,84 @@ renderBlock (OrderedList _attrs items) =
        | (n, item) <- zip [1::Int ..] items]
 renderBlock HorizontalRule = txt "---"
 renderBlock (Div _attr blocks) = vBox (map renderBlock blocks)
+renderBlock (Table _attr _caption _colSpecs (TableHead _headAttr headRows) tableBodies _tableFoot) =
+  renderTable headRows tableBodies
 renderBlock LineBlock{} = txt ""
 renderBlock RawBlock{} = txt ""
 renderBlock _ = txt ""
+
+-- | Render a table with fixed-width columns
+-- Calculates column widths based on content, then renders with proper alignment
+renderTable :: forall n. [Row] -> [TableBody] -> Widget n
+renderTable headRows tableBodies =
+  let allRows = headRows ++ concatMap getBodyRows tableBodies
+      -- Calculate column widths from all rows
+      columnWidths = calculateColumnWidths allRows
+      -- Render header
+      headerWidgets = map (renderRow columnWidths) headRows
+      -- Create separator line
+      separator = renderSeparator columnWidths
+      -- Render body rows
+      bodyWidgets = concatMap (renderTableBodyWithWidths columnWidths) tableBodies
+  in vBox $ headerWidgets ++ [separator] ++ bodyWidgets
+  where
+    getBodyRows :: TableBody -> [Row]
+    getBodyRows (TableBody _attr _rowHeadCols _headRows bodyRows) = bodyRows
+
+    -- Calculate the width needed for each column
+    calculateColumnWidths :: [Row] -> [Int]
+    calculateColumnWidths rows =
+      let cellContents = map getRowCells rows
+          numCols = maximum (0 : map length cellContents)
+          -- Transpose to get columns
+          columns = transpose' numCols cellContents
+      in map maxColumnWidth columns
+
+    getRowCells :: Row -> [Text]
+    getRowCells (Row _attr cells) = map getCellText cells
+
+    getCellText :: Cell -> Text
+    getCellText (Cell _attr _align _rowSpan _colSpan blocks) =
+      renderBlocksToText blocks
+
+    -- Simple transpose that pads with empty strings
+    transpose' :: Int -> [[Text]] -> [[Text]]
+    transpose' numCols rows =
+      [[if i < length row then row !! i else "" | row <- rows] | i <- [0..numCols-1]]
+
+    maxColumnWidth :: [Text] -> Int
+    maxColumnWidth texts = maximum (3 : map T.length texts)  -- Minimum width of 3
+
+    renderSeparator :: [Int] -> Widget n
+    renderSeparator widths =
+      let segments = map (\w -> T.replicate (w + 2) "-") widths  -- +2 for padding
+      in txt $ "|" <> T.intercalate "|" segments <> "|"
+
+    renderTableBodyWithWidths :: [Int] -> TableBody -> [Widget n]
+    renderTableBodyWithWidths widths (TableBody _attr _rowHeadCols _headRows bodyRows) =
+      map (renderRow widths) bodyRows
+
+    renderRow :: [Int] -> Row -> Widget n
+    renderRow widths (Row _attr cells) =
+      let cellWidgets = zipWith renderCellWithWidth widths cells
+          -- Pad with empty cells if row has fewer cells than columns
+          paddedWidgets = cellWidgets ++ replicate (length widths - length cellWidgets) (txt "|  ")
+      in txt "|" <+> hBox paddedWidgets
+
+    renderCellWithWidth :: Int -> Cell -> Widget n
+    renderCellWithWidth width (Cell _attr _align _rowSpan _colSpan blocks) =
+      let cellText = renderBlocksToText blocks
+          padded = cellText <> T.replicate (width - T.length cellText) " "
+      in txt (" " <> padded <> " |")
+
+    -- Convert blocks to plain text for width calculation
+    renderBlocksToText :: [Block] -> Text
+    renderBlocksToText blocks = T.intercalate " " (map renderBlockToText blocks)
+
+    renderBlockToText :: Block -> Text
+    renderBlockToText (Para inlines) = renderInlinesToText inlines
+    renderBlockToText (Plain inlines) = renderInlinesToText inlines
+    renderBlockToText _ = ""
 
 -- | Render inline elements with formatting and proper wrapping
 -- This converts inlines to text segments with attributes, then wraps them
