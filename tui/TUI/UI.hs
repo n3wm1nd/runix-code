@@ -293,6 +293,9 @@ handleEvent (T.VtyEvent (V.EvResize _ _)) = do
     Nothing -> return True  -- Default to bottom if no viewport yet
     Just vp -> return $ MH.isAtBottom vp
 
+  -- Invalidate cache since word wrapping changes on resize
+  invalidateCacheEntry CompletedHistory
+
   -- If we were at bottom, scroll to bottom after resize
   when wasAtBottom $ do
     M.vScrollToEnd (M.viewportScroll HistoryViewport)
