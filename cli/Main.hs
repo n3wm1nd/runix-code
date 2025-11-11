@@ -24,7 +24,7 @@ import Runix.Logging.Effects (Logging)
 import Runix.Secret.Effects (runSecret)
 
 import Agent (SystemPrompt(..), UserPrompt(..), runRunixCode, responseText)
-import Models
+import Models (ModelDefaults(..), ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..))
 import Config
 import Runner
 
@@ -117,7 +117,9 @@ runAgent :: forall provider model r.
             , Member Fail r
             , HasTools model provider
             , SupportsSystemPrompt provider
+            , SupportsStreaming provider
             , ProviderImplementation provider model
+            , ModelDefaults provider model
             )
          => Config
          -> Text
@@ -130,6 +132,7 @@ runAgent cfg userInput = do
 
   let sysPrompt = SystemPrompt sysPromptText
       userPrompt = UserPrompt userInput
+      configs = defaultConfigs @provider @model
 
   -- Load session (if specified)
   initialHistory <- case cfgSessionFile cfg of
@@ -137,7 +140,7 @@ runAgent cfg userInput = do
     Just sessionFile -> loadSession @provider @model sessionFile
 
   -- Run the agent
-  (result, finalHistory) <- runRunixCode @provider @model sysPrompt initialHistory userPrompt
+  (result, finalHistory) <- runRunixCode @provider @model sysPrompt configs initialHistory userPrompt
 
   -- Save session (if specified)
   case cfgSessionFile cfg of
