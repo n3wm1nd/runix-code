@@ -24,6 +24,7 @@ import qualified Brick.Types as T
 import Brick.Widgets.Core
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
+import Brick.Main (invalidateCacheEntry)
 import qualified Brick.AttrMap as A
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
@@ -40,7 +41,7 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar)
-import UI.OutputHistory (RenderedMessage(..), shouldDisplay, renderOutputMessage, renderOutputMessageRaw)
+import UI.OutputHistory (RenderedMessage(..), OutputMessage(..), shouldDisplay)
 import qualified UI.Attributes as Attrs
 import qualified TUI.Widgets.MessageHistory as MH
 
@@ -173,7 +174,7 @@ app = M.App
 drawUI :: AppState -> [T.Widget Name]
 drawUI st = [indicatorLayer, baseLayer]
   where
-    cached = _cachedUIState st
+    uiState = _cachedUIState st
 
     -- Calculate dimensions
     availHeight = 100  -- This will be determined by context, placeholder for now
@@ -190,23 +191,36 @@ drawUI st = [indicatorLayer, baseLayer]
                     RenderMarkdown -> "Markdown: rendered"
                     ShowRaw -> "Markdown: raw"
 
-    -- Filter and extract cached widgets from output history
-    filteredOutput = filter (shouldDisplay (uiDisplayFilter cached) . rmMessage) (uiOutputHistory cached)
+    -- Separate streaming chunks from completed output
+    (streamingMsgs, completedMsgs) = span isStreaming (uiOutputHistory uiState)
 
-    -- Extract cached widgets based on markdown mode (NO re-rendering!)
-    historyWidgets = case _markdownMode st of
-      RenderMarkdown ->
-        -- Use cached markdown widgets, reverse to oldest-first for display, add spacing
-        renderHistoryWithSpacing (map rmMarkdownWidgets (reverse filteredOutput))
-      ShowRaw ->
-        -- Use cached raw widgets, reverse to oldest-first for display, add spacing
-        renderHistoryWithSpacing (map rmRawWidgets (reverse filteredOutput))
+    isStreaming m = case rmMessage m of
+      StreamingChunk _ -> True
+      _ -> False
 
-    -- Add spacing between messages (blank lines before/after)
-    renderHistoryWithSpacing :: [[T.Widget Name]] -> [T.Widget Name]
-    renderHistoryWithSpacing = concatMap (\widgets -> txt " " : widgets ++ [txt " "])
+    -- Filter based on display filter
+    filteredCompleted = filter (shouldDisplay (uiDisplayFilter uiState) . rmMessage) completedMsgs
+    filteredStreaming = filter (shouldDisplay (uiDisplayFilter uiState) . rmMessage) streamingMsgs
 
-    statusText = Text.unpack (uiStatus cached)
+    -- Extract completed widgets (cached, oldest-first for display)
+    completedWidgets = case _markdownMode st of
+      RenderMarkdown -> concatMap rmMarkdownWidgets (reverse filteredCompleted)
+      ShowRaw -> concatMap rmRawWidgets (reverse filteredCompleted)
+
+    -- Extract streaming widgets (not cached, oldest-first for display)
+    streamingWidgets = case _markdownMode st of
+      RenderMarkdown -> concatMap rmMarkdownWidgets (reverse filteredStreaming)
+      ShowRaw -> concatMap rmRawWidgets (reverse filteredStreaming)
+
+    -- Combine: cache completed (including logs), don't cache streaming
+    historyWidgets =
+      if null completedWidgets
+      then streamingWidgets
+      else if null streamingWidgets
+        then [cached CompletedHistory (vBox completedWidgets)]
+        else [cached CompletedHistory (vBox completedWidgets), hBorder] ++ streamingWidgets
+
+    statusText = Text.unpack (uiStatus uiState)
 
     -- MessageHistory returns (base, indicators) for Brick's layer system
     (historyBase, historyIndicators) = MH.messageHistory HistoryViewport (_lastViewport st) historyWidgets
@@ -245,7 +259,19 @@ handleEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 -- Refresh UI state from STM and scroll to bottom
 handleEvent (T.AppEvent RefreshUI) = do
   vars <- use uiVarsL
+  oldUIState <- use cachedUIStateL
   newUIState <- liftIO $ atomically $ readUIState (uiStateVar vars)
+
+  -- Check if completed (non-streaming) output changed
+  let oldCompleted = filter (not . isStreamingMsg . rmMessage) (uiOutputHistory oldUIState)
+      newCompleted = filter (not . isStreamingMsg . rmMessage) (uiOutputHistory newUIState)
+      isStreamingMsg (StreamingChunk _) = True
+      isStreamingMsg _ = False
+
+  -- Invalidate cache if completed output changed
+  when (length oldCompleted /= length newCompleted) $
+    invalidateCacheEntry CompletedHistory
+
   cachedUIStateL .= newUIState
   -- Scroll viewport to bottom to show new content
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
@@ -299,6 +325,8 @@ handleEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
         RenderMarkdown -> ShowRaw
         ShowRaw -> RenderMarkdown
   markdownModeL .= newMode
+  -- Invalidate cache since we're switching between markdown/raw rendering
+  invalidateCacheEntry CompletedHistory
 
 -- Ctrl-D sends message (useful in EnterNewline mode)
 handleEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage

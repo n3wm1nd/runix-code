@@ -30,6 +30,8 @@ module UI.OutputHistory
   , addStreamingChunk
   , addToolExecution
   , removeStreamingChunks
+    -- * Performance Optimization
+  , splitHistory
   ) where
 
 import Data.Text (Text)
@@ -129,20 +131,21 @@ combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
 
 -- | Render an output message to Brick widgets with markdown formatting
 -- Message content is indented by 1 space, with markers at column 0
--- Note: Spacing is handled by renderOutputMessages, not here
+-- Adds one blank line before and after conversation messages
 renderOutputMessage :: forall n. OutputMessage -> [Widget n]
 renderOutputMessage (ConversationMessage _ text) =
   -- Extract "You:" or "Agent:" prefix and render separately
   -- The content after the prefix has "  " indent that we need to strip
-  case T.stripPrefix "You:\n  " text of
-    Just content ->
-      let contentWidgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
-      in combineMarkerWithContent "<" contentWidgets
-    Nothing -> case T.stripPrefix "Agent:\n  " text of
-      Just content ->
-        let contentWidgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
-        in combineMarkerWithContent ">" contentWidgets
-      Nothing -> markdownToWidgetsWithIndent 1 text  -- Fallback
+  let contentWidgets = case T.stripPrefix "You:\n  " text of
+        Just content ->
+          let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+          in combineMarkerWithContent "<" widgets
+        Nothing -> case T.stripPrefix "Agent:\n  " text of
+          Just content ->
+            let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+            in combineMarkerWithContent ">" widgets
+          Nothing -> markdownToWidgetsWithIndent 1 text  -- Fallback
+  in txt " " : contentWidgets ++ [txt " "]  -- Blank line before and after
 
 renderOutputMessage (LogEntry level msg) =
   let marker = case level of
@@ -202,11 +205,8 @@ renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
 -- | Patch the output history with a new message list
 --
--- Strategy (with newest-first ordering):
--- 1. Remove all streaming chunks (they were just a preview)
--- 2. Extract non-message entries from current output (logs, etc.) - these are preserved
--- 3. Render all new messages from the agent
--- 4. Result = new messages (newest-first) + non-message entries (newest-first)
+-- Remove streaming, figure out which messages are NEW, prepend them
+-- Logs stay in place chronologically
 --
 -- Note: Input message list is oldest-first (from agent), output history is newest-first
 patchOutputHistory :: forall model provider n.
@@ -216,21 +216,24 @@ patchOutputHistory :: forall model provider n.
                    -> OutputHistory n  -- ^ Patched output history (newest first)
 patchOutputHistory newMessages renderMsg currentOutput =
   let
-    -- Remove streaming chunks (they were just a preview)
-    currentOutputClean = removeStreamingChunks currentOutput
+    -- Remove streaming chunks
+    withoutStreaming = removeStreamingChunks currentOutput
 
-    -- Extract non-message entries (logs, system events, tool executions) - already newest-first
-    nonMessageEntries = [entry | entry <- currentOutputClean, not (isConversationMessage (rmMessage entry))]
+    -- Count how many conversation messages are already in output
+    existingCount = length [() | m <- withoutStreaming, isConvMsg (rmMessage m)]
 
-    -- Render all new messages with indices (oldest first from agent)
-    newRendered :: [(Int, Text)]
-    newRendered = zip [0..] (map renderMsg newMessages)
+    -- Only render NEW messages (messages beyond what's already there)
+    newMsgsToRender = drop existingCount newMessages
+    newRendered = [renderMessage (ConversationMessage idx (renderMsg msg))
+                   | (idx, msg) <- zip [existingCount..] newMsgsToRender]
 
-    -- Create rendered messages in newest-first order by reversing the agent's oldest-first list
-    newMsgOutput = reverse [renderMessage (ConversationMessage idx msgText) | (idx, msgText) <- newRendered]
+    -- Prepend new messages (reversed to newest-first) to existing output
+  in reverse newRendered ++ withoutStreaming
 
-    -- Result: new messages (newest-first) + non-message entries (newest-first)
-  in newMsgOutput ++ nonMessageEntries
+  where
+    isConvMsg :: OutputMessage -> Bool
+    isConvMsg (ConversationMessage _ _) = True
+    isConvMsg _ = False
 
 -- | Check if an output message is a conversation message
 isConversationMessage :: OutputMessage -> Bool
@@ -269,3 +272,28 @@ removeStreamingChunks = filter (not . isStreamingChunk . rmMessage)
 -- | Add a tool execution indicator (cons to front - newest first)
 addToolExecution :: forall n. Text -> OutputHistory n -> OutputHistory n
 addToolExecution name output = renderMessage (ToolExecution name) : output
+
+--------------------------------------------------------------------------------
+-- Performance Optimization
+--------------------------------------------------------------------------------
+
+-- | Split output history into stable/transient parts for rendering optimization
+-- For performance optimization: stable messages can be cached, transient content re-rendered
+--
+-- Returns: (stable history to cache, transient content to re-render each frame)
+--
+-- Everything up to and including the most recent ASSISTANT message is stable (cached).
+-- Everything after (logs during streaming, streaming chunks) is transient (re-rendered).
+--
+splitHistory :: forall n. OutputHistory n -> (OutputHistory n, OutputHistory n)
+splitHistory history = (stableHistory, transientHistory)
+  where
+    -- Find the first assistant message (newest-first traversal)
+    -- Everything BEFORE it is transient (logs, streaming since assistant's response)
+    -- Everything FROM it onwards is stable (assistant msg + older history with logs)
+    (transientHistory, stableHistory) = break isAssistantMessage history
+
+    isAssistantMessage :: RenderedMessage n -> Bool
+    isAssistantMessage m = case rmMessage m of
+      ConversationMessage _ text -> "Agent:" `T.isPrefixOf` text
+      _ -> False

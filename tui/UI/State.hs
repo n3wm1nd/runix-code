@@ -29,7 +29,7 @@ import qualified Data.Text as T
 import UI.OutputHistory (OutputHistory, RenderedMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk)
 
 -- | Resource names for widgets (defined here to avoid circular dependency)
-data Name = InputEditor | HistoryViewport
+data Name = InputEditor | HistoryViewport | CompletedHistory
   deriving stock (Eq, Ord, Show)
 
 -- | UI state shared between agent thread and UI thread
