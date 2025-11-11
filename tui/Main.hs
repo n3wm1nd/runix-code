@@ -11,6 +11,7 @@
 module Main (main) where
 
 import qualified Data.Text as T
+import Data.Text (Text)
 import Data.IORef
 import System.Environment (lookupEnv)
 import System.IO (hPutStr)
@@ -107,6 +108,22 @@ main = do
 --------------------------------------------------------------------------------
 
 -- | Agent loop that processes user input from the UI
+-- | Update history and sync outputHistory - single source of truth
+updateHistory :: forall model provider.
+                 ProviderImplementation provider model
+              => UIVars
+              -> IORef [Message model provider]
+              -> [Message model provider]
+              -> (Message model provider -> Text)
+              -> IO ()
+updateHistory uiVars historyRef newHistory renderMsg = do
+  -- Update historyRef (source of truth)
+  writeIORef historyRef newHistory
+  -- Patch outputHistory from the new history
+  currentOutput <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
+  let patchedOutput = patchOutputHistory newHistory renderMsg currentOutput
+  patchMessages uiVars patchedOutput
+
 agentLoop :: forall model provider.
              ( HasTools model provider
              , SupportsSystemPrompt provider
@@ -125,12 +142,12 @@ agentLoop uiVars historyRef runner = forever $ do
   -- Get current history
   currentHistory <- readIORef historyRef
 
-  -- Immediately show user message in UI
-  currentOutput <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
-  let patchedWithUser = patchOutputHistory [UserText userInput] (messageToDisplay @model @provider) currentOutput
-  patchMessages uiVars patchedWithUser
+  -- Immediately add user message to history and show in UI
+  let historyWithUser = currentHistory ++ [UserText userInput]
+  updateHistory uiVars historyRef historyWithUser (messageToDisplay @model @provider)
 
   -- Run the agent with model-specific default configs
+  -- runixCode will add the user message to the history internally (so we pass the old history)
   let configs = defaultConfigs @provider @model
   result <- runner $ runRunixCode @provider @model
                        (SystemPrompt "you are a helpful agent")
@@ -143,22 +160,11 @@ agentLoop uiVars historyRef runner = forever $ do
       -- Show error in UI
       appendLog uiVars (T.pack $ "Agent error: " ++ err)
       setStatus uiVars (T.pack "Error occurred")
+      -- History already has user message from above, nothing more to do
+
     Right (_result, newHistory) -> do
-      -- Update history (one write per turn)
-      writeIORef historyRef newHistory
-
-      -- Calculate which messages are NEW by comparing with what's already in OutputHistory
-      currentOutput2 <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
-
-      -- Extract the text of messages already displayed (conversation messages only)
-      let existingTexts = [text | RenderedMessage (ConversationMessage _ text) _ _ <- currentOutput2]
-
-      -- Find messages in newHistory that aren't already displayed
-      let newMessages = filter (\msg -> (messageToDisplay @model @provider msg) `notElem` existingTexts) newHistory
-
-      -- Patch output history with only the NEW messages (preserving logs)
-      let patchedOutput = patchOutputHistory newMessages (messageToDisplay @model @provider) currentOutput2
-      patchMessages uiVars patchedOutput
+      -- Update history with agent's response
+      updateHistory uiVars historyRef newHistory (messageToDisplay @model @provider)
       setStatus uiVars (T.pack "Ready")
 
 --------------------------------------------------------------------------------

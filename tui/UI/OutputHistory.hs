@@ -222,8 +222,10 @@ renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
 -- | Patch the output history with a new message list
 --
--- Remove streaming chunks, add new conversation messages.
--- Everything else (logs, old messages) stays in place.
+-- Intelligently merges new message history with existing output history:
+-- - Preserves all non-message items (logs, system events, etc.) in their original positions
+-- - Handles message additions, deletions, and modifications
+-- - Works recursively without counting
 --
 -- Note: Input message list is oldest-first (from agent), output history is newest-first
 patchOutputHistory :: forall model provider n.
@@ -233,14 +235,46 @@ patchOutputHistory :: forall model provider n.
                    -> OutputHistory n  -- ^ Patched output history (newest first)
 patchOutputHistory newMessages renderMsg currentOutput =
   let
-    -- Remove all streaming chunks
+    -- Remove all streaming chunks first
     withoutStreaming = removeStreamingChunks currentOutput
 
-    -- Render all new messages (they're all new from this turn)
-    renderedNew = map (\msg -> renderMessage (ConversationMessage 0 (renderMsg msg))) newMessages
+    -- Render new messages to text for comparison
+    newMessagesTexts = reverse $ map renderMsg newMessages  -- Reverse to newest-first for comparison
 
-    -- Add new messages to front (reversed to newest-first) and leave everything else alone
-  in reverse renderedNew ++ withoutStreaming
+  in mergeHistories newMessagesTexts withoutStreaming
+  where
+    -- Recursively merge new messages with output history
+    -- newMsgs: newest-first list of message texts
+    -- output: newest-first OutputHistory (with logs interspersed)
+    mergeHistories :: [Text] -> OutputHistory n -> OutputHistory n
+    mergeHistories [] output =
+      -- No new messages: remove all conversation messages, keep logs
+      filter (not . isConversationMessage . rmMessage) output
+
+    mergeHistories newMsgs [] =
+      -- No old output: add all new messages
+      map (\text -> renderMessage (ConversationMessage 0 text)) newMsgs
+
+    mergeHistories newMsgs@(newMsg:restNew) (item:restOutput) =
+      case rmMessage item of
+        ConversationMessage _ oldMsg
+          | oldMsg == newMsg ->
+              -- Messages match: keep the item and continue
+              item : mergeHistories restNew restOutput
+          | newMsg `elem` (map (\case RenderedMessage (ConversationMessage _ t) _ _ -> t; _ -> "") restOutput) ->
+              -- New message exists later in output: old message was removed/changed
+              -- Skip the old message, keep processing new messages
+              mergeHistories newMsgs restOutput
+          | otherwise ->
+              -- New message not in output: it's an addition
+              -- Add it and continue with same old output
+              renderMessage (ConversationMessage 0 newMsg) : mergeHistories restNew (item:restOutput)
+
+        -- Not a conversation message (log, etc.): keep it and continue
+        _ -> item : mergeHistories newMsgs restOutput
+
+    isConversationMessage (ConversationMessage _ _) = True
+    isConversationMessage _ = False
 
 -- | Add a log entry to the output history (cons to front - newest first)
 addLog :: forall n. LogLevel -> Text -> OutputHistory n -> OutputHistory n
