@@ -196,6 +196,7 @@ drawUI st = [indicatorLayer, baseLayer]
 
     isStreaming m = case rmMessage m of
       StreamingChunk _ -> True
+      StreamingReasoning _ -> True
       _ -> False
 
     -- Filter based on display filter
@@ -266,6 +267,7 @@ handleEvent (T.AppEvent RefreshUI) = do
   let oldCompleted = filter (not . isStreamingMsg . rmMessage) (uiOutputHistory oldUIState)
       newCompleted = filter (not . isStreamingMsg . rmMessage) (uiOutputHistory newUIState)
       isStreamingMsg (StreamingChunk _) = True
+      isStreamingMsg (StreamingReasoning _) = True
       isStreamingMsg _ = False
 
   -- Invalidate cache if completed output changed

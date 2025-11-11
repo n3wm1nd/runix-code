@@ -13,6 +13,7 @@ module UI.State
   , newUIVars
   , appendLog
   , appendStreamingChunk
+  , appendStreamingReasoning
   , setStatus
   , patchMessages
   , setDisplayFilter
@@ -26,7 +27,7 @@ module UI.State
 import Control.Concurrent.STM
 import Data.Text (Text)
 import qualified Data.Text as T
-import UI.OutputHistory (OutputHistory, RenderedMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk)
+import UI.OutputHistory (OutputHistory, RenderedMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk, addStreamingReasoning)
 
 -- | Resource names for widgets (defined here to avoid circular dependency)
 data Name = InputEditor | HistoryViewport | CompletedHistory
@@ -74,6 +75,13 @@ appendStreamingChunk :: UIVars -> Text -> IO ()
 appendStreamingChunk vars chunk = do
   atomically $ modifyTVar' (uiStateVar vars) $ \st ->
     st { uiOutputHistory = addStreamingChunk chunk (uiOutputHistory st) }
+  refreshSignal vars
+
+-- | Append a streaming reasoning chunk to output history and trigger refresh
+appendStreamingReasoning :: UIVars -> Text -> IO ()
+appendStreamingReasoning vars chunk = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiOutputHistory = addStreamingReasoning chunk (uiOutputHistory st) }
   refreshSignal vars
 
 -- | Update the status line and trigger refresh

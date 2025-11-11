@@ -46,13 +46,14 @@ messageHistory vpName mLastVp widgets =
 -- Creates a Fixed-size widget with indicators positioned using translateX/Y.
 -- Must be rendered as a separate Brick layer for proper overlay.
 renderIndicatorOverlay :: Maybe T.Viewport -> T.Widget n
-renderIndicatorOverlay mLastVp = T.Widget T.Fixed T.Fixed $ do
+renderIndicatorOverlay mLastVp = T.Widget T.Greedy T.Greedy $ do
     ctx <- T.getContext
 
     case mLastVp of
         Nothing -> return T.emptyResult
         Just vp -> do
             let screenWidth = ctx ^. T.availWidthL
+                screenHeight = ctx ^. T.availHeightL
                 scrollTop = vp ^. T.vpTop
                 visibleHeight = snd (vp ^. T.vpSize)
                 totalContentHeight = snd (vp ^. T.vpContentSize)
@@ -64,11 +65,8 @@ renderIndicatorOverlay mLastVp = T.Widget T.Fixed T.Fixed $ do
                 topText = "↑" ++ show rowsAbove ++ "↑"
                 bottomText = "↓" ++ show rowsBelow ++ "↓"
 
-            -- Create indicator images at absolute positions using translateX/Y
-            -- Important: We cannot use <-> to combine them because that stacks them!
-            -- Instead, each indicator must be independently positioned.
-            -- We'll create both images with their absolute positions and use horizJoin
-            -- which overlays at the same position.
+            -- Create indicator images at absolute screen positions using translateX/Y
+            -- Both indicators are positioned relative to the full screen dimensions
             let topImg = if rowsAbove > 0
                         then V.translateX (screenWidth - length topText) $
                              V.translateY 0 $
@@ -77,7 +75,7 @@ renderIndicatorOverlay mLastVp = T.Widget T.Fixed T.Fixed $ do
 
                 bottomImg = if rowsBelow > 0
                            then V.translateX (screenWidth - length bottomText) $
-                                V.translateY (visibleHeight - 1) $
+                                V.translateY (screenHeight - 1) $
                                 V.string V.defAttr bottomText
                            else V.emptyImage
 

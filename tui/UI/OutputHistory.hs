@@ -28,6 +28,7 @@ module UI.OutputHistory
   , addLog
   , addSystemEvent
   , addStreamingChunk
+  , addStreamingReasoning
   , addToolExecution
   , removeStreamingChunks
     -- * Performance Optimization
@@ -53,6 +54,9 @@ data OutputMessage where
 
   -- | Streaming response (incomplete assistant message)
   StreamingChunk :: Text -> OutputMessage
+
+  -- | Streaming reasoning (incomplete thinking/reasoning)
+  StreamingReasoning :: Text -> OutputMessage
 
   -- | System event (status change, etc.)
   SystemEvent :: Text -> OutputMessage
@@ -99,6 +103,7 @@ shouldDisplay :: DisplayFilter -> OutputMessage -> Bool
 shouldDisplay filt (ConversationMessage _ _) = showMessages filt
 shouldDisplay filt (LogEntry _ _) = showLogs filt
 shouldDisplay filt (StreamingChunk _) = showStreaming filt
+shouldDisplay filt (StreamingReasoning _) = showStreaming filt  -- Treat reasoning same as streaming
 shouldDisplay filt (SystemEvent _) = showSystemEvents filt
 shouldDisplay filt (ToolExecution _) = showToolCalls filt
 
@@ -134,7 +139,7 @@ combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
 -- Adds one blank line before and after conversation messages
 renderOutputMessage :: forall n. OutputMessage -> [Widget n]
 renderOutputMessage (ConversationMessage _ text) =
-  -- Extract "You:" or "Agent:" prefix and render separately
+  -- Extract "You:", "Agent:", or "[Agent reasoning]:" prefix and render separately
   -- The content after the prefix has "  " indent that we need to strip
   let contentWidgets = case T.stripPrefix "You:\n  " text of
         Just content ->
@@ -144,7 +149,11 @@ renderOutputMessage (ConversationMessage _ text) =
           Just content ->
             let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
             in combineMarkerWithContent ">" widgets
-          Nothing -> markdownToWidgetsWithIndent 1 text  -- Fallback
+          Nothing -> case T.stripPrefix "[Agent reasoning]:\n  " text of
+            Just content ->
+              let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+              in combineMarkerWithContent "?" widgets  -- Use "?" marker for reasoning
+            Nothing -> markdownToWidgetsWithIndent 1 text  -- Fallback
   in txt " " : contentWidgets ++ [txt " "]  -- Blank line before and after
 
 renderOutputMessage (LogEntry level msg) =
@@ -156,6 +165,9 @@ renderOutputMessage (LogEntry level msg) =
 renderOutputMessage (StreamingChunk text) =
   let contentWidgets = markdownToWidgetsWithIndent 1 text
   in combineMarkerWithContent "}" contentWidgets
+renderOutputMessage (StreamingReasoning text) =
+  let contentWidgets = markdownToWidgetsWithIndent 1 text
+  in combineMarkerWithContent "~" contentWidgets  -- Use "~" marker for streaming reasoning
 renderOutputMessage (SystemEvent msg) =
   [txt "S " <+> vBox (markdownToWidgets msg)]
 renderOutputMessage (ToolExecution name) =
@@ -191,7 +203,10 @@ renderOutputMessageRaw (ConversationMessage _ text) =
     Nothing -> case T.stripPrefix "Agent:\n  " text of
       Just content ->
         [txt ">" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
-      Nothing -> [padLeft (Pad 1) (txt text)]
+      Nothing -> case T.stripPrefix "[Agent reasoning]:\n  " text of
+        Just content ->
+          [txt "?" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
+        Nothing -> [padLeft (Pad 1) (txt text)]
 renderOutputMessageRaw (LogEntry level msg) =
   let marker = case level of
                  Info -> "I "
@@ -200,45 +215,32 @@ renderOutputMessageRaw (LogEntry level msg) =
   in [txt marker <+> txt msg]
 renderOutputMessageRaw (StreamingChunk text) =
   [txt "}" <+> padLeft (Pad 1) (txt text)]
+renderOutputMessageRaw (StreamingReasoning text) =
+  [txt "~" <+> padLeft (Pad 1) (txt text)]
 renderOutputMessageRaw (SystemEvent msg) = [txt "S " <+> txt msg]
 renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
 -- | Patch the output history with a new message list
 --
--- Remove streaming, figure out which messages are NEW, prepend them
--- Logs stay in place chronologically
+-- Remove streaming chunks, add new conversation messages.
+-- Everything else (logs, old messages) stays in place.
 --
 -- Note: Input message list is oldest-first (from agent), output history is newest-first
 patchOutputHistory :: forall model provider n.
-                      [Message model provider]  -- ^ New message list (oldest first)
+                      [Message model provider]  -- ^ New messages from this turn (oldest first)
                    -> (Message model provider -> Text)  -- ^ Message renderer
                    -> OutputHistory n  -- ^ Current output history (newest first)
                    -> OutputHistory n  -- ^ Patched output history (newest first)
 patchOutputHistory newMessages renderMsg currentOutput =
   let
-    -- Remove streaming chunks
+    -- Remove all streaming chunks
     withoutStreaming = removeStreamingChunks currentOutput
 
-    -- Count how many conversation messages are already in output
-    existingCount = length [() | m <- withoutStreaming, isConvMsg (rmMessage m)]
+    -- Render all new messages (they're all new from this turn)
+    renderedNew = map (\msg -> renderMessage (ConversationMessage 0 (renderMsg msg))) newMessages
 
-    -- Only render NEW messages (messages beyond what's already there)
-    newMsgsToRender = drop existingCount newMessages
-    newRendered = [renderMessage (ConversationMessage idx (renderMsg msg))
-                   | (idx, msg) <- zip [existingCount..] newMsgsToRender]
-
-    -- Prepend new messages (reversed to newest-first) to existing output
-  in reverse newRendered ++ withoutStreaming
-
-  where
-    isConvMsg :: OutputMessage -> Bool
-    isConvMsg (ConversationMessage _ _) = True
-    isConvMsg _ = False
-
--- | Check if an output message is a conversation message
-isConversationMessage :: OutputMessage -> Bool
-isConversationMessage (ConversationMessage _ _) = True
-isConversationMessage _ = False
+    -- Add new messages to front (reversed to newest-first) and leave everything else alone
+  in reverse renderedNew ++ withoutStreaming
 
 -- | Add a log entry to the output history (cons to front - newest first)
 addLog :: forall n. LogLevel -> Text -> OutputHistory n -> OutputHistory n
@@ -249,25 +251,41 @@ addSystemEvent :: forall n. Text -> OutputHistory n -> OutputHistory n
 addSystemEvent msg output = renderMessage (SystemEvent msg) : output
 
 -- | Add or update streaming chunk in the output history
--- If the first entry (newest) is a StreamingChunk, update it
--- Otherwise, create a new StreamingChunk entry at front
 addStreamingChunk :: forall n. Text -> OutputHistory n -> OutputHistory n
 addStreamingChunk chunk output =
   case output of
     (RenderedMessage (StreamingChunk existing) _ _ : rest) ->
-      -- Update existing streaming chunk at front
       renderMessage (StreamingChunk (existing <> chunk)) : rest
     _ ->
-      -- Create new streaming chunk at front
       renderMessage (StreamingChunk chunk) : output
 
+-- | Add or update streaming reasoning chunk in the output history
+addStreamingReasoning :: forall n. Text -> OutputHistory n -> OutputHistory n
+addStreamingReasoning chunk output =
+  case output of
+    (RenderedMessage (StreamingReasoning existing) _ _ : rest) ->
+      renderMessage (StreamingReasoning (existing <> chunk)) : rest
+    _ ->
+      renderMessage (StreamingReasoning chunk) : output
+
 -- | Remove all streaming chunks from output history
--- Used when the final response arrives to replace the preview
+-- Stops at first ConversationMessage (can't be any streaming before that)
 removeStreamingChunks :: forall n. OutputHistory n -> OutputHistory n
-removeStreamingChunks = filter (not . isStreamingChunk . rmMessage)
+removeStreamingChunks = go []
   where
-    isStreamingChunk (StreamingChunk _) = True
-    isStreamingChunk _ = False
+    go acc [] = reverse acc
+    go acc (msg@(RenderedMessage (ConversationMessage _ _) _ _) : rest) =
+      -- Hit conversation message, keep it and everything after
+      reverse acc ++ (msg : rest)
+    go acc (RenderedMessage (StreamingChunk _) _ _ : rest) =
+      -- Remove streaming chunk, continue
+      go acc rest
+    go acc (RenderedMessage (StreamingReasoning _) _ _ : rest) =
+      -- Remove streaming reasoning, continue
+      go acc rest
+    go acc (msg : rest) =
+      -- Keep other messages (logs, system events, etc)
+      go (msg : acc) rest
 
 -- | Add a tool execution indicator (cons to front - newest first)
 addToolExecution :: forall n. Text -> OutputHistory n -> OutputHistory n

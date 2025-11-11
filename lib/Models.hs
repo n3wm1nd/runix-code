@@ -13,6 +13,8 @@ module Models
     -- * LlamaCpp Models
   , GLM45Air(..)
   , Qwen3Coder(..)
+    -- * Default Configurations
+  , ModelDefaults(..)
   ) where
 
 import Data.Text (Text)
@@ -24,6 +26,14 @@ import qualified UniversalLLM.Providers.OpenAI as OpenAI
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..))
 import UniversalLLM.Providers.XMLToolCalls (withXMLResponseParsing)
 import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..))
+
+--------------------------------------------------------------------------------
+-- Default Configuration Class
+--------------------------------------------------------------------------------
+
+-- | Models can define their default configuration (streaming, reasoning, etc.)
+class ModelDefaults provider model where
+  defaultConfigs :: [ModelConfig provider model]
 
 --------------------------------------------------------------------------------
 -- GLM-Specific Workarounds
@@ -128,8 +138,17 @@ instance ModelName Anthropic ClaudeSonnet45 where
 instance HasTools ClaudeSonnet45 Anthropic where
   withTools = AnthropicProvider.anthropicWithTools
 
+instance HasReasoning ClaudeSonnet45 Anthropic where
+  withReasoning = AnthropicProvider.anthropicWithReasoning
+
 instance ProviderImplementation Anthropic ClaudeSonnet45 where
-  getComposableProvider = AnthropicProvider.ensureUserFirst . withTools $ AnthropicProvider.baseComposableProvider
+  getComposableProvider = AnthropicProvider.ensureUserFirst . withReasoning . withTools $ AnthropicProvider.baseComposableProvider
+
+instance ModelDefaults Anthropic ClaudeSonnet45 where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable extended thinking
+    ]
 
 --------------------------------------------------------------------------------
 -- LlamaCpp Models
@@ -151,9 +170,18 @@ instance ModelName LlamaCpp GLM45Air where
 instance HasTools GLM45Air LlamaCpp where
   withTools = withXMLResponseParsing
 
+instance HasReasoning GLM45Air LlamaCpp where
+  withReasoning = OpenAI.openAIWithReasoning
+
 instance ProviderImplementation LlamaCpp GLM45Air where
-  -- Chain: base -> openAIWithTools (native tool format) -> glmEnsureMinTokens (prevent mid-reasoning cutoff) -> glmFixNullContent (fix template bug) -> withXMLResponseParsing (parse XML in responses)
-  getComposableProvider = withTools $ glmFixNullContent $ glmEnsureMinTokens 2048 $ OpenAI.openAIWithTools OpenAI.baseComposableProvider
+  -- Chain: base -> openAIWithTools (native tool format) -> glmEnsureMinTokens (prevent mid-reasoning cutoff) -> glmFixNullContent (fix template bug) -> openAIWithReasoning (extract reasoning) -> withXMLResponseParsing (parse XML in responses)
+  getComposableProvider = withTools $ glmFixNullContent $ glmEnsureMinTokens 2048 $ withReasoning $ OpenAI.openAIWithTools OpenAI.baseComposableProvider
+
+instance ModelDefaults LlamaCpp GLM45Air where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
+    ]
 
 -- | Qwen3-Coder model (via llama.cpp)
 --
@@ -171,3 +199,9 @@ instance HasTools Qwen3Coder LlamaCpp where
 instance ProviderImplementation LlamaCpp Qwen3Coder where
   -- Chain: base -> openAIWithTools (handles OpenAI-format tool calls from llama.cpp's template)
   getComposableProvider = withTools OpenAI.baseComposableProvider
+
+instance ModelDefaults LlamaCpp Qwen3Coder where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    -- No reasoning for Qwen3Coder
+    ]

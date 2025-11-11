@@ -40,10 +40,10 @@ import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects (HTTP, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..))
 import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
-import Runix.Streaming.SSE (extractTextFromChunk)
+import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
 import UI.Effects (UI, messageToDisplay)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory, appendStreamingChunk)
-import UI.OutputHistory (patchOutputHistory)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory, appendStreamingChunk, appendStreamingReasoning)
+import UI.OutputHistory (patchOutputHistory, RenderedMessage(..), OutputMessage(ConversationMessage))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import Control.Monad (forever)
@@ -64,6 +64,7 @@ data AgentRunner where
     , SupportsSystemPrompt provider
     , SupportsStreaming provider
     , ProviderImplementation provider model
+    , ModelDefaults provider model
     )
     => IORef [Message model provider]  -- History storage
     -> Runner model provider  -- Wrapped runner for this model/provider
@@ -111,6 +112,7 @@ agentLoop :: forall model provider.
              , SupportsSystemPrompt provider
              , SupportsStreaming provider
              , ProviderImplementation provider model
+             , ModelDefaults provider model
              )
           => UIVars
           -> IORef [Message model provider]
@@ -123,15 +125,16 @@ agentLoop uiVars historyRef runner = forever $ do
   -- Get current history
   currentHistory <- readIORef historyRef
 
-  -- Immediately show user message in UI before running agent
-  let historyWithUser = currentHistory ++ [UserText userInput]
+  -- Immediately show user message in UI
   currentOutput <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
-  let patchedWithUser = patchOutputHistory historyWithUser (messageToDisplay @model @provider) currentOutput
+  let patchedWithUser = patchOutputHistory [UserText userInput] (messageToDisplay @model @provider) currentOutput
   patchMessages uiVars patchedWithUser
 
-  -- Run the agent
+  -- Run the agent with model-specific default configs
+  let configs = defaultConfigs @provider @model
   result <- runner $ runRunixCode @provider @model
                        (SystemPrompt "you are a helpful agent")
+                       configs
                        currentHistory
                        (UserPrompt userInput)
 
@@ -141,12 +144,20 @@ agentLoop uiVars historyRef runner = forever $ do
       appendLog uiVars (T.pack $ "Agent error: " ++ err)
       setStatus uiVars (T.pack "Error occurred")
     Right (_result, newHistory) -> do
-      -- Update history
+      -- Update history (one write per turn)
       writeIORef historyRef newHistory
 
-      -- Patch output history with complete response (preserving logs)
+      -- Calculate which messages are NEW by comparing with what's already in OutputHistory
       currentOutput2 <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
-      let patchedOutput = patchOutputHistory newHistory (messageToDisplay @model @provider) currentOutput2
+
+      -- Extract the text of messages already displayed (conversation messages only)
+      let existingTexts = [text | RenderedMessage (ConversationMessage _ text) _ _ <- currentOutput2]
+
+      -- Find messages in newHistory that aren't already displayed
+      let newMessages = filter (\msg -> (messageToDisplay @model @provider msg) `notElem` existingTexts) newHistory
+
+      -- Patch output history with only the NEW messages (preserving logs)
+      let patchedOutput = patchOutputHistory newMessages (messageToDisplay @model @provider) currentOutput2
       patchMessages uiVars patchedOutput
       setStatus uiVars (T.pack "Ready")
 
@@ -154,27 +165,29 @@ agentLoop uiVars historyRef runner = forever $ do
 -- Runner Creation
 --------------------------------------------------------------------------------
 
--- | Reinterpret StreamChunk BS.ByteString to StreamChunk Text by extracting SSE text deltas
+-- | Reinterpret StreamChunk BS.ByteString to StreamChunk StreamingContent by extracting SSE content
 reinterpretSSEChunks :: Sem (StreamChunk BS.ByteString : r) a
-                     -> Sem (StreamChunk T.Text : r) a
+                     -> Sem (StreamChunk StreamingContent : r) a
 reinterpretSSEChunks = reinterpret $ \case
   EmitChunk chunk ->
-    case extractTextFromChunk chunk of
-      Just text -> emitChunk text
-      Nothing -> return ()  -- Ignore non-text chunks (like message_start events)
+    case extractContentFromChunk chunk of
+      Just content -> emitChunk content
+      Nothing -> return ()  -- Ignore non-content chunks (like message_start events)
 
--- | Interpret StreamChunk Text by sending to UI
+-- | Interpret StreamChunk StreamingContent by sending to UI
 interpretStreamChunkToUI :: Member (Embed IO) r
                          => UIVars
-                         -> Sem (StreamChunk T.Text : r) a
+                         -> Sem (StreamChunk StreamingContent : r) a
                          -> Sem r a
 interpretStreamChunkToUI uiVars = interpret $ \case
-  EmitChunk text ->
+  EmitChunk (StreamingText text) ->
     embed $ appendStreamingChunk uiVars text
+  EmitChunk (StreamingReasoning reasoning) ->
+    embed $ appendStreamingReasoning uiVars reasoning
 
 -- | Effect interpretation stack for TUI
 -- Logging effect is reinterpreted as UI effect for display
--- HTTP emits StreamChunk BS -> reinterpret to Text -> interpret to UI
+-- HTTP emits StreamChunk BS -> reinterpret to StreamingContent -> interpret to UI
 runBaseEffects uiVars =
   runM
     . runError

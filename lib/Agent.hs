@@ -97,7 +97,7 @@ instance ToolFunction (RunixCodeResult provider model) where
 --------------------------------------------------------------------------------
 
 -- | Runix Code - AI coding assistant (stateful version for composition)
--- Uses State for message history and Reader for system prompt
+-- Uses State for message history and Reader for system prompt and configs
 runixCode
   :: forall provider model r.
      ( Member (LLM provider model) r
@@ -105,6 +105,7 @@ runixCode
      , Member Logging r
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
+     , Member (Reader [ULL.ModelConfig provider model]) r
      , HasTools model provider
      , SupportsSystemPrompt provider
      , SupportsStreaming provider
@@ -112,13 +113,11 @@ runixCode
   => UserPrompt
   -> Sem r (RunixCodeResult provider model)
 runixCode (UserPrompt userPrompt) = do
-  SystemPrompt sysPrompt <- ask
+  SystemPrompt sysPrompt <- ask @SystemPrompt
+  baseConfigs <- ask @[ULL.ModelConfig provider model]
   currentHistory <- get @[Message model provider]
 
-  let baseConfigs :: [ULL.ModelConfig provider model]
-      baseConfigs = [ ULL.SystemPrompt sysPrompt
-                    , ULL.Streaming True  -- Enable streaming for real-time updates
-                    ]
+  let configsWithSystem = ULL.SystemPrompt sysPrompt : filter (not . isSystemPrompt) baseConfigs
       newHistory = currentHistory ++ [UserText userPrompt]
 
   -- Add user prompt to history
@@ -127,9 +126,12 @@ runixCode (UserPrompt userPrompt) = do
   -- Run agent loop with Reader for configs and State for todos locally
   (_finalTodos, result) <-
     runState ([] :: [Tools.Todo]) $
-      runReader baseConfigs $
+      runReader configsWithSystem $
         runixCodeAgentLoop
   return result
+  where
+    isSystemPrompt (ULL.SystemPrompt _) = True
+    isSystemPrompt _ = False
 
 -- | Pure wrapper for runixCode (for standalone use)
 -- Interprets State and Reader effects, returns explicit values
@@ -143,13 +145,15 @@ runRunixCode
      , SupportsStreaming provider
      )
   => SystemPrompt
+  -> [ULL.ModelConfig provider model]  -- ^ Model configuration (streaming, reasoning, etc.)
   -> [Message model provider]
   -> UserPrompt
   -> Sem r (RunixCodeResult provider model, [Message model provider])
-runRunixCode sysPrompt initialHistory userPrompt = do
+runRunixCode sysPrompt configs initialHistory userPrompt = do
   (finalHistory, result) <- runReader sysPrompt $
-                              runState initialHistory $
-                                runixCode userPrompt
+                              runReader configs $
+                                runState initialHistory $
+                                  runixCode userPrompt
   return (result, finalHistory)
 
 -- | Update config with new tool list
