@@ -25,6 +25,7 @@ module UI.OutputHistory
   , renderOutputMessages
     -- * History Management
   , patchOutputHistory
+  , mergeOutputMessages
   , addLog
   , addSystemEvent
   , addStreamingChunk
@@ -44,28 +45,17 @@ import Brick.Widgets.Core (txt, padLeft, (<+>), vBox)
 import Brick.Widgets.Core (Padding(..))
 
 -- | A single entry in the output timeline
-data OutputMessage where
-  -- | A message from the conversation history
-  -- Contains an index to track which message this represents
-  ConversationMessage :: Int -> Text -> OutputMessage
-
-  -- | A log entry (info, warning, error)
-  LogEntry :: LogLevel -> Text -> OutputMessage
-
-  -- | Streaming response (incomplete assistant message)
-  StreamingChunk :: Text -> OutputMessage
-
-  -- | Streaming reasoning (incomplete thinking/reasoning)
-  StreamingReasoning :: Text -> OutputMessage
-
-  -- | System event (status change, etc.)
-  SystemEvent :: Text -> OutputMessage
-
-  -- | Tool execution indicator
-  ToolExecution :: Text -> OutputMessage
+data OutputMessage
+  = ConversationMessage Int Text
+  | LogEntry LogLevel Text
+  | StreamingChunk Text
+  | StreamingReasoning Text
+  | SystemEvent Text
+  | ToolExecution Text
+  deriving stock (Eq, Show)
 
 data LogLevel = Info | Warning | Error
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 -- | A rendered message with cached widgets
 -- Stores both markdown and raw renderings to avoid re-parsing on mode switch
@@ -220,6 +210,76 @@ renderOutputMessageRaw (StreamingReasoning text) =
 renderOutputMessageRaw (SystemEvent msg) = [txt "S " <+> txt msg]
 renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
+-- | Check if an OutputMessage is a conversation message
+isConversationMessage :: OutputMessage -> Bool
+isConversationMessage (ConversationMessage _ _) = True
+isConversationMessage _ = False
+
+-- | Extract conversation message texts from a list
+extractConvTexts :: [OutputMessage] -> [Text]
+extractConvTexts = foldr (\msg acc -> case msg of
+                            ConversationMessage _ t -> t : acc
+                            _ -> acc) []
+
+-- | Merge two lists of OutputMessages
+-- newItems: newest-first list of new conversation messages only
+-- oldItems: newest-first list of all OutputMessages (conversations + logs + etc)
+-- Returns: newest-first merged list
+mergeOutputMessages :: [OutputMessage] -> [OutputMessage] -> [OutputMessage]
+mergeOutputMessages [] oldItems =
+  -- No new items: keep all non-conversation items, discard old conversations
+  filter (not . isConversationMessage) oldItems
+
+mergeOutputMessages newItems [] =
+  -- No old items: just use new items
+  newItems
+
+mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
+  case (newItem, oldItem) of
+    (ConversationMessage _ newText, ConversationMessage _ oldText)
+      | newText == oldText ->
+          -- Messages match: collect any logs after old message, keep them
+          let (logsAfter, restAfterLogs) = span (not . isConversationMessage) restOld
+          in newItem : logsAfter ++ mergeOutputMessages restNew restAfterLogs
+      | newText `elem` extractConvTexts restOld ->
+          -- New message exists later in old: old message was deleted, skip it
+          mergeOutputMessages newItems restOld
+      | oldText `elem` extractConvTexts restNew ->
+          -- Old message exists later in new: new message is insertion, add it
+          newItem : mergeOutputMessages restNew (oldItem:restOld)
+      | otherwise ->
+          -- Neither exists later: new message is addition
+          newItem : mergeOutputMessages restNew (oldItem:restOld)
+
+    (ConversationMessage _ _, _) ->
+      -- Old item is not a conversation message (log, etc)
+      -- Collect all non-conversation items until next conversation message
+      let (nonConvItems, rest) = span (not . isConversationMessage) (oldItem:restOld)
+      in case rest of
+        [] ->
+          -- No more conversation messages: keep logs, add remaining new
+          nonConvItems ++ mergeOutputMessages newItems []
+        (nextConv:restAfter) ->
+          -- Check if new message matches the conversation message after the logs
+          case (newItem, nextConv) of
+            (ConversationMessage _ newText, ConversationMessage _ oldText)
+              | newText == oldText ->
+                  -- Match: consume both, keep logs between them
+                  newItem : nonConvItems ++ mergeOutputMessages restNew restAfter
+              | oldText `elem` extractConvTexts restNew ->
+                  -- Old message exists later in new: insert new, keep logs WITH old for later match
+                  newItem : nonConvItems ++ mergeOutputMessages restNew (nextConv:restAfter)
+              | newText `elem` extractConvTexts restAfter ->
+                  -- New message exists later in old: skip old message with its logs
+                  mergeOutputMessages newItems restAfter
+              | otherwise ->
+                  -- Neither exists later: new is insertion, keep logs with old
+                  newItem : nonConvItems ++ nextConv : mergeOutputMessages restNew restAfter
+
+    _ ->
+      -- New item is not a conversation message (shouldn't happen)
+      newItem : mergeOutputMessages restNew (oldItem:restOld)
+
 -- | Patch the output history with a new message list
 --
 -- Intelligently merges new message history with existing output history:
@@ -238,43 +298,19 @@ patchOutputHistory newMessages renderMsg currentOutput =
     -- Remove all streaming chunks first
     withoutStreaming = removeStreamingChunks currentOutput
 
-    -- Render new messages to text for comparison
-    newMessagesTexts = reverse $ map renderMsg newMessages  -- Reverse to newest-first for comparison
+    -- Extract OutputMessages from current output
+    oldOutputMsgs = map rmMessage withoutStreaming
 
-  in mergeHistories newMessagesTexts withoutStreaming
-  where
-    -- Recursively merge new messages with output history
-    -- newMsgs: newest-first list of message texts
-    -- output: newest-first OutputHistory (with logs interspersed)
-    mergeHistories :: [Text] -> OutputHistory n -> OutputHistory n
-    mergeHistories [] output =
-      -- No new messages: remove all conversation messages, keep logs
-      filter (not . isConversationMessage . rmMessage) output
+    -- Convert new messages to OutputMessages (oldest first)
+    newOutputMsgs = map (\msg -> ConversationMessage 0 (renderMsg msg)) newMessages
 
-    mergeHistories newMsgs [] =
-      -- No old output: add all new messages
-      map (\text -> renderMessage (ConversationMessage 0 text)) newMsgs
+    -- Reverse to newest-first for merging
+    newOutputReversed = reverse newOutputMsgs
 
-    mergeHistories newMsgs@(newMsg:restNew) (item:restOutput) =
-      case rmMessage item of
-        ConversationMessage _ oldMsg
-          | oldMsg == newMsg ->
-              -- Messages match: keep the item and continue
-              item : mergeHistories restNew restOutput
-          | newMsg `elem` (map (\case RenderedMessage (ConversationMessage _ t) _ _ -> t; _ -> "") restOutput) ->
-              -- New message exists later in output: old message was removed/changed
-              -- Skip the old message, keep processing new messages
-              mergeHistories newMsgs restOutput
-          | otherwise ->
-              -- New message not in output: it's an addition
-              -- Add it and continue with same old output
-              renderMessage (ConversationMessage 0 newMsg) : mergeHistories restNew (item:restOutput)
+    -- Merge at OutputMessage level
+    mergedMsgs = mergeOutputMessages newOutputReversed oldOutputMsgs
 
-        -- Not a conversation message (log, etc.): keep it and continue
-        _ -> item : mergeHistories newMsgs restOutput
-
-    isConversationMessage (ConversationMessage _ _) = True
-    isConversationMessage _ = False
+  in renderMessageList mergedMsgs
 
 -- | Add a log entry to the output history (cons to front - newest first)
 addLog :: forall n. LogLevel -> Text -> OutputHistory n -> OutputHistory n

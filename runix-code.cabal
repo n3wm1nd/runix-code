@@ -123,6 +123,29 @@ executable runix-code-tui
     hs-source-dirs:   tui
     default-language: Haskell2010
 
+test-suite runix-code-test
+    import:           warnings, extensions
+    type:             exitcode-stdio-1.0
+    main-is:          OutputHistorySpec.hs
+    hs-source-dirs:   test, tui
+    default-language: Haskell2010
+
+    build-depends:    base >=4.17 && <5
+                    , hspec >=2.11
+                    , text >=2.0
+                    , brick >=2.0
+                    , vty >=6.0
+                    , pandoc >=3.0
+                    , pandoc-types >=1.23
+                    , universal-llm
+                    , microlens
+                    , skylighting >=0.14
+                    , ansi-terminal >=1.0
+
+    other-modules:    UI.OutputHistory
+                    , UI.Rendering
+                    , UI.Attributes
+
 -- Vty version removed - brick provides better abstraction for our use case
 -- The raw vty exploration showed it doesn't offer advantages over brick:
 -- - No scrollback (both use alternate screen)
