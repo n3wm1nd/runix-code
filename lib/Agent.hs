@@ -28,6 +28,7 @@ import Data.Text (Text)
 import Polysemy (Member, Sem)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, runReader, ask)
+import Polysemy.Fail (Fail)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
@@ -191,7 +192,7 @@ runixCodeAgentLoop
 runixCodeAgentLoop = do
   baseConfigs <- ask @[ULL.ModelConfig provider model]
 
-  let tools :: [LLMTool (Sem r)]
+  let tools :: [LLMTool (Sem (Fail ': r))]
       tools =
         [ LLMTool Tools.grep
         , LLMTool (Tools.ask @widget)

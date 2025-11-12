@@ -61,6 +61,7 @@ import qualified Data.Text.Encoding as T
 import qualified Data.ByteString.Lazy as BL
 import Polysemy (Sem, Member, Members)
 import Polysemy.State (State, modify, get, put)
+import Polysemy.Fail (Fail)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
@@ -191,10 +192,9 @@ newtype BashResult = BashResult Text
   deriving (HasCodec) via Text
 
 -- | Result from ask - returns the user's response as text
--- Nothing means the user cancelled (pressed Esc)
-newtype AskResult = AskResult (Maybe Text)
+newtype AskResult = AskResult Text
   deriving stock (Show, Eq)
-  deriving (HasCodec) via (Maybe Text)
+  deriving (HasCodec) via Text
 
 -- | Result from todo_write - unit type (nothing to return to LLM)
 -- State effect handles the actual todo list mutation
@@ -419,14 +419,16 @@ bash (Command cmd) = do
 -- | Ask the user for text input
 -- Polymorphic over widget system - works with any UI that implements ImplementsWidget
 -- The widget system determines how the input is displayed (TUI widget, CLI prompt, etc.)
--- Returns AskResult (Maybe Text): Just text if user confirmed, Nothing if cancelled
+-- Fails (using Fail effect) if the user cancels by pressing Esc
 ask
-  :: forall widget r. (Member (UserInput widget) r, ImplementsWidget widget Text)
+  :: forall widget r. (Member (UserInput widget) r, Member Fail r, ImplementsWidget widget Text)
   => Text  -- ^ Question/prompt to show the user
   -> Sem r AskResult
 ask question = do
   mAnswer <- requestInput @widget question ""
-  return $ AskResult mAnswer
+  case mAnswer of
+    Nothing -> fail "User cancelled input"
+    Just answer -> return $ AskResult answer
 
 --------------------------------------------------------------------------------
 -- Meta Operations
