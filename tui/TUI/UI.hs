@@ -286,6 +286,9 @@ handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name CustomEvent -> T.
 handleInputWidgetEvent widget (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL
   liftIO $ clearPendingInput vars
+  -- Update cached state
+  uiState <- use cachedUIStateL
+  cachedUIStateL .= uiState { uiPendingInput = Nothing }
 
 -- Enter confirms and submits the current value
 handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEnter [])) = do
@@ -297,6 +300,9 @@ handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T
       liftIO $ submitCallback currentValue
       -- Clear the widget from UI (will be done by interpreter, but we can do it here too)
       liftIO $ clearPendingInput vars
+      -- Update cached state
+      uiState <- use cachedUIStateL
+      cachedUIStateL .= uiState { uiPendingInput = Nothing }
     else
       return ()  -- Don't submit if incomplete
 

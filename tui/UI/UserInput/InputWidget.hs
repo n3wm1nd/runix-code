@@ -123,7 +123,7 @@ instance InputWidget Text where
       return $ Just (if T.null current then current else T.init current)
     _ -> return Nothing
 
-  isWidgetComplete = not . T.null
+  isWidgetComplete = const True  -- Allow empty responses
 
 -- | Int: Numeric input with increment/decrement
 instance InputWidget Int where
