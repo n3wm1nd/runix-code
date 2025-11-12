@@ -132,6 +132,7 @@ test-suite runix-code-test
 
     build-depends:    base >=4.17 && <5
                     , hspec >=2.11
+                    , QuickCheck >=2.14
                     , text >=2.0
                     , brick >=2.0
                     , vty >=6.0

@@ -52,10 +52,10 @@ data OutputMessage
   | StreamingReasoning Text
   | SystemEvent Text
   | ToolExecution Text
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Ord)
 
 data LogLevel = Info | Warning | Error
-  deriving stock (Eq, Show)
+  deriving stock (Eq, Show, Ord)
 
 -- | A rendered message with cached widgets
 -- Stores both markdown and raw renderings to avoid re-parsing on mode switch
@@ -222,9 +222,21 @@ extractConvTexts = foldr (\msg acc -> case msg of
                             _ -> acc) []
 
 -- | Merge two lists of OutputMessages
--- newItems: newest-first list of new conversation messages only
--- oldItems: newest-first list of all OutputMessages (conversations + logs + etc)
--- Returns: newest-first merged list
+--
+-- Contract:
+--   newItems: newest-first list of conversation messages only
+--   oldItems: newest-first list of all OutputMessages (conversations + logs + etc)
+--   Returns: newest-first merged list
+--
+-- Behavior:
+--   - All conversation messages from newItems replace those in oldItems
+--   - All non-conversation messages from oldItems are preserved in their relative positions
+--   - If newItems contains non-conversation messages (contract violation), they are prepended
+--
+-- Invariants:
+--   - All new conversation messages appear in result
+--   - All old non-conversation messages are preserved
+--   - Relative order of non-conversation messages is maintained
 mergeOutputMessages :: [OutputMessage] -> [OutputMessage] -> [OutputMessage]
 mergeOutputMessages [] oldItems =
   -- No new items: keep all non-conversation items, discard old conversations
@@ -264,10 +276,10 @@ mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
           case (newItem, nextConv) of
             (ConversationMessage _ newText, ConversationMessage _ oldText)
               | newText == oldText ->
-                  -- Match: consume both, keep logs between them
-                  newItem : nonConvItems ++ mergeOutputMessages restNew restAfter
+                  -- Match: logs came before msg in old (newer), so keep them first
+                  nonConvItems ++ newItem : mergeOutputMessages restNew restAfter
               | oldText `elem` extractConvTexts restNew ->
-                  -- Old message exists later in new: insert new, keep logs WITH old for later match
+                  -- Old message exists later in new: insert new first, then logs, then recurse
                   newItem : nonConvItems ++ mergeOutputMessages restNew (nextConv:restAfter)
               | newText `elem` extractConvTexts restAfter ->
                   -- New message exists later in old: skip old message with its logs
