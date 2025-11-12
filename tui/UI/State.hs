@@ -1,4 +1,6 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE GADTs #-}
 
 -- | STM-based UI state for concurrent UI updates
 --
@@ -9,6 +11,7 @@ module UI.State
   ( UIState(..)
   , UIVars(..)
   , Name(..)
+  , SomeInputWidget(..)
   , emptyUIState
   , newUIVars
   , appendLog
@@ -20,24 +23,41 @@ module UI.State
   , readUIState
   , waitForUserInput
   , provideUserInput
+  , setPendingInput
+  , clearPendingInput
   , uiStateVar
   , userInputQueue
+  , userResponseQueue
   ) where
 
+import Brick (Widget, EventM)
+import Brick.Types (BrickEvent)
 import Control.Concurrent.STM
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.OutputHistory (OutputHistory, RenderedMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk, addStreamingReasoning)
+import UI.UserInput.InputWidget (InputWidget(..))
 
 -- | Resource names for widgets (defined here to avoid circular dependency)
 data Name = InputEditor | HistoryViewport | CompletedHistory
   deriving stock (Eq, Ord, Show)
+
+-- | Existential wrapper for input widgets of any type
+-- This allows us to store a typed widget in UIState without knowing its type
+data SomeInputWidget where
+  SomeInputWidget
+    :: InputWidget a
+    => Text              -- ^ Prompt text
+    -> a                 -- ^ Current value
+    -> (a -> IO ())      -- ^ Callback to submit the value
+    -> SomeInputWidget
 
 -- | UI state shared between agent thread and UI thread
 data UIState = UIState
   { uiOutputHistory :: OutputHistory Name  -- ^ Complete timeline with cached widgets (newest first)
   , uiStatus :: Text                        -- ^ Current status message
   , uiDisplayFilter :: DisplayFilter        -- ^ What to show in the UI
+  , uiPendingInput :: Maybe SomeInputWidget -- ^ Active input widget, if any
   }
 
 -- | Initial empty UI state
@@ -46,6 +66,7 @@ emptyUIState = UIState
   { uiOutputHistory = []
   , uiStatus = T.pack "Ready"
   , uiDisplayFilter = defaultFilter
+  , uiPendingInput = Nothing
   }
 
 -- | Shared state variables for UI communication
@@ -54,6 +75,8 @@ data UIVars = UIVars
   , userInputQueue :: TQueue Text   -- ^ User input queue (UI writes, agent reads)
   , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh (non-blocking, coalesces multiple requests)
   }
+
+-- Note: userResponseQueue is managed per-request in SomeInputWidget callback
 
 -- | Create fresh UI state variables
 -- The refresh callback will be set later by the UI
@@ -116,3 +139,21 @@ waitForUserInput = readTQueue
 -- | Provide user input (from UI thread)
 provideUserInput :: TQueue Text -> Text -> STM ()
 provideUserInput = writeTQueue
+
+-- | Set a pending input widget (from interpreter)
+setPendingInput :: UIVars -> SomeInputWidget -> IO ()
+setPendingInput vars widget = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiPendingInput = Just widget }
+  refreshSignal vars
+
+-- | Clear pending input widget (when completed or cancelled)
+clearPendingInput :: UIVars -> IO ()
+clearPendingInput vars = do
+  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+    st { uiPendingInput = Nothing }
+  refreshSignal vars
+
+-- | Dummy export for compatibility (not actually used with new approach)
+userResponseQueue :: ()
+userResponseQueue = ()

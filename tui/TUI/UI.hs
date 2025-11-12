@@ -40,10 +40,13 @@ import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar)
+import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar, clearPendingInput, SomeInputWidget(..))
 import UI.OutputHistory (RenderedMessage(..), OutputMessage(..), shouldDisplay)
+import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified TUI.Widgets.MessageHistory as MH
+import qualified TUI.InputPanel as IP
+import Graphics.Vty (Key(..), Event(..))
 
 -- | Custom events for the TUI
 data CustomEvent = RefreshUI | UpdateViewport
@@ -230,15 +233,29 @@ drawUI st = [indicatorLayer, baseLayer]
     baseLayer = T.Widget T.Greedy T.Greedy $ do
       ctx <- T.getContext
       let availH = ctx ^. T.availHeightL
-          historyH = availH - inputHeight - 3  -- -3 for border, status
 
-          ui = vBox
-            [ vLimit historyH historyBase
-            , hBorder
-            , vLimit inputHeight $
-                renderEditor (vBox . map renderLine) True (_inputEditor st)
-            , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: toggle input | Ctrl-R: toggle markdown | Ctrl-C: quit"
-            ]
+          -- Check if we have a pending input widget
+          ui = case uiPendingInput uiState of
+            -- Input widget is active - show it instead of normal input
+            Just widget ->
+              let (inputPanel, panelHeight) = IP.drawInputPanel widget
+                  historyH = availH - panelHeight - 1  -- -1 for status
+               in vBox
+                    [ vLimit historyH historyBase
+                    , inputPanel
+                    , strWrap $ "Status: " ++ statusText ++ " | Input widget active | Esc: cancel"
+                    ]
+
+            -- Normal input mode
+            Nothing ->
+              let historyH = availH - inputHeight - 3  -- -3 for border, status
+               in vBox
+                    [ vLimit historyH historyBase
+                    , hBorder
+                    , vLimit inputHeight $
+                        renderEditor (vBox . map renderLine) True (_inputEditor st)
+                    , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: toggle input | Ctrl-R: toggle markdown | Ctrl-C: quit"
+                    ]
       T.render ui
 
     -- Indicator layer: rendered on top by Brick's renderFinal
@@ -254,11 +271,58 @@ drawUI st = [indicatorLayer, baseLayer]
 --------------------------------------------------------------------------------
 
 handleEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
-handleEvent (T.VtyEvent (V.EvKey V.KEsc [])) = M.halt
-handleEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
+-- Check if input widget is active first
+handleEvent ev = do
+  vars <- use uiVarsL
+  uiState <- use cachedUIStateL
+
+  case uiPendingInput uiState of
+    Just widget -> handleInputWidgetEvent widget ev
+    Nothing -> handleNormalEvent ev
+
+-- Handle events when input widget is active
+handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
+-- Esc cancels the input widget
+handleInputWidgetEvent widget (T.VtyEvent (V.EvKey V.KEsc [])) = do
+  vars <- use uiVarsL
+  liftIO $ clearPendingInput vars
+
+-- Enter confirms and submits the current value
+handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEnter [])) = do
+  vars <- use uiVarsL
+  -- Check if value is complete
+  if isWidgetComplete currentValue
+    then do
+      -- Submit the value (triggers callback)
+      liftIO $ submitCallback currentValue
+      -- Clear the widget from UI (will be done by interpreter, but we can do it here too)
+      liftIO $ clearPendingInput vars
+    else
+      return ()  -- Don't submit if incomplete
+
+-- All other events go to the widget
+handleInputWidgetEvent widget ev = do
+  vars <- use uiVarsL
+  -- Run the widget event handler which uses EventM Name () instead of AppState
+  ((), mNewWidget) <- T.nestEventM () $ IP.handleInputPanelEvent widget ev
+  -- Update the widget in UIState if it changed
+  case mNewWidget of
+    Just newWidget -> do
+      uiState <- use cachedUIStateL
+      let newUIState = uiState { uiPendingInput = Just newWidget }
+      cachedUIStateL .= newUIState
+      -- Also update in the shared state var
+      liftIO $ atomically $ modifyTVar' (uiStateVar vars) $ \st ->
+        st { uiPendingInput = Just newWidget }
+    Nothing -> return ()
+
+-- Normal event handling (when no input widget active)
+handleNormalEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
+handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = M.halt
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
 -- Refresh UI state from STM and scroll to bottom
-handleEvent (T.AppEvent RefreshUI) = do
+handleNormalEvent (T.AppEvent RefreshUI) = do
   vars <- use uiVarsL
   oldUIState <- use cachedUIStateL
   newUIState <- liftIO $ atomically $ readUIState (uiStateVar vars)
@@ -282,12 +346,12 @@ handleEvent (T.AppEvent RefreshUI) = do
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 -- Update cached viewport state (called after scrolling/rendering)
-handleEvent (T.AppEvent UpdateViewport) = do
+handleNormalEvent (T.AppEvent UpdateViewport) = do
   mVp <- M.lookupViewport HistoryViewport
   lastViewportL .= mVp
 
 -- Handle window resize - stick to bottom if we were already there
-handleEvent (T.VtyEvent (V.EvResize _ _)) = do
+handleNormalEvent (T.VtyEvent (V.EvResize _ _)) = do
   -- Check if we're at the bottom before resize
   wasAtBottom <- use lastViewportL >>= \case
     Nothing -> return True  -- Default to bottom if no viewport yet
@@ -305,18 +369,18 @@ handleEvent (T.VtyEvent (V.EvResize _ _)) = do
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 -- Page Up/Down for scrolling history
-handleEvent (T.VtyEvent (V.EvKey V.KPageUp [])) = do
+handleNormalEvent (T.VtyEvent (V.EvKey V.KPageUp [])) = do
   M.vScrollPage (M.viewportScroll HistoryViewport) T.Up
   chan <- use eventChanL
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
-handleEvent (T.VtyEvent (V.EvKey V.KPageDown [])) = do
+handleNormalEvent (T.VtyEvent (V.EvKey V.KPageDown [])) = do
   M.vScrollPage (M.viewportScroll HistoryViewport) T.Down
   chan <- use eventChanL
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
 -- Ctrl-T toggles input mode
-handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
   mode <- use inputModeL
   let newMode = case mode of
         EnterSends -> EnterNewline
@@ -324,7 +388,7 @@ handleEvent (T.VtyEvent (V.EvKey (V.KChar 't') [V.MCtrl])) = do
   inputModeL .= newMode
 
 -- Ctrl-R toggles markdown rendering mode (R for "raw")
-handleEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
   mode <- use markdownModeL
   let newMode = case mode of
         RenderMarkdown -> ShowRaw
@@ -334,10 +398,10 @@ handleEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
   invalidateCacheEntry CompletedHistory
 
 -- Ctrl-D sends message (useful in EnterNewline mode)
-handleEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
 
 -- Handle paste events - insert content without triggering send
-handleEvent (T.VtyEvent (V.EvPaste pastedBytes)) = do
+handleNormalEvent (T.VtyEvent (V.EvPaste pastedBytes)) = do
   let pastedText = Text.decodeUtf8 pastedBytes
   ed <- use inputEditorL
   let currentLines = getEditContents ed
@@ -345,7 +409,7 @@ handleEvent (T.VtyEvent (V.EvPaste pastedBytes)) = do
   inputEditorL .= editor InputEditor Nothing newContent
 
 -- Enter key behavior depends on mode and backslash handling
-handleEvent (T.VtyEvent (V.EvKey V.KEnter [])) = do
+handleNormalEvent (T.VtyEvent (V.EvKey V.KEnter [])) = do
   -- First check if cursor is right after a backslash
   ed <- use inputEditorL
   let contentLines = getEditContents ed
@@ -372,10 +436,10 @@ handleEvent (T.VtyEvent (V.EvKey V.KEnter [])) = do
         EnterNewline -> zoom inputEditorL $ handleEditorEvent (T.VtyEvent (V.EvKey V.KEnter []))
 
 -- Shift-Enter also inserts newline for terminals that support it
-handleEvent (T.VtyEvent (V.EvKey V.KEnter [V.MShift])) = do
+handleNormalEvent (T.VtyEvent (V.EvKey V.KEnter [V.MShift])) = do
   zoom inputEditorL $ handleEditorEvent (T.VtyEvent (V.EvKey V.KEnter []))
 
-handleEvent ev = do
+handleNormalEvent ev = do
   -- Delegate other events to the editor
   zoom inputEditorL $ handleEditorEvent ev
 

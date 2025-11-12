@@ -47,6 +47,9 @@ import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessa
 import UI.OutputHistory (patchOutputHistory, RenderedMessage(..), OutputMessage(ConversationMessage))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
+import UI.UserInput (UserInput)
+import UI.UserInput.Interpreter (interpretUserInput)
+import UI.UserInput.InputWidget (TUIWidget)
 import Control.Monad (forever)
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming, ProviderImplementation)
@@ -75,7 +78,7 @@ data AgentRunner where
 -- This is intentionally monomorphic - each runner works with its specific effect stack
 -- Logging effect is reinterpreted as UI effect in the TUI
 newtype Runner model provider = Runner
-  { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
   }
 
 --------------------------------------------------------------------------------
@@ -133,7 +136,7 @@ agentLoop :: forall model provider.
              )
           => UIVars
           -> IORef [Message model provider]
-          -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail] r) => Sem r a) -> IO (Either String a))
+          -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a))
           -> IO ()
 agentLoop uiVars historyRef runner = forever $ do
   -- Wait for user input
@@ -198,6 +201,7 @@ runBaseEffects uiVars =
   runM
     . runError
     . interpretUI uiVars
+    . interpretUserInput uiVars        -- UserInput effect
     . interpretLoggingToUI
     . failLog
     . interpretStreamChunkToUI uiVars  -- Handle StreamChunk Text
