@@ -282,9 +282,11 @@ handleEvent ev = do
 
 -- Handle events when input widget is active
 handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
--- Esc cancels the input widget
-handleInputWidgetEvent widget (T.VtyEvent (V.EvKey V.KEsc [])) = do
+-- Esc cancels the input widget - signal cancellation
+handleInputWidgetEvent (SomeInputWidget _ _currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL
+  -- Submit Nothing to signal cancellation and fail the tool call
+  liftIO $ submitCallback Nothing
   liftIO $ clearPendingInput vars
   -- Update cached state
   uiState <- use cachedUIStateL
@@ -296,8 +298,8 @@ handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T
   -- Check if value is complete
   if isWidgetComplete currentValue
     then do
-      -- Submit the value (triggers callback)
-      liftIO $ submitCallback currentValue
+      -- Submit Just value to signal successful confirmation
+      liftIO $ submitCallback (Just currentValue)
       -- Clear the widget from UI (will be done by interpreter, but we can do it here too)
       liftIO $ clearPendingInput vars
       -- Update cached state

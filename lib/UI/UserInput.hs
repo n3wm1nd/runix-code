@@ -36,14 +36,14 @@ data family RenderRequest widget a
 -- The 'widget' parameter allows different UI implementations (TUI, GUI, CLI, etc.)
 -- to provide their own widget rendering while keeping the effect universal.
 data UserInput widget (m :: Type -> Type) a where
-  RequestInput :: ImplementsWidget widget a => Text -> a -> UserInput widget m a
+  RequestInput :: ImplementsWidget widget a => Text -> a -> UserInput widget m (Maybe a)
   -- ^ RequestInput prompt defaultValue
   -- Prompts the user for input, showing the prompt text and using
   -- the default value as both a hint and the initial value.
-  -- Returns a value of the same type as the default.
+  -- Returns Maybe a: Just value if user confirmed, Nothing if user cancelled.
   -- The ImplementsWidget constraint ensures the widget system can handle type 'a'.
 
 -- Manual definition to avoid ambiguous type variable
 requestInput :: forall widget r a. (Member (UserInput widget) r, ImplementsWidget widget a)
-             => Text -> a -> Sem r a
-requestInput prompt defaultValue = Polysemy.send (RequestInput @widget prompt defaultValue :: UserInput widget (Sem r) a)
+             => Text -> a -> Sem r (Maybe a)
+requestInput prompt defaultValue = Polysemy.send (RequestInput @widget prompt defaultValue :: UserInput widget (Sem r) (Maybe a))

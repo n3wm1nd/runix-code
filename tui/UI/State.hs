@@ -49,7 +49,7 @@ data SomeInputWidget where
     :: InputWidget a
     => Text              -- ^ Prompt text
     -> a                 -- ^ Current value
-    -> (a -> IO ())      -- ^ Callback to submit the value
+    -> (Maybe a -> IO ()) -- ^ Callback: Just value = confirmed, Nothing = cancelled
     -> SomeInputWidget
 
 -- | UI state shared between agent thread and UI thread

@@ -191,10 +191,10 @@ newtype BashResult = BashResult Text
   deriving (HasCodec) via Text
 
 -- | Result from ask - returns the user's response as text
--- The actual type is erased since we serialize to/from text for the LLM
-newtype AskResult = AskResult Text
+-- Nothing means the user cancelled (pressed Esc)
+newtype AskResult = AskResult (Maybe Text)
   deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
+  deriving (HasCodec) via (Maybe Text)
 
 -- | Result from todo_write - unit type (nothing to return to LLM)
 -- State effect handles the actual todo list mutation
@@ -419,13 +419,14 @@ bash (Command cmd) = do
 -- | Ask the user for text input
 -- Polymorphic over widget system - works with any UI that implements ImplementsWidget
 -- The widget system determines how the input is displayed (TUI widget, CLI prompt, etc.)
+-- Returns AskResult (Maybe Text): Just text if user confirmed, Nothing if cancelled
 ask
   :: forall widget r. (Member (UserInput widget) r, ImplementsWidget widget Text)
   => Text  -- ^ Question/prompt to show the user
   -> Sem r AskResult
 ask question = do
-  answer <- requestInput @widget question ""
-  return $ AskResult answer
+  mAnswer <- requestInput @widget question ""
+  return $ AskResult mAnswer
 
 --------------------------------------------------------------------------------
 -- Meta Operations

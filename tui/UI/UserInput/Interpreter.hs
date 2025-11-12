@@ -12,7 +12,7 @@ module UI.UserInput.Interpreter
 import Control.Concurrent.STM (STM, TVar, atomically, newTVarIO, readTVar, retry, writeTVar)
 import Control.Monad.IO.Class (liftIO)
 import Polysemy
-import Polysemy.Embed (Embed)
+import Polysemy.Embed (Embed, embed)
 import UI.State (SomeInputWidget (..), UIVars, setPendingInput, clearPendingInput)
 import UI.UserInput (UserInput (..))
 import UI.UserInput.InputWidget (InputWidget, TUIWidget, ImplementsWidget (..), RenderRequest (..))
@@ -23,6 +23,7 @@ import UI.UserInput.InputWidget (InputWidget, TUIWidget, ImplementsWidget (..), 
 -- 2. Packages the widget with the callback into SomeInputWidget
 -- 3. Sets it in UIState (which triggers UI to show the widget)
 -- 4. Blocks until the callback is invoked by the UI
+-- Returns Maybe a: Just = confirmed, Nothing = cancelled
 interpretUserInput
   :: forall r a
    . Member (Embed IO) r
@@ -30,7 +31,7 @@ interpretUserInput
   -> Sem (UserInput TUIWidget ': r) a
   -> Sem r a
 interpretUserInput uiVars = interpret $ \case
-  RequestInput prompt (defaultValue :: x) -> embed @IO $ do
+  RequestInput prompt (defaultValue :: x) -> do
     -- Get the render request from ImplementsWidget
     let request = askWidget prompt defaultValue :: RenderRequest TUIWidget x
 
@@ -40,34 +41,37 @@ interpretUserInput uiVars = interpret $ \case
 -- | Fulfill a TUI render request
 -- This is where the TUI-specific implementation lives
 -- The InputWidget constraint comes from pattern matching on the GADT
-fulfillRequest :: forall a. UIVars -> RenderRequest TUIWidget a -> IO a
+fulfillRequest :: forall a r. Member (Embed IO) r => UIVars -> RenderRequest TUIWidget a -> Sem r (Maybe a)
 fulfillRequest uiVars (RenderRequest prompt defaultValue) = do
   -- Pattern matching brings InputWidget a constraint
   -- Create a response variable for this specific request
-  responseVar <- newTVarIO (Nothing :: Maybe a)
+  -- Outer Maybe: Nothing = waiting, Just = user responded
+  -- Inner Maybe: Nothing = cancelled, Just = confirmed with value
+  responseVar <- embed $ newTVarIO (Nothing :: Maybe (Maybe a))
 
   -- Create callback that UI will invoke when user submits
-  let submitCallback :: a -> IO ()
-      submitCallback value = atomically $ writeTVar responseVar (Just value)
+  let submitCallback :: Maybe a -> IO ()
+      submitCallback mValue = atomically $ writeTVar responseVar (Just mValue)
 
   -- Package everything into existential wrapper
   let widget = SomeInputWidget prompt defaultValue submitCallback
 
   -- Set pending input in UI state (triggers UI to show widget)
-  setPendingInput uiVars widget
+  embed $ setPendingInput uiVars widget
 
   -- Block until user provides input
-  result <- atomically $ waitForResponse responseVar
+  result <- embed $ atomically $ waitForResponse responseVar
 
   -- Clear the widget from UI
-  clearPendingInput uiVars
+  embed $ clearPendingInput uiVars
 
+  -- Return the Maybe a directly (Nothing = cancelled, Just = confirmed)
   return result
 
 -- | Wait for response (blocks until Just value appears)
-waitForResponse :: TVar (Maybe a) -> STM a
+waitForResponse :: TVar (Maybe (Maybe a)) -> STM (Maybe a)
 waitForResponse var = do
   mValue <- readTVar var
   case mValue of
     Nothing -> retry
-    Just value -> return value
+    Just result -> return result

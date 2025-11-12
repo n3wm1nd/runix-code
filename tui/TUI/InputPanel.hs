@@ -9,37 +9,46 @@ module TUI.InputPanel
 
 import Brick
   ( EventM
+  , Padding(..)
   , Widget
+  , fill
   , hBox
   , hLimit
   , padAll
+  , padLeft
+  , padRight
   , str
   , txt
   , vBox
   , vLimit
+  , withAttr
+  , withBorderStyle
   , (<+>)
   )
 import Brick.Types (BrickEvent)
-import Brick.Widgets.Border (hBorder)
+import Brick.Widgets.Border (hBorder, borderWithLabel)
+import qualified Brick.Widgets.Border.Style as BS
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
+import UI.Attributes (inputPanelAttr, inputPanelLabelAttr, inputPanelHelpAttr)
 import UI.State (Name, SomeInputWidget (..))
-import UI.UserInput.InputWidget (InputWidget (..))
+import UI.UserInput.InputWidget (InputWidget(renderWidget, handleWidgetEvent, isWidgetComplete))
 
 -- | Draw the input panel for an active input widget
 -- Returns the widget UI and its height
 drawInputPanel :: SomeInputWidget -> (Widget Name, Int)
 drawInputPanel (SomeInputWidget prompt currentValue _submitCallback) =
   let panelHeight = 10
-      panel = vLimit panelHeight $
-        vBox
-          [ hBorder
-          , padAll 1 $ vBox
-              [ renderWidget prompt currentValue
-              , str ""
-              , str "Enter: Confirm | Esc: Cancel"
-              ]
-          ]
+      label = withAttr inputPanelLabelAttr $ txt " Agent requesting input "
+      panel = withAttr inputPanelAttr $
+        vLimit panelHeight $
+          withBorderStyle BS.unicodeBold $
+            borderWithLabel label $
+              padLeft Max $ padRight Max $ padAll 1 $ vBox
+                [ renderWidget prompt currentValue
+                , str ""
+                , withAttr inputPanelHelpAttr $ txt "⏎ Confirm | Esc Cancel"
+                ]
    in (panel, panelHeight)
 
 -- | Handle events for the input panel
