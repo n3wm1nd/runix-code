@@ -14,11 +14,15 @@ module UI.UserInput
     -- * Universal Interface
   , ImplementsWidget (..)
   , RenderRequest (..)
+
+    -- * Simple Interpreters
+  , interpretUserInputFail
   ) where
 
 import Data.Kind (Type)
 import Data.Text (Text)
 import Polysemy
+import Polysemy.Fail
 
 -- | Universal widget interface bridge
 -- This class connects the universal UserInput effect to specific UI implementations.
@@ -47,3 +51,12 @@ data UserInput widget (m :: Type -> Type) a where
 requestInput :: forall widget r a. (Member (UserInput widget) r, ImplementsWidget widget a)
              => Text -> a -> Sem r (Maybe a)
 requestInput prompt defaultValue = Polysemy.send (RequestInput @widget prompt defaultValue :: UserInput widget (Sem r) (Maybe a))
+
+-- | Simple interpreter that always fails for non-interactive clients
+-- This is useful for CLI tools or other non-interactive environments where
+-- user input is not supported. Any attempt to request input will fail.
+interpretUserInputFail :: forall widget r a. Member Fail r
+                       => Sem (UserInput widget ': r) a
+                       -> Sem r a
+interpretUserInputFail = interpret $ \case
+  RequestInput prompt _ -> fail $ "User input not supported: " <> show prompt

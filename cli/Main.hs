@@ -27,6 +27,22 @@ import Agent (SystemPrompt(..), UserPrompt(..), runRunixCode, responseText)
 import Models (ModelDefaults(..), ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..))
 import Config
 import Runner
+import UI.UserInput (UserInput, ImplementsWidget(..), RenderRequest)
+
+--------------------------------------------------------------------------------
+-- CLI Widget Type
+--------------------------------------------------------------------------------
+
+-- | Phantom type for CLI widget system (non-interactive)
+-- This is used to tag the UserInput effect as being for CLI use
+data CLIWidget
+
+-- | RenderRequest for CLI (never actually used since we always fail)
+data instance RenderRequest CLIWidget a = CLIRenderRequest Text a
+
+-- | ImplementsWidget instance for Text - the minimal instance we need
+instance ImplementsWidget CLIWidget Text where
+  askWidget prompt defaultValue = CLIRenderRequest prompt defaultValue
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -81,7 +97,7 @@ runWithClaudeSonnet45 cfg userInput = do
       hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
       return $ Left "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr ->
-      runWithEffects $
+      runWithEffects @CLIWidget $
         runSecret (pure tokenStr) $
           interpretAnthropicOAuth Anthropic ClaudeSonnet45 $
             runAgent @Anthropic @ClaudeSonnet45 cfg userInput
@@ -89,14 +105,14 @@ runWithClaudeSonnet45 cfg userInput = do
 -- | Run with GLM4.5-air
 runWithGLM45Air :: Config -> Text -> IO (Either String Text)
 runWithGLM45Air cfg userInput =
-  runWithEffects $
+  runWithEffects @CLIWidget $
     interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air $
       runAgent @LlamaCpp @GLM45Air cfg userInput
 
 -- | Run with Qwen3-Coder
 runWithQwen3Coder :: Config -> Text -> IO (Either String Text)
 runWithQwen3Coder cfg userInput =
-  runWithEffects $
+  runWithEffects @CLIWidget $
     interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder $
       runAgent @LlamaCpp @Qwen3Coder cfg userInput
 
@@ -115,6 +131,7 @@ runAgent :: forall provider model r.
             , Member Bash r
             , Member Logging r
             , Member Fail r
+            , Member (UserInput CLIWidget) r
             , HasTools model provider
             , SupportsSystemPrompt provider
             , SupportsStreaming provider
@@ -140,7 +157,7 @@ runAgent cfg userInput = do
     Just sessionFile -> loadSession @provider @model sessionFile
 
   -- Run the agent
-  (result, finalHistory) <- runRunixCode @provider @model sysPrompt configs initialHistory userPrompt
+  (result, finalHistory) <- runRunixCode @provider @model @CLIWidget sysPrompt configs initialHistory userPrompt
 
   -- Save session (if specified)
   case cfgSessionFile cfg of

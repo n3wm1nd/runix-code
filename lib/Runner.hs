@@ -43,6 +43,7 @@ import Runix.Logging.Effects (Logging)
 import qualified Runix.Logging.Effects as Log
 
 import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderImplementation, getComposableProvider)
+import UI.UserInput (UserInput, interpretUserInputFail)
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -154,8 +155,8 @@ loadSystemPrompt promptFile defaultPrompt = do
 --
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
-runWithEffects :: HasCallStack
-               => (forall r. Members '[FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail, Embed IO] r
+runWithEffects :: forall widget a. HasCallStack
+               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail, Embed IO] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -163,6 +164,7 @@ runWithEffects action =
     . runError
     . loggingIO
     . failLog
+    . interpretUserInputFail @widget
     . httpIO (withRequestTimeout 300)
     . cmdIO
     . bashIO
