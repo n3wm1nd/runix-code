@@ -35,6 +35,7 @@ common warnings
 
 common extensions
     default-extensions:
+        AllowAmbiguousTypes
         DataKinds
         DerivingStrategies
         DerivingVia
@@ -57,6 +58,7 @@ library
                     , Models
                     , Config
                     , Runner
+                    , UI.UserInput
 
     build-depends:    base >=4.17 && <5
                     , runix
@@ -99,7 +101,6 @@ executable runix-code-tui
                     , UI.OutputHistory
                     , UI.Rendering
                     , UI.Attributes
-                    , UI.UserInput
                     , UI.UserInput.InputWidget
                     , UI.UserInput.Interpreter
     ghc-options:      -threaded

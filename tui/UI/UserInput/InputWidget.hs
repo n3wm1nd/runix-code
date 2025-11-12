@@ -33,19 +33,14 @@ import Graphics.Vty
   , Key (..)
   )
 
--- | Universal widget interface bridge
--- This class connects the universal UserInput effect to specific UI implementations.
--- The 'widget' parameter is a phantom type that tags which UI system we're using.
--- Instead of providing implementation, it creates a request that the interpreter fulfills.
-class ImplementsWidget widget a where
-  askWidget :: Text -> a -> RenderRequest widget a
+-- Re-export universal interface from library
+import UI.UserInput (ImplementsWidget (..), RenderRequest)
 
--- | A request for the widget system to render and get input
+-- | TUI-specific RenderRequest constructor
 -- The constraint dict brings the necessary typeclass evidence
-data RenderRequest widget a where
+data instance RenderRequest TUIWidget a where
   RenderRequest :: InputWidget a
                 => Text -> a -> RenderRequest TUIWidget a
-  -- For other widget systems, they would bring their own constraints
 
 -- | Phantom type tag for the TUI (Brick-based) widget system
 data TUIWidget

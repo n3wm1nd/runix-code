@@ -152,7 +152,7 @@ agentLoop uiVars historyRef runner = forever $ do
   -- Run the agent with model-specific default configs
   -- runixCode will add the user message to the history internally (so we pass the old history)
   let configs = defaultConfigs @provider @model
-  result <- runner $ runRunixCode @provider @model
+  result <- runner $ runRunixCode @provider @model @TUIWidget
                        (SystemPrompt "you are a helpful agent")
                        configs
                        currentHistory

@@ -38,6 +38,7 @@ import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
 import Runix.Grep.Effects (Grep)
 import Runix.Logging.Effects (Logging)
+import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 
@@ -99,10 +100,12 @@ instance ToolFunction (RunixCodeResult provider model) where
 -- | Runix Code - AI coding assistant (stateful version for composition)
 -- Uses State for message history and Reader for system prompt and configs
 runixCode
-  :: forall provider model r.
+  :: forall provider model widget r.
      ( Member (LLM provider model) r
      , Member Grep r
      , Member Logging r
+     , Member (UserInput widget) r
+     , ImplementsWidget widget Text
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
      , Member (Reader [ULL.ModelConfig provider model]) r
@@ -127,7 +130,7 @@ runixCode (UserPrompt userPrompt) = do
   (_finalTodos, result) <-
     runState ([] :: [Tools.Todo]) $
       runReader configsWithSystem $
-        runixCodeAgentLoop
+        runixCodeAgentLoop @provider @model @widget
   return result
   where
     isSystemPrompt (ULL.SystemPrompt _) = True
@@ -136,10 +139,12 @@ runixCode (UserPrompt userPrompt) = do
 -- | Pure wrapper for runixCode (for standalone use)
 -- Interprets State and Reader effects, returns explicit values
 runRunixCode
-  :: forall provider model r.
+  :: forall provider model widget r.
      ( Member (LLM provider model) r
      , Member Grep r
      , Member Logging r
+     , Member (UserInput widget) r
+     , ImplementsWidget widget Text
      , HasTools model provider
      , SupportsSystemPrompt provider
      , SupportsStreaming provider
@@ -153,7 +158,7 @@ runRunixCode sysPrompt configs initialHistory userPrompt = do
   (finalHistory, result) <- runReader sysPrompt $
                               runReader configs $
                                 runState initialHistory $
-                                  runixCode userPrompt
+                                  runixCode @provider @model @widget userPrompt
   return (result, finalHistory)
 
 -- | Update config with new tool list
@@ -168,10 +173,12 @@ setTools tools configs =
 
 -- | Agent loop - reads base configs from Reader, builds tools each iteration
 runixCodeAgentLoop
-  :: forall provider model r.
+  :: forall provider model widget r.
      ( Member (LLM provider model) r
      , Member Grep r
      , Member Logging r
+     , Member (UserInput widget) r
+     , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig provider model]) r
      , Member (Reader SystemPrompt) r
      , Member (State [Message model provider]) r
@@ -187,12 +194,13 @@ runixCodeAgentLoop = do
   let tools :: [LLMTool (Sem r)]
       tools =
         [ LLMTool Tools.grep
+        , LLMTool (Tools.ask @widget)
         , LLMTool Tools.todoWrite
         , LLMTool Tools.todoRead
         , LLMTool Tools.todoCheck
         , LLMTool Tools.todoDelete
         -- Recursive agent starts with fresh history, shares SystemPrompt Reader
-        , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model prompt)
+        , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model @widget prompt)
         ]
       configs = setTools tools baseConfigs
 
@@ -221,7 +229,7 @@ runixCodeAgentLoop = do
       put @[Message model provider] historyWithResults
 
       -- Recurse
-      runixCodeAgentLoop
+      runixCodeAgentLoop @provider @model @widget
 
 --------------------------------------------------------------------------------
 -- Serialization Types (CLI convenience only)

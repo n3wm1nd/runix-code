@@ -1,4 +1,5 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE AllowAmbiguousTypes #-}
 -- | Tools for Runix Code agent
 --
 -- Each tool is just a function in Sem r that the LLM can call.
@@ -20,6 +21,9 @@ module Tools
     -- * Shell
   , bash
 
+    -- * User Interaction
+  , ask
+
     -- * Meta
   , todoWrite
   , todoRead
@@ -34,6 +38,7 @@ module Tools
   , GlobResult (..)
   , GrepResult (..)
   , BashResult (..)
+  , AskResult (..)
   , TodoWriteResult (..)
   , TodoReadResult (..)
   , TodoCheckResult (..)
@@ -65,6 +70,7 @@ import Runix.Grep.Effects (Grep)
 import qualified Runix.Grep.Effects
 import Runix.Bash.Effects (Bash)
 import qualified Runix.Bash.Effects
+import UI.UserInput (UserInput, requestInput, ImplementsWidget)
 
 --------------------------------------------------------------------------------
 -- Types
@@ -184,6 +190,12 @@ newtype BashResult = BashResult Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
 
+-- | Result from ask - returns the user's response as text
+-- The actual type is erased since we serialize to/from text for the LLM
+newtype AskResult = AskResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
 -- | Result from todo_write - unit type (nothing to return to LLM)
 -- State effect handles the actual todo list mutation
 data TodoWriteResult = TodoWriteResult
@@ -248,6 +260,10 @@ instance ToolParameter TodoDeleteResult where
   paramName _ _ = "result"
   paramDescription _ = "message describing what happened (todo deleted, no match found, or multiple matches)"
 
+instance ToolParameter AskResult where
+  paramName _ _ = "answer"
+  paramDescription _ = "the user's text response"
+
 -- ToolFunction instances for result types
 instance ToolFunction ReadFileResult where
   toolFunctionName _ = "read_file"
@@ -272,6 +288,10 @@ instance ToolFunction GrepResult where
 instance ToolFunction BashResult where
   toolFunctionName _ = "bash"
   toolFunctionDescription _ = "Execute a bash command and return output"
+
+instance ToolFunction AskResult where
+  toolFunctionName _ = "ask"
+  toolFunctionDescription _ = "Ask the user for input - use this to get confirmation, ask questions, or request information from the user"
 
 instance ToolFunction TodoWriteResult where
   toolFunctionName _ = "todo_write"
@@ -391,6 +411,21 @@ bash (Command cmd) = do
                then Runix.Bash.Effects.stdout output
                else Runix.Bash.Effects.stdout output <> "\nSTDERR:\n" <> Runix.Bash.Effects.stderr output
   return $ BashResult result
+
+--------------------------------------------------------------------------------
+-- User Interaction
+--------------------------------------------------------------------------------
+
+-- | Ask the user for text input
+-- Polymorphic over widget system - works with any UI that implements ImplementsWidget
+-- The widget system determines how the input is displayed (TUI widget, CLI prompt, etc.)
+ask
+  :: forall widget r. (Member (UserInput widget) r, ImplementsWidget widget Text)
+  => Text  -- ^ Question/prompt to show the user
+  -> Sem r AskResult
+ask question = do
+  answer <- requestInput @widget question ""
+  return $ AskResult answer
 
 --------------------------------------------------------------------------------
 -- Meta Operations
