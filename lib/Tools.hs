@@ -24,6 +24,9 @@ module Tools
     -- * Build Tools
   , cabalBuild
 
+    -- * Code Generation Tools
+  , generateTool
+
     -- * User Interaction
   , ask
 
@@ -42,6 +45,7 @@ module Tools
   , GrepResult (..)
   , BashResult (..)
   , CabalBuildResult (..)
+  , GenerateToolResult (..)
   , AskResult (..)
   , TodoWriteResult (..)
   , TodoReadResult (..)
@@ -57,13 +61,16 @@ module Tools
   , Command (..)
   , TodoText (..)
   , WorkingDirectory (..)
+  , FunctionName (..)
+  , FunctionSignature (..)
+  , FunctionBody (..)
+  , CompileError (..)
   ) where
 
 import Prelude hiding (readFile, writeFile, FilePath)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import qualified Data.ByteString.Lazy as BL
 import Polysemy (Sem, Member, Members)
 import Polysemy.State (State, modify, get, put)
 import Polysemy.Fail (Fail)
@@ -73,6 +80,7 @@ import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem.Effects
 import Runix.Grep.Effects (Grep)
+import Runix.Logging.Effects 
 import qualified Runix.Grep.Effects
 import Runix.Bash.Effects (Bash)
 import qualified Runix.Bash.Effects
@@ -136,6 +144,23 @@ newtype WorkingDirectory = WorkingDirectory Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
 
+-- Code generation types
+newtype FunctionName = FunctionName Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+newtype FunctionSignature = FunctionSignature Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+newtype FunctionBody = FunctionBody Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+newtype CompileError = CompileError Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
 -- ToolParameter instances for parameters
 instance ToolParameter FilePath where
   paramName _ _ = "file_path"
@@ -168,6 +193,22 @@ instance ToolParameter TodoText where
 instance ToolParameter WorkingDirectory where
   paramName _ _ = "working_directory"
   paramDescription _ = "directory to run the command in"
+
+instance ToolParameter FunctionName where
+  paramName _ _ = "function_name"
+  paramDescription _ = "name of the function to generate"
+
+instance ToolParameter FunctionSignature where
+  paramName _ _ = "function_signature"
+  paramDescription _ = "complete type signature with function name (e.g. 'add :: Int -> Int -> Int')"
+
+instance ToolParameter FunctionBody where
+  paramName _ _ = "function_body"
+  paramDescription _ = "function implementation with name (e.g. 'add x y = x + y')"
+
+instance ToolParameter CompileError where
+  paramName _ _ = "compile_error"
+  paramDescription _ = "compilation error message"
 
 --------------------------------------------------------------------------------
 -- Result Types (unique for ToolFunction instances)
@@ -219,6 +260,20 @@ instance HasCodec CabalBuildResult where
       <$> Autodocodec.requiredField "success" "whether build succeeded" Autodocodec..= buildSuccess
       <*> Autodocodec.requiredField "output" "build stdout" Autodocodec..= buildOutput
       <*> Autodocodec.requiredField "errors" "build stderr" Autodocodec..= buildErrors
+
+-- | Result from generateTool - returns success status and file path or error
+data GenerateToolResult = GenerateToolResult
+  { generateSuccess :: Bool
+  , generateMessage :: Text
+  , generatedFilePath :: Maybe Text
+  } deriving stock (Show, Eq)
+
+instance HasCodec GenerateToolResult where
+  codec = Autodocodec.object "GenerateToolResult" $
+    GenerateToolResult
+      <$> Autodocodec.requiredField "success" "whether tool generation succeeded" Autodocodec..= generateSuccess
+      <*> Autodocodec.requiredField "message" "success message or error details" Autodocodec..= generateMessage
+      <*> Autodocodec.optionalField "file_path" "path to generated tool file" Autodocodec..= generatedFilePath
 
 -- | Result from ask - returns the user's response as text
 newtype AskResult = AskResult Text
@@ -277,6 +332,10 @@ instance ToolParameter CabalBuildResult where
   paramName _ _ = "cabal_build_result"
   paramDescription _ = "cabal build result with success status and output"
 
+instance ToolParameter GenerateToolResult where
+  paramName _ _ = "generate_tool_result"
+  paramDescription _ = "tool generation result with success status and details"
+
 instance ToolParameter TodoWriteResult where
   paramName _ _ = "result"
   paramDescription _ = "todo write result (always succeeds)"
@@ -326,6 +385,10 @@ instance ToolFunction CabalBuildResult where
   toolFunctionName _ = "cabal_build"
   toolFunctionDescription _ = "Run cabal build in a specified directory and return build results"
 
+instance ToolFunction GenerateToolResult where
+  toolFunctionName _ = "generate_tool"
+  toolFunctionDescription _ = "Generate a new tool by providing function name, signature, and complete function definition. The function definition should include both type signature and implementation."
+
 instance ToolFunction AskResult where
   toolFunctionName _ = "ask"
   toolFunctionDescription _ = "Ask the user for input - use this to get confirmation, ask questions, or request information from the user"
@@ -356,7 +419,7 @@ readFile
   -> Sem r ReadFileResult
 readFile (FilePath path) = do
   contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
-  return $ ReadFileResult (T.decodeUtf8 $ BL.toStrict contents)
+  return $ ReadFileResult (T.decodeUtf8 contents)
 
 -- | Write a new file
 writeFile
@@ -365,7 +428,7 @@ writeFile
   -> FileContent
   -> Sem r WriteFileResult
 writeFile (FilePath path) (FileContent content) = do
-  let bytes = BL.fromStrict $ T.encodeUtf8 content
+  let bytes = T.encodeUtf8 content
   Runix.FileSystem.Effects.writeFile (T.unpack path) bytes
   return $ WriteFileResult True
 
@@ -379,13 +442,13 @@ editFile
   -> Sem r EditFileResult
 editFile (FilePath path) (OldString old) (NewString new) = do
   contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
-  let contentText = T.decodeUtf8 $ BL.toStrict contents
+  let contentText = T.decodeUtf8 contents
       (replaced, occurrences) = replaceAndCount old new contentText
   case occurrences of
     0 -> return $ EditFileResult False $
            "Error: old_string not found in file. No changes made."
     1 -> do
-      let newBytes = BL.fromStrict $ T.encodeUtf8 replaced
+      let newBytes = T.encodeUtf8 replaced
       Runix.FileSystem.Effects.writeFile (T.unpack path) newBytes
       return $ EditFileResult True $
         "Successfully replaced 1 occurrence in " <> path
@@ -460,6 +523,94 @@ cabalBuild (WorkingDirectory workDir) = do
       stdout = Runix.Cmd.Effects.stdout output
       stderr = Runix.Cmd.Effects.stderr output
   return $ CabalBuildResult success stdout stderr
+
+-- | Generate a new tool by writing source code and compiling it
+generateTool
+  :: Members '[FileSystemRead, FileSystemWrite, Logging, Cmd] r
+  => FunctionName
+  -> FunctionSignature  -- The required type signature (interface contract)
+  -> FunctionBody       -- Complete function definition from LLM
+  -> Sem r GenerateToolResult
+generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (FunctionBody functionDef) = do
+  let generatedToolsPath = "apps/runix-code/lib/GeneratedTools.hs"
+      workingDir = "."
+
+  -- Step 1: Validate both signature and body start with expected function name
+  case (validateFunctionSignature expectedFuncName funcSig, validateFunctionDef expectedFuncName functionDef) of
+    (Left errMsg, _) -> return $ GenerateToolResult False errMsg Nothing
+    (_, Left errMsg) -> return $ GenerateToolResult False errMsg Nothing
+    (Right (), Right ()) -> do
+      -- Step 2: Read GeneratedTools.hs (must exist since it's in cabal build)
+      currentContent <- T.decodeUtf8 <$> Runix.FileSystem.Effects.readFile generatedToolsPath
+
+      -- Step 3: Generate new tool code with fixed signature
+      let newToolCode = formatToolCodeWithSignature expectedFuncName funcSig functionDef
+          updatedContent = appendToolToModule currentContent newToolCode
+
+      -- Step 4: Store original content and write updated version
+      let originalContent = currentContent
+      Runix.FileSystem.Effects.writeFile generatedToolsPath (T.encodeUtf8 updatedContent)
+
+      info("file written, compiling now")
+      -- Step 5: Test compilation
+      buildResult <- cabalBuild (WorkingDirectory workingDir)
+
+      if buildSuccess buildResult
+        then do
+          -- Success: keep the updated file
+          return $ GenerateToolResult True ("Successfully generated tool: " <> expectedFuncName) (Just (T.pack generatedToolsPath))
+        else do
+          -- Failure: revert to original content
+          Runix.FileSystem.Effects.writeFile generatedToolsPath (T.encodeUtf8 originalContent)
+          let errorMsg = "Compilation failed: " <> buildErrors buildResult
+          return $ GenerateToolResult False errorMsg Nothing
+
+-- Helper functions for code generation
+
+-- Validate that the function signature starts with the expected function name and has ::
+validateFunctionSignature :: Text -> Text -> Either Text ()
+validateFunctionSignature expectedName funcSig =
+  let trimmedSig = T.strip funcSig
+      expectedPattern = expectedName <> " :: "
+  in if expectedPattern `T.isPrefixOf` trimmedSig
+     then Right ()
+     else Left $ "Function signature must start with '" <> expectedPattern <> "', got: " <> T.take 50 trimmedSig
+
+-- Validate that the function definition starts with the expected function name
+validateFunctionDef :: Text -> Text -> Either Text ()
+validateFunctionDef expectedName functionDef =
+  let firstLine = T.take 100 functionDef -- Look at first 100 chars
+      namePattern = expectedName <> " "
+  in if namePattern `T.isInfixOf` firstLine
+     then Right ()
+     else Left $ "Function definition must start with function name '" <> expectedName <> "', got: " <> T.take 50 firstLine
+
+-- Format tool code with LLM-provided signature and body (both should include function name)
+formatToolCodeWithSignature :: Text -> Text -> Text -> Text
+formatToolCodeWithSignature funcName funcSig functionDef = T.unlines
+  [ "-- Generated tool: " <> funcName
+  , funcSig
+  , functionDef
+  , ""
+  ]
+
+-- Extract just the function implementation from LLM output
+-- Handles cases like "echo input = input" or "echo :: String -> String\necho input = input"
+extractFunctionBody :: Text -> Text -> Text
+extractFunctionBody funcName llmOutput =
+  let outputLines = T.lines llmOutput
+      -- Find the implementation line (starts with function name but not a type signature)
+      implLines = filter isImplementation outputLines
+      isImplementation line =
+        T.isPrefixOf funcName line &&
+        not (":: " `T.isInfixOf` line) &&
+        T.length (T.strip line) > T.length funcName
+  in case implLines of
+       (impl:_) -> impl
+       [] -> funcName <> " = error \"No implementation provided\""
+
+appendToolToModule :: Text -> Text -> Text
+appendToolToModule currentContent newToolCode = currentContent <> "\n" <> newToolCode
 
 --------------------------------------------------------------------------------
 -- User Interaction

@@ -24,6 +24,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TLE
+import qualified Data.Text.Encoding as TE
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Vector as Vector
@@ -69,8 +70,8 @@ loadSession path = do
       Log.warning $ T.pack $ "Session file does not exist: " <> path
       return []
     else do
-      contents <- readFile path  -- readFile returns ByteString (lazy)
-      case Aeson.decode contents of
+      contents <- readFile path  -- readFile returns ByteString (strict)
+      case Aeson.decode (BSL.fromStrict contents) of
         Nothing -> do
           Log.warning "Failed to parse session JSON, starting with empty history"
           return []
@@ -93,7 +94,7 @@ saveSession :: forall provider model r.
             -> Sem r ()
 saveSession path msgs = do
   let json = serializeMessages @provider @model msgs
-      encoded = Aeson.encode json  -- Keep as lazy bytestring
+      encoded = BSL.toStrict $ Aeson.encode json  -- Convert to strict
   writeFile path encoded
   Log.info $ T.pack $ "Saved " <> show (length msgs) <> " messages to session"
 
@@ -142,7 +143,7 @@ loadSystemPrompt promptFile defaultPrompt = do
     then do
       Log.info $ T.pack $ "Using system prompt from " <> promptFile
       contents <- readFile promptFile
-      return $ TL.toStrict $ TLE.decodeUtf8 contents
+      return $ TE.decodeUtf8 contents
     else do
       Log.warning $ T.pack $ promptFile <> " not found, using default system prompt"
       return defaultPrompt

@@ -25,7 +25,7 @@ module Agent
   ) where
 
 import Data.Text (Text)
-import Polysemy (Member, Sem)
+import Polysemy (Member, Members, Sem)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, runReader, ask)
 import Polysemy.Fail (Fail)
@@ -40,6 +40,7 @@ import qualified Tools
 import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging)
+import qualified Runix.FileSystem.Effects
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
@@ -108,6 +109,7 @@ runixCode
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
+     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
@@ -147,6 +149,7 @@ runRunixCode
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
+     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , HasTools model provider
      , SupportsSystemPrompt provider
@@ -181,6 +184,7 @@ runixCodeAgentLoop
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
+     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig provider model]) r
      , Member (Reader SystemPrompt) r
@@ -196,6 +200,7 @@ runixCodeAgentLoop = do
   let tools :: [LLMTool (Sem (Fail ': r))]
       tools =
         [ LLMTool Tools.grep
+        , LLMTool Tools.readFile
         , LLMTool (Tools.ask @widget)
         , LLMTool Tools.todoWrite
         , LLMTool Tools.todoRead
@@ -204,6 +209,7 @@ runixCodeAgentLoop = do
         -- Recursive agent starts with fresh history, shares SystemPrompt Reader
         -- , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model @widget prompt)
         , LLMTool Tools.cabalBuild
+        , LLMTool Tools.generateTool
         ]
       configs = setTools tools baseConfigs
 

@@ -55,6 +55,7 @@ library
     import:           warnings, extensions
     exposed-modules:  Agent
                     , Tools
+                    , GeneratedTools
                     , Models
                     , Config
                     , Runner
