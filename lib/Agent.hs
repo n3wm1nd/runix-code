@@ -31,7 +31,7 @@ import Polysemy.Reader (Reader, runReader, ask)
 import Polysemy.Fail (Fail)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
-import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
+import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
@@ -112,7 +112,6 @@ runixCode
      , Member (Reader [ULL.ModelConfig provider model]) r
      , HasTools model provider
      , SupportsSystemPrompt provider
-     , SupportsStreaming provider
      )
   => UserPrompt
   -> Sem r (RunixCodeResult provider model)
@@ -148,7 +147,6 @@ runRunixCode
      , ImplementsWidget widget Text
      , HasTools model provider
      , SupportsSystemPrompt provider
-     , SupportsStreaming provider
      )
   => SystemPrompt
   -> [ULL.ModelConfig provider model]  -- ^ Model configuration (streaming, reasoning, etc.)
@@ -186,7 +184,6 @@ runixCodeAgentLoop
      , Member (State [Tools.Todo]) r
      , HasTools model provider
      , SupportsSystemPrompt provider
-     , SupportsStreaming provider
      )
   => Sem r (RunixCodeResult provider model)
 runixCodeAgentLoop = do
