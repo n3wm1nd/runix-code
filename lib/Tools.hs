@@ -21,6 +21,9 @@ module Tools
     -- * Shell
   , bash
 
+    -- * Build Tools
+  , cabalBuild
+
     -- * User Interaction
   , ask
 
@@ -38,6 +41,7 @@ module Tools
   , GlobResult (..)
   , GrepResult (..)
   , BashResult (..)
+  , CabalBuildResult (..)
   , AskResult (..)
   , TodoWriteResult (..)
   , TodoReadResult (..)
@@ -52,6 +56,7 @@ module Tools
   , Pattern (..)
   , Command (..)
   , TodoText (..)
+  , WorkingDirectory (..)
   ) where
 
 import Prelude hiding (readFile, writeFile, FilePath)
@@ -71,6 +76,8 @@ import Runix.Grep.Effects (Grep)
 import qualified Runix.Grep.Effects
 import Runix.Bash.Effects (Bash)
 import qualified Runix.Bash.Effects
+import Runix.Cmd.Effects (Cmd)
+import qualified Runix.Cmd.Effects
 import UI.UserInput (UserInput, requestInput, ImplementsWidget)
 
 --------------------------------------------------------------------------------
@@ -125,6 +132,10 @@ newtype TodoText = TodoText Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
 
+newtype WorkingDirectory = WorkingDirectory Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
 -- ToolParameter instances for parameters
 instance ToolParameter FilePath where
   paramName _ _ = "file_path"
@@ -153,6 +164,10 @@ instance ToolParameter Command where
 instance ToolParameter TodoText where
   paramName _ _ = "text"
   paramDescription _ = "text or prefix of the todo item"
+
+instance ToolParameter WorkingDirectory where
+  paramName _ _ = "working_directory"
+  paramDescription _ = "directory to run the command in"
 
 --------------------------------------------------------------------------------
 -- Result Types (unique for ToolFunction instances)
@@ -190,6 +205,20 @@ newtype GrepResult = GrepResult Text
 newtype BashResult = BashResult Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
+
+-- | Result from cabal build - returns success status and output
+data CabalBuildResult = CabalBuildResult
+  { buildSuccess :: Bool
+  , buildOutput :: Text
+  , buildErrors :: Text
+  } deriving stock (Show, Eq)
+
+instance HasCodec CabalBuildResult where
+  codec = Autodocodec.object "CabalBuildResult" $
+    CabalBuildResult
+      <$> Autodocodec.requiredField "success" "whether build succeeded" Autodocodec..= buildSuccess
+      <*> Autodocodec.requiredField "output" "build stdout" Autodocodec..= buildOutput
+      <*> Autodocodec.requiredField "errors" "build stderr" Autodocodec..= buildErrors
 
 -- | Result from ask - returns the user's response as text
 newtype AskResult = AskResult Text
@@ -244,6 +273,10 @@ instance ToolParameter BashResult where
   paramName _ _ = "bash_result"
   paramDescription _ = "command output"
 
+instance ToolParameter CabalBuildResult where
+  paramName _ _ = "cabal_build_result"
+  paramDescription _ = "cabal build result with success status and output"
+
 instance ToolParameter TodoWriteResult where
   paramName _ _ = "result"
   paramDescription _ = "todo write result (always succeeds)"
@@ -288,6 +321,10 @@ instance ToolFunction GrepResult where
 instance ToolFunction BashResult where
   toolFunctionName _ = "bash"
   toolFunctionDescription _ = "Execute a bash command and return output"
+
+instance ToolFunction CabalBuildResult where
+  toolFunctionName _ = "cabal_build"
+  toolFunctionDescription _ = "Run cabal build in a specified directory and return build results"
 
 instance ToolFunction AskResult where
   toolFunctionName _ = "ask"
@@ -411,6 +448,18 @@ bash (Command cmd) = do
                then Runix.Bash.Effects.stdout output
                else Runix.Bash.Effects.stdout output <> "\nSTDERR:\n" <> Runix.Bash.Effects.stderr output
   return $ BashResult result
+
+-- | Run cabal build in a specified directory
+cabalBuild
+  :: Member Cmd r
+  => WorkingDirectory
+  -> Sem r CabalBuildResult
+cabalBuild (WorkingDirectory workDir) = do
+  output <- Runix.Cmd.Effects.cmdExecIn (T.unpack workDir) "cabal" ["build", "all"]
+  let success = Runix.Cmd.Effects.exitCode output == 0
+      stdout = Runix.Cmd.Effects.stdout output
+      stderr = Runix.Cmd.Effects.stderr output
+  return $ CabalBuildResult success stdout stderr
 
 --------------------------------------------------------------------------------
 -- User Interaction

@@ -156,7 +156,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, HTTP, Logging, Fail, Embed IO] r
+               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, Logging, Fail, Embed IO] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =

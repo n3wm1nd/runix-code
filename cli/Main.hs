@@ -20,6 +20,7 @@ import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.HTTP.Effects ()
+import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging)
 import Runix.Secret.Effects (runSecret)
 
@@ -130,6 +131,7 @@ runAgent :: forall provider model r.
             , Member Grep r
             , Member Bash r
             , Member Logging r
+            , Member Cmd r
             , Member Fail r
             , Member (UserInput CLIWidget) r
             , HasTools model provider

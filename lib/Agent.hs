@@ -38,6 +38,7 @@ import Runix.LLM.ToolInstances ()
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
 import Runix.Grep.Effects (Grep)
+import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging)
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
@@ -106,6 +107,7 @@ runixCode
      , Member Grep r
      , Member Logging r
      , Member (UserInput widget) r
+     , Member Cmd r
      , ImplementsWidget widget Text
      , Member (State [Message model provider]) r
      , Member (Reader SystemPrompt) r
@@ -144,6 +146,7 @@ runRunixCode
      , Member Grep r
      , Member Logging r
      , Member (UserInput widget) r
+     , Member Cmd r
      , ImplementsWidget widget Text
      , HasTools model provider
      , SupportsSystemPrompt provider
@@ -177,6 +180,7 @@ runixCodeAgentLoop
      , Member Grep r
      , Member Logging r
      , Member (UserInput widget) r
+     , Member Cmd r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig provider model]) r
      , Member (Reader SystemPrompt) r
@@ -198,7 +202,8 @@ runixCodeAgentLoop = do
         , LLMTool Tools.todoCheck
         , LLMTool Tools.todoDelete
         -- Recursive agent starts with fresh history, shares SystemPrompt Reader
-        , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model @widget prompt)
+        -- , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model @widget prompt)
+        , LLMTool Tools.cabalBuild
         ]
       configs = setTools tools baseConfigs
 
