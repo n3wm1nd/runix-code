@@ -41,6 +41,7 @@ import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP)
 import Runix.Logging.Effects (Logging)
+import Runix.Cancellation.Effects (Cancellation, cancelNoop)
 import qualified Runix.Logging.Effects as Log
 
 import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderImplementation, getComposableProvider)
@@ -157,7 +158,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, Logging, Fail, Embed IO] r
+               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, Logging, Fail, Embed IO, Cancellation] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -165,6 +166,7 @@ runWithEffects action =
     . runError
     . loggingIO
     . failLog
+    . cancelNoop
     . interpretUserInputFail @widget
     . httpIO (withRequestTimeout 300)
     . cmdIO

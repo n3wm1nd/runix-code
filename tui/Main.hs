@@ -41,10 +41,11 @@ import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..))
+import Runix.Cancellation.Effects (Cancellation(..), isCanceled)
 import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
 import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
 import UI.Effects (UI, messageToDisplay)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory, appendStreamingChunk, appendStreamingReasoning)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory, appendStreamingChunk, appendStreamingReasoning, readCancellationFlag, clearCancellationFlag, requestCancelFromUI)
 import UI.OutputHistory (patchOutputHistory, RenderedMessage(..), OutputMessage(ConversationMessage))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
@@ -143,6 +144,9 @@ agentLoop uiVars historyRef runner = forever $ do
   -- Wait for user input
   userInput <- atomically $ waitForUserInput (userInputQueue uiVars)
 
+  -- Clear any previous cancellation flag before starting new request
+  clearCancellationFlag uiVars
+
   -- Get current history
   currentHistory <- readIORef historyRef
 
@@ -158,6 +162,9 @@ agentLoop uiVars historyRef runner = forever $ do
                        configs
                        currentHistory
                        (UserPrompt userInput)
+
+  -- Always clear cancellation flag after request completes (whether success or error)
+  clearCancellationFlag uiVars
 
   case result of
     Left err -> do
@@ -195,6 +202,18 @@ interpretStreamChunkToUI uiVars = interpret $ \case
   EmitChunk (StreamingReasoning reasoning) ->
     embed $ appendStreamingReasoning uiVars reasoning
 
+-- | Interpret Cancellation effect for TUI
+-- Reads the cancellation flag from UIVars (set by UI when user presses ESC)
+-- The flag is checked at strategic points: before QueryLLM, between HTTP chunks
+interpretCancellation :: Member (Embed IO) r
+                      => UIVars
+                      -> Sem (Cancellation : r) a
+                      -> Sem r a
+interpretCancellation uiVars = interpret $ \case
+  IsCanceled -> do
+    -- Check the STM flag atomically
+    embed $ atomically $ readCancellationFlag uiVars
+
 -- | Effect interpretation stack for TUI
 -- Logging effect is reinterpreted as UI effect for display
 -- HTTP emits StreamChunk BS -> reinterpret to StreamingContent -> interpret to UI
@@ -205,6 +224,7 @@ runBaseEffects uiVars =
     . interpretUserInput uiVars        -- UserInput effect
     . interpretLoggingToUI
     . failLog
+    . interpretCancellation uiVars     -- Handle Cancellation effect
     . interpretStreamChunkToUI uiVars  -- Handle StreamChunk Text
     . reinterpretSSEChunks              -- Convert StreamChunk BS -> StreamChunk Text
     . httpIOStreaming (withRequestTimeout 300)  -- Emit StreamChunk BS

@@ -40,7 +40,7 @@ import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar, clearPendingInput, SomeInputWidget(..))
+import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar, clearPendingInput, SomeInputWidget(..), requestCancelFromUI, clearCancellationFlag)
 import UI.OutputHistory (RenderedMessage(..), OutputMessage(..), shouldDisplay)
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
@@ -326,7 +326,15 @@ handleInputWidgetEvent widget ev = do
 
 -- Normal event handling (when no input widget active)
 handleNormalEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
-handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = M.halt
+-- ESC: Request cancellation of current operation
+handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
+  vars <- use uiVarsL
+  -- Set the cancellation flag to stop the agent
+  liftIO $ atomically $ requestCancelFromUI vars
+  -- Clear the flag again for the next request after agent stops
+  -- (This happens when the agent main loop gets control back)
+  return ()
+-- Ctrl+C: Actually exit the application
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
 -- Refresh UI state from STM and scroll to bottom

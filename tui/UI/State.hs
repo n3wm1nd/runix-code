@@ -28,6 +28,9 @@ module UI.State
   , uiStateVar
   , userInputQueue
   , userResponseQueue
+  , requestCancelFromUI
+  , readCancellationFlag
+  , clearCancellationFlag
   ) where
 
 import Brick (Widget, EventM)
@@ -74,6 +77,7 @@ data UIVars = UIVars
   { uiStateVar :: TVar UIState      -- ^ Main UI state (agent writes, UI reads)
   , userInputQueue :: TQueue Text   -- ^ User input queue (UI writes, agent reads)
   , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh (non-blocking, coalesces multiple requests)
+  , cancellationFlag :: TVar Bool   -- ^ Cancellation flag (UI writes, agent reads)
   }
 
 -- Note: userResponseQueue is managed per-request in SomeInputWidget callback
@@ -84,7 +88,8 @@ newUIVars :: IO () -> IO UIVars
 newUIVars refreshCallback = do
   stateVar <- newTVarIO emptyUIState
   inputQueue <- newTQueueIO
-  return $ UIVars stateVar inputQueue refreshCallback
+  cancelFlag <- newTVarIO False
+  return $ UIVars stateVar inputQueue refreshCallback cancelFlag
 
 -- | Append a log message to output history and trigger refresh
 appendLog :: UIVars -> Text -> IO ()
@@ -157,3 +162,15 @@ clearPendingInput vars = do
 -- | Dummy export for compatibility (not actually used with new approach)
 userResponseQueue :: ()
 userResponseQueue = ()
+
+-- | Request cancellation from the UI thread (sets flag)
+requestCancelFromUI :: UIVars -> STM ()
+requestCancelFromUI vars = writeTVar (cancellationFlag vars) True
+
+-- | Check the cancellation flag (non-blocking read)
+readCancellationFlag :: UIVars -> STM Bool
+readCancellationFlag vars = readTVar (cancellationFlag vars)
+
+-- | Clear the cancellation flag after handling cancellation (so next request can proceed)
+clearCancellationFlag :: UIVars -> IO ()
+clearCancellationFlag vars = atomically $ writeTVar (cancellationFlag vars) False
