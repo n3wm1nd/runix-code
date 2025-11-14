@@ -26,7 +26,7 @@ import Polysemy (interpret, embed)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..))
-import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp)
+import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, withLLMCancellation)
 import Runix.Secret.Effects (runSecret)
 
 import Config
@@ -247,7 +247,7 @@ createRunner UseClaudeSonnet45 _cfg uiVars = do
             runBaseEffects uiVars
               . runSecret (pure tokenStr)
               . interpretAnthropicOAuth Anthropic ClaudeSonnet45
-              $ agent
+              $ withLLMCancellation agent
       return $ AgentRunner historyRef runner
 
 createRunner UseGLM45Air cfg uiVars = do
@@ -255,7 +255,7 @@ createRunner UseGLM45Air cfg uiVars = do
   let runner = Runner $ \agent ->
         runBaseEffects uiVars
           . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
-          $ agent
+          $ withLLMCancellation agent
   return $ AgentRunner historyRef runner
 
 createRunner UseQwen3Coder cfg uiVars = do
@@ -263,7 +263,7 @@ createRunner UseQwen3Coder cfg uiVars = do
   let runner = Runner $ \agent ->
         runBaseEffects uiVars
           . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
-          $ agent
+          $ withLLMCancellation agent
   return $ AgentRunner historyRef runner
 
 --------------------------------------------------------------------------------
