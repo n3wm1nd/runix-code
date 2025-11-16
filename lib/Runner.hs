@@ -86,7 +86,7 @@ loadSession path = do
 
 -- | Save session to file
 saveSession :: forall provider model r.
-               ( Members [FileSystemRead, FileSystemWrite] r
+               ( Members [FileSystemRead, FileSystemWrite, Fail] r
                , Member Logging r
                , ProviderImplementation provider model
                )
@@ -134,7 +134,7 @@ deserializeMessages val = case val of
 --------------------------------------------------------------------------------
 
 -- | Load system prompt from file or use default
-loadSystemPrompt :: (Members [FileSystemRead, FileSystemWrite] r, Member Logging r)
+loadSystemPrompt :: (Members [FileSystemRead, FileSystemWrite, Fail] r, Member Logging r)
                  => FilePath  -- ^ Path to system prompt file
                  -> Text      -- ^ Default prompt if file doesn't exist
                  -> Sem r Text

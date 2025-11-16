@@ -415,15 +415,16 @@ instance ToolFunction TodoDeleteResult where
 
 -- | Read a file from the filesystem
 readFile
-  :: forall r. (Members [FileSystemRead, FileSystemWrite] r) => FilePath
+  :: forall r. (Members [FileSystemRead, FileSystemWrite, Fail] r) => FilePath
   -> Sem r ReadFileResult
 readFile (FilePath path) = do
   contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
   return $ ReadFileResult (T.decodeUtf8 contents)
 
 -- | Write a new file
+-- Fails if write operation cannot be completed
 writeFile
-  :: Members [FileSystemRead, FileSystemWrite] r
+  :: Members [FileSystemRead, FileSystemWrite, Fail] r
   => FilePath
   -> FileContent
   -> Sem r WriteFileResult
@@ -434,8 +435,9 @@ writeFile (FilePath path) (FileContent content) = do
 
 -- | Edit existing file via string replacement
 -- Returns error if old_string matches 0 or >1 times (must match exactly once)
+-- Fails if file cannot be read or written
 editFile
-  :: Members [FileSystemRead, FileSystemWrite] r
+  :: Members [FileSystemRead, FileSystemWrite, Fail] r
   => FilePath
   -> OldString
   -> NewString
@@ -471,8 +473,9 @@ replaceAndCount old new haystack
           in go (new : before : acc) (count + 1) after
 
 -- | Find files matching a pattern
+-- Fails if glob operation cannot be completed
 glob
-  :: Members [FileSystemRead, FileSystemWrite] r
+  :: Members [FileSystemRead, FileSystemWrite, Fail] r
   => Pattern
   -> Sem r GlobResult
 glob (Pattern pattern) = do
@@ -525,8 +528,9 @@ cabalBuild (WorkingDirectory workDir) = do
   return $ CabalBuildResult success stdout stderr
 
 -- | Generate a new tool by writing source code and compiling it
+-- Fails if file operations cannot be completed
 generateTool
-  :: Members '[FileSystemRead, FileSystemWrite, Logging, Cmd] r
+  :: Members '[FileSystemRead, FileSystemWrite, Logging, Cmd, Fail] r
   => FunctionName
   -> FunctionSignature  -- The required type signature (interface contract)
   -> FunctionBody       -- Complete function definition from LLM
