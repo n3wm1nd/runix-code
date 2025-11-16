@@ -200,6 +200,7 @@ runixCodeAgentLoop = do
   let tools :: [LLMTool (Sem (Fail ': r))]
       tools =
         [ LLMTool Tools.grep
+        , LLMTool Tools.glob
         , LLMTool Tools.readFile
         , LLMTool (Tools.ask @widget)
         , LLMTool Tools.todoWrite
