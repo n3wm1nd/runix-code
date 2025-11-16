@@ -44,7 +44,7 @@ import Runix.Logging.Effects (Logging)
 import Runix.Cancellation.Effects (Cancellation, cancelNoop)
 import qualified Runix.Logging.Effects as Log
 
-import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderImplementation, getComposableProvider)
+import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderImplementation, getComposableProvider, ProviderRequest, ModelConfig)
 import UI.UserInput (UserInput, interpretUserInputFail)
 
 --------------------------------------------------------------------------------
@@ -61,6 +61,7 @@ loadSession :: forall provider model r.
                , Member Logging r
                , Member Fail r
                , ProviderImplementation provider model
+               , Monoid (ProviderRequest provider)
                )
             => FilePath
             -> Sem r [Message model provider]
@@ -105,8 +106,10 @@ serializeMessages :: forall provider model.
                   => [Message model provider]
                   -> Aeson.Value
 serializeMessages msgs =
-  let provider = getComposableProvider @provider @model
-      serialized = [(i, v) | (i, Just v) <- zip [0..] (map (cpSerializeMessage provider) msgs)]
+  let composableProvider = getComposableProvider @provider @model
+      -- Apply with undefined values since cpSerializeMessage is type-driven
+      handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model])
+      serialized = [(i, v) | (i, Just v) <- zip [0..] (map (cpSerializeMessage handlers) msgs)]
       failed = length msgs - length serialized
   in if failed > 0
      then Prelude.error $ "Failed to serialize " <> show failed <> " out of " <> show (length msgs) <> " messages"
@@ -114,14 +117,17 @@ serializeMessages msgs =
 
 -- | Deserialize messages from JSON (internal helper)
 deserializeMessages :: forall provider model.
-                       ProviderImplementation provider model
+                       (ProviderImplementation provider model, Monoid (ProviderRequest provider))
                     => Aeson.Value
                     -> Either String [Message model provider]
 deserializeMessages val = case val of
   Aeson.Array arr -> do
-    let provider = getComposableProvider @provider @model
+    -- Get handlers using undefined for provider/model/configs since deserialization doesn't depend on them
+    let composableProvider = getComposableProvider @provider @model
+        -- We apply with undefined values since cpDeserializeMessage is type-driven and doesn't use the runtime values
+        handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model])
         arrList = Vector.toList arr
-        results = [(i, v, cpDeserializeMessage provider v) | (i, v) <- zip [0..] arrList]
+        results = [(i, v, cpDeserializeMessage handlers v) | (i, v) <- zip [0..] arrList]
         messages = [msg | (_, _, Just msg) <- results]
         failed = [(i, v) | (i, v, Nothing) <- results]
     if null failed

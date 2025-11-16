@@ -139,6 +139,7 @@ runAgent :: forall provider model r.
             , SupportsStreaming provider
             , ProviderImplementation provider model
             , ModelDefaults provider model
+            , Monoid (ProviderRequest provider)
             )
          => Config
          -> Text

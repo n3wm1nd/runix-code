@@ -53,9 +53,8 @@ glmEnsureMinTokens :: forall provider model.
                    -> ComposableProvider provider model
 glmEnsureMinTokens minTokens base = base `chainProviders` tokenEnforcer
   where
-    tokenEnforcer = ComposableProvider
-      { cpToRequest = \_provider _model _configs _msg req -> req  -- No per-message changes
-      , cpConfigHandler = \_provider _model configs req ->
+    tokenEnforcer _p _m configs = noopHandler
+      { cpConfigHandler = \req ->
           -- Only enforce if reasoning is not explicitly disabled
           if reasoningDisabled configs
             then req  -- Reasoning disabled, no minimum needed
@@ -63,9 +62,6 @@ glmEnsureMinTokens minTokens base = base `chainProviders` tokenEnforcer
               Nothing -> req { max_tokens = Just minTokens }  -- No limit set, apply minimum
               Just current | current < minTokens -> req { max_tokens = Just minTokens }  -- Too low, enforce minimum
               Just _ -> req  -- User set a reasonable limit, respect it
-      , cpFromResponse = \_provider _model _configs _history acc _resp -> acc
-      , cpSerializeMessage = \_ -> Nothing
-      , cpDeserializeMessage = \_ -> Nothing
       }
 
     -- Check if reasoning is explicitly disabled in config
@@ -93,12 +89,8 @@ glmFixNullContent :: forall provider model.
                   -> ComposableProvider provider model
 glmFixNullContent base = base `chainProviders` fixerProvider
   where
-    fixerProvider = ComposableProvider
-      { cpToRequest = \_provider _model _configs _msg req -> fixAllNullContent req
-      , cpConfigHandler = \_provider _model _configs req -> req  -- No config handling needed
-      , cpFromResponse = \_provider _model _configs _history acc _resp -> acc  -- No response handling needed
-      , cpSerializeMessage = \_ -> Nothing  -- No serialization changes
-      , cpDeserializeMessage = \_ -> Nothing  -- No deserialization changes
+    fixerProvider _p _m _configs = noopHandler
+      { cpToRequest = \_msg req -> fixAllNullContent req
       }
 
     -- Fix all messages in the request that have null content
@@ -142,7 +134,7 @@ instance HasReasoning ClaudeSonnet45 Anthropic where
   withReasoning = AnthropicProvider.anthropicWithReasoning
 
 instance ProviderImplementation Anthropic ClaudeSonnet45 where
-  getComposableProvider = AnthropicProvider.ensureUserFirst . withReasoning . withTools $ AnthropicProvider.baseComposableProvider
+  getComposableProvider = withReasoning . withTools $ AnthropicProvider.baseComposableProvider
 
 instance ModelDefaults Anthropic ClaudeSonnet45 where
   defaultConfigs =
