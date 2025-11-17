@@ -413,6 +413,19 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
   -- Invalidate cache since we're switching between markdown/raw rendering
   invalidateCacheEntry CompletedHistory
 
+  -- Check if we're at the bottom before switching rendering mode
+  wasAtBottom <- use lastViewportL >>= \case
+    Nothing -> return True  -- Default to bottom if no viewport yet
+    Just vp -> return $ MH.isAtBottom vp
+
+  -- If we were at bottom, scroll to bottom after switching (since rendered/raw have different heights)
+  when wasAtBottom $ do
+    M.vScrollToEnd (M.viewportScroll HistoryViewport)
+
+  -- Update viewport state after mode switch (non-blocking)
+  chan <- use eventChanL
+  liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
+
 -- Ctrl-D sends message (useful in EnterNewline mode)
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
 
