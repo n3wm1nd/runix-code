@@ -279,8 +279,8 @@ mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
                   -- Match: logs came before msg in old (newer), so keep them first
                   nonConvItems ++ newItem : mergeOutputMessages restNew restAfter
               | oldText `elem` extractConvTexts restNew ->
-                  -- Old message exists later in new: insert new first, then logs, then recurse
-                  newItem : nonConvItems ++ mergeOutputMessages restNew (nextConv:restAfter)
+                  -- Old message exists later in new: defer logs, process new items first
+                  newItem : mergeOutputMessages restNew (nonConvItems ++ [nextConv] ++ restAfter)
               | newText `elem` extractConvTexts restAfter ->
                   -- New message exists later in old: skip old message with its logs
                   mergeOutputMessages newItems restAfter
@@ -310,17 +310,15 @@ patchOutputHistory newMessages renderMsg currentOutput =
     -- Remove all streaming chunks first
     withoutStreaming = removeStreamingChunks currentOutput
 
-    -- Extract OutputMessages from current output
+    -- Extract OutputMessages from current output (already newest-first)
     oldOutputMsgs = map rmMessage withoutStreaming
 
-    -- Convert new messages to OutputMessages (oldest first)
-    newOutputMsgs = map (\msg -> ConversationMessage 0 (renderMsg msg)) newMessages
+    -- Reverse new messages to newest-first, then convert to OutputMessages
+    newMessagesNewestFirst = reverse newMessages
+    newOutputMsgs = map (\msg -> ConversationMessage 0 (renderMsg msg)) newMessagesNewestFirst
 
-    -- Reverse to newest-first for merging
-    newOutputReversed = reverse newOutputMsgs
-
-    -- Merge at OutputMessage level
-    mergedMsgs = mergeOutputMessages newOutputReversed oldOutputMsgs
+    -- Merge at OutputMessage level (both are newest-first)
+    mergedMsgs = mergeOutputMessages newOutputMsgs oldOutputMsgs
 
   in renderMessageList mergedMsgs
 
@@ -363,7 +361,7 @@ removeStreamingChunks = go []
       -- Remove streaming chunk, continue
       go acc rest
     go acc (RenderedMessage (StreamingReasoning _) _ _ : rest) =
-      -- Remove streaming reasoning, continue
+      -- Remove streaming reasoning placeholder, continue
       go acc rest
     go acc (msg : rest) =
       -- Keep other messages (logs, system events, etc)
