@@ -23,7 +23,7 @@ import qualified Graphics.Vty as V
 import Brick.AttrMap (attrMapLookup, AttrName)
 import Lens.Micro ((^.), (&), (.~))
 import UI.Attributes (header1Attr, header2Attr, header3Attr, boldAttr, italicAttr,
-                      underlineAttr, codeAttr, linkAttr, strikethroughAttr)
+                      underlineAttr, codeAttr, linkAttr, strikethroughAttr, quotedAttr)
 
 -- | A text segment with an attribute
 data TextSegment = TextSegment
@@ -259,8 +259,8 @@ inlineToSegments _parentAttr (Link _attr inlines (_url, _title)) =
   inlinesToSegments (Just linkAttr) inlines
 inlineToSegments parentAttr (Image _attr _inlines (_url, _title)) =
   [TextSegment parentAttr "[image]"]
-inlineToSegments parentAttr (Quoted _quoteType inlines) =
-  TextSegment parentAttr "\"" : inlinesToSegments parentAttr inlines ++ [TextSegment parentAttr "\""]
+inlineToSegments _parentAttr (Quoted _quoteType inlines) =
+  TextSegment (Just quotedAttr) "\"" : inlinesToSegments (Just quotedAttr) inlines ++ [TextSegment (Just quotedAttr) "\""]
 inlineToSegments parentAttr (Cite _citations inlines) = inlinesToSegments parentAttr inlines
 inlineToSegments parentAttr (Span _attr inlines) = inlinesToSegments parentAttr inlines
 inlineToSegments parentAttr (Math _mathType text) = [TextSegment parentAttr text]
@@ -303,15 +303,35 @@ wrapSegments maxWidth segments =
   in wrapWords maxWidth words'
   where
     -- Convert segments to words (breaking on spaces)
+    -- Special handling: don't split quoted content into separate words
     segmentsToWords :: [TextSegment] -> [[TextSegment]]
     segmentsToWords [] = []
-    segmentsToWords (seg:segs) =
-      let segText = segmentText seg
-          segAttr = segmentAttr seg
-          ws = T.words segText
-          -- Preserve the attribute for each word
-          wordSegs = map (\w -> TextSegment segAttr w) ws
-      in map (:[]) wordSegs ++ segmentsToWords segs
+    segmentsToWords segs =
+      let grouped = groupQuotedSegments segs
+      in concatMap segmentGroupToWords grouped
+
+    -- Group segments so quoted content stays together
+    groupQuotedSegments :: [TextSegment] -> [[TextSegment]]
+    groupQuotedSegments [] = []
+    groupQuotedSegments (seg:segs)
+      | segmentAttr seg == Just quotedAttr =
+          let (quotedGroup, rest) = span (\s -> segmentAttr s == Just quotedAttr) (seg:segs)
+          in [quotedGroup] ++ groupQuotedSegments rest
+      | otherwise =
+          let (nonQuotedGroup, rest) = span (\s -> segmentAttr s /= Just quotedAttr) (seg:segs)
+          in [nonQuotedGroup] ++ groupQuotedSegments rest
+
+    -- Convert a group of segments to words
+    segmentGroupToWords :: [TextSegment] -> [[TextSegment]]
+    segmentGroupToWords [] = []
+    segmentGroupToWords segs
+      | all (\s -> segmentAttr s == Just quotedAttr) segs = [segs]  -- Keep quoted segments together
+      | otherwise =
+          let segText = T.concat $ map segmentText segs
+              segAttr = if null segs then Nothing else segmentAttr (head segs)
+              ws = T.words segText
+              wordSegs = map (\w -> TextSegment segAttr w) ws
+          in map (:[]) wordSegs
 
     -- Wrap words into lines
     wrapWords :: Int -> [[TextSegment]] -> [[TextSegment]]

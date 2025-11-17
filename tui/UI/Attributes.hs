@@ -16,6 +16,7 @@ module UI.Attributes
   , codeBlockAttr
   , linkAttr
   , strikethroughAttr
+  , quotedAttr
   , inputPanelAttr
   , inputPanelLabelAttr
   , inputPanelHelpAttr
@@ -41,9 +42,10 @@ codeAttr, codeBlockAttr :: AttrName
 codeAttr = attrName "code"
 codeBlockAttr = attrName "codeBlock"
 
-linkAttr, strikethroughAttr :: AttrName
+linkAttr, strikethroughAttr, quotedAttr :: AttrName
 linkAttr = attrName "link"
 strikethroughAttr = attrName "strikethrough"
+quotedAttr = attrName "quoted"
 
 inputPanelAttr, inputPanelLabelAttr, inputPanelHelpAttr :: AttrName
 inputPanelAttr = attrName "inputPanel"
@@ -63,6 +65,7 @@ theMap = attrMap V.defAttr
   , (codeBlockAttr, V.defAttr `V.withBackColor` V.black `V.withForeColor` V.white)
   , (linkAttr, V.defAttr `V.withForeColor` V.cyan `V.withStyle` V.underline)
   , (strikethroughAttr, V.defAttr `V.withStyle` V.strikethrough)
+  , (quotedAttr, V.defAttr `V.withForeColor` V.green)
   -- Input panel styling - bright colors to make it stand out
   , (inputPanelAttr, V.defAttr `V.withForeColor` V.brightWhite `V.withBackColor` V.black)
   , (inputPanelLabelAttr, V.defAttr `V.withStyle` V.bold `V.withForeColor` V.brightYellow `V.withBackColor` V.black)
