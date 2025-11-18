@@ -43,8 +43,9 @@ import Runix.HTTP.Effects (HTTP)
 import Runix.Logging.Effects (Logging)
 import Runix.Cancellation.Effects (Cancellation, cancelNoop)
 import qualified Runix.Logging.Effects as Log
+import Data.Default (Default, def)
 
-import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderImplementation, getComposableProvider, ProviderRequest, ModelConfig)
+import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderRequest, ModelConfig)
 import UI.UserInput (UserInput, interpretUserInputFail)
 
 --------------------------------------------------------------------------------
@@ -56,16 +57,17 @@ import UI.UserInput (UserInput, interpretUserInputFail)
 -- Sessions are model-agnostic - Message type parameters are phantom types.
 -- We deserialize with a specific model/provider type for type safety, but
 -- the messages can be used with any compatible model.
-loadSession :: forall provider model r.
+loadSession :: forall provider model s r.
                ( Members [FileSystemRead, FileSystemWrite] r
                , Member Logging r
                , Member Fail r
-               , ProviderImplementation provider model
                , Monoid (ProviderRequest provider)
+               , Default s
                )
-            => FilePath
+            => ComposableProvider provider model s
+            -> FilePath
             -> Sem r [Message model provider]
-loadSession path = do
+loadSession composableProvider path = do
   exists <- fileExists path
   if not exists
     then do
@@ -77,7 +79,7 @@ loadSession path = do
         Nothing -> do
           Log.warning "Failed to parse session JSON, starting with empty history"
           return []
-        Just val -> case deserializeMessages @provider @model val of
+        Just val -> case deserializeMessages composableProvider val of
           Left err -> do
             Log.warning $ T.pack $ "Failed to deserialize session: " <> err
             return []
@@ -86,29 +88,30 @@ loadSession path = do
             return msgs
 
 -- | Save session to file
-saveSession :: forall provider model r.
+saveSession :: forall provider model s r.
                ( Members [FileSystemRead, FileSystemWrite, Fail] r
                , Member Logging r
-               , ProviderImplementation provider model
+               , Default s
                )
-            => FilePath
+            => ComposableProvider provider model s
+            -> FilePath
             -> [Message model provider]
             -> Sem r ()
-saveSession path msgs = do
-  let json = serializeMessages @provider @model msgs
+saveSession composableProvider path msgs = do
+  let json = serializeMessages composableProvider msgs
       encoded = BSL.toStrict $ Aeson.encode json  -- Convert to strict
   writeFile path encoded
   Log.info $ T.pack $ "Saved " <> show (length msgs) <> " messages to session"
 
 -- | Serialize messages to JSON (internal helper)
-serializeMessages :: forall provider model.
-                     ProviderImplementation provider model
-                  => [Message model provider]
+serializeMessages :: forall provider model s.
+                     (Default s)
+                  => ComposableProvider provider model s
+                  -> [Message model provider]
                   -> Aeson.Value
-serializeMessages msgs =
-  let composableProvider = getComposableProvider @provider @model
-      -- Apply with undefined values since cpSerializeMessage is type-driven
-      handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model])
+serializeMessages composableProvider msgs =
+  let -- Apply with undefined values and default state since cpSerializeMessage is type-driven
+      handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model]) def
       serialized = [(i, v) | (i, Just v) <- zip [0..] (map (cpSerializeMessage handlers) msgs)]
       failed = length msgs - length serialized
   in if failed > 0
@@ -116,16 +119,16 @@ serializeMessages msgs =
      else Aeson.toJSON (map snd serialized)
 
 -- | Deserialize messages from JSON (internal helper)
-deserializeMessages :: forall provider model.
-                       (ProviderImplementation provider model, Monoid (ProviderRequest provider))
-                    => Aeson.Value
+deserializeMessages :: forall provider model s.
+                       (Monoid (ProviderRequest provider), Default s)
+                    => ComposableProvider provider model s
+                    -> Aeson.Value
                     -> Either String [Message model provider]
-deserializeMessages val = case val of
+deserializeMessages composableProvider val = case val of
   Aeson.Array arr -> do
-    -- Get handlers using undefined for provider/model/configs since deserialization doesn't depend on them
-    let composableProvider = getComposableProvider @provider @model
-        -- We apply with undefined values since cpDeserializeMessage is type-driven and doesn't use the runtime values
-        handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model])
+    -- Get handlers using undefined for provider/model/configs and default state since deserialization doesn't depend on them
+    let -- We apply with undefined values and default state since cpDeserializeMessage is type-driven and doesn't use the runtime values
+        handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model]) def
         arrList = Vector.toList arr
         results = [(i, v, cpDeserializeMessage handlers v) | (i, v) <- zip [0..] arrList]
         messages = [msg | (_, _, Just msg) <- results]

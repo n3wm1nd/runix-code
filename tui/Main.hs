@@ -54,7 +54,7 @@ import UI.UserInput.Interpreter (interpretUserInput)
 import UI.UserInput.InputWidget (TUIWidget)
 import Control.Monad (forever)
 import Polysemy.Fail (Fail)
-import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming, ProviderImplementation)
+import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified Data.Text.Encoding as TE
 
@@ -69,7 +69,6 @@ data AgentRunner where
     ( HasTools model provider
     , SupportsSystemPrompt provider
     , SupportsStreaming provider
-    , ProviderImplementation provider model
     , ModelDefaults provider model
     )
     => IORef [Message model provider]  -- History storage
@@ -115,8 +114,7 @@ main = do
 -- | Agent loop that processes user input from the UI
 -- | Update history and sync outputHistory - single source of truth
 updateHistory :: forall model provider.
-                 ProviderImplementation provider model
-              => UIVars
+                 UIVars
               -> IORef [Message model provider]
               -> [Message model provider]
               -> (Message model provider -> Text)
@@ -133,7 +131,6 @@ agentLoop :: forall model provider.
              ( HasTools model provider
              , SupportsSystemPrompt provider
              , SupportsStreaming provider
-             , ProviderImplementation provider model
              , ModelDefaults provider model
              )
           => UIVars
@@ -246,7 +243,7 @@ createRunner UseClaudeSonnet45 _cfg uiVars = do
       let runner = Runner $ \agent ->
             runBaseEffects uiVars
               . runSecret (pure tokenStr)
-              . interpretAnthropicOAuth Anthropic ClaudeSonnet45
+              . interpretAnthropicOAuth claudeSonnet45ComposableProvider Anthropic ClaudeSonnet45
               $ withLLMCancellation agent
       return $ AgentRunner historyRef runner
 
@@ -254,7 +251,7 @@ createRunner UseGLM45Air cfg uiVars = do
   historyRef <- newIORef ([] :: [Message GLM45Air LlamaCpp])
   let runner = Runner $ \agent ->
         runBaseEffects uiVars
-          . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
+          . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
           $ withLLMCancellation agent
   return $ AgentRunner historyRef runner
 
@@ -262,7 +259,7 @@ createRunner UseQwen3Coder cfg uiVars = do
   historyRef <- newIORef ([] :: [Message Qwen3Coder LlamaCpp])
   let runner = Runner $ \agent ->
         runBaseEffects uiVars
-          . interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
+          . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
           $ withLLMCancellation agent
   return $ AgentRunner historyRef runner
 

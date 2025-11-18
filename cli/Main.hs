@@ -10,6 +10,7 @@ import System.Environment (lookupEnv)
 import System.Exit (exitFailure)
 import System.IO (hPutStr)
 import qualified System.IO as IO
+import Data.Default (Default)
 
 import Polysemy
 import Polysemy.Fail
@@ -25,7 +26,7 @@ import Runix.Logging.Effects (Logging)
 import Runix.Secret.Effects (runSecret)
 
 import Agent (SystemPrompt(..), UserPrompt(..), runRunixCode, responseText)
-import Models (ModelDefaults(..), ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..))
+import Models (ModelDefaults(..), ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider)
 import Config
 import Runner
 import UI.UserInput (UserInput, ImplementsWidget(..), RenderRequest)
@@ -100,22 +101,22 @@ runWithClaudeSonnet45 cfg userInput = do
     Just tokenStr ->
       runWithEffects @CLIWidget $
         runSecret (pure tokenStr) $
-          interpretAnthropicOAuth Anthropic ClaudeSonnet45 $
-            runAgent @Anthropic @ClaudeSonnet45 cfg userInput
+          interpretAnthropicOAuth claudeSonnet45ComposableProvider Anthropic ClaudeSonnet45 $
+            runAgent @Anthropic @ClaudeSonnet45 claudeSonnet45ComposableProvider cfg userInput
 
 -- | Run with GLM4.5-air
 runWithGLM45Air :: Config -> Text -> IO (Either String Text)
 runWithGLM45Air cfg userInput =
   runWithEffects @CLIWidget $
-    interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air $
-      runAgent @LlamaCpp @GLM45Air cfg userInput
+    interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air $
+      runAgent @LlamaCpp @GLM45Air glm45AirComposableProvider cfg userInput
 
 -- | Run with Qwen3-Coder
 runWithQwen3Coder :: Config -> Text -> IO (Either String Text)
 runWithQwen3Coder cfg userInput =
   runWithEffects @CLIWidget $
-    interpretLlamaCpp (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder $
-      runAgent @LlamaCpp @Qwen3Coder cfg userInput
+    interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder $
+      runAgent @LlamaCpp @Qwen3Coder qwen3CoderComposableProvider cfg userInput
 
 --------------------------------------------------------------------------------
 -- Generic Agent Runner (Model-Agnostic)
@@ -125,7 +126,7 @@ runWithQwen3Coder cfg userInput =
 --
 -- This is completely generic - no model-specific code here.
 -- It just loads config, runs the agent, and saves the session.
-runAgent :: forall provider model r.
+runAgent :: forall provider model s r.
             ( Member (LLM provider model) r
             , Members [FileSystemRead, FileSystemWrite] r
             , Member Grep r
@@ -137,14 +138,15 @@ runAgent :: forall provider model r.
             , HasTools model provider
             , SupportsSystemPrompt provider
             , SupportsStreaming provider
-            , ProviderImplementation provider model
             , ModelDefaults provider model
             , Monoid (ProviderRequest provider)
+            , Default s
             )
-         => Config
+         => ComposableProvider provider model s
+         -> Config
          -> Text
          -> Sem r Text
-runAgent cfg userInput = do
+runAgent composableProvider cfg userInput = do
   -- Load system prompt
   sysPromptText <- loadSystemPrompt
     "prompt/runix-code.md"
@@ -157,7 +159,7 @@ runAgent cfg userInput = do
   -- Load session (if specified)
   initialHistory <- case cfgSessionFile cfg of
     Nothing -> return []
-    Just sessionFile -> loadSession @provider @model sessionFile
+    Just sessionFile -> loadSession composableProvider sessionFile
 
   -- Run the agent
   (result, finalHistory) <- runRunixCode @provider @model @CLIWidget sysPrompt configs initialHistory userPrompt
@@ -165,6 +167,6 @@ runAgent cfg userInput = do
   -- Save session (if specified)
   case cfgSessionFile cfg of
     Nothing -> return ()
-    Just sessionFile -> saveSession @provider @model sessionFile finalHistory
+    Just sessionFile -> saveSession composableProvider sessionFile finalHistory
 
   return $ responseText result

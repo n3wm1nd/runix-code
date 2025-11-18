@@ -15,6 +15,10 @@ module Models
   , Qwen3Coder(..)
     -- * Default Configurations
   , ModelDefaults(..)
+    -- * Composable Providers
+  , claudeSonnet45ComposableProvider
+  , glm45AirComposableProvider
+  , qwen3CoderComposableProvider
   ) where
 
 import Data.Text (Text)
@@ -46,24 +50,24 @@ class ModelDefaults provider model where
 --
 -- This combinator ensures a minimum max_tokens is set to reduce the chance of mid-block cutoff,
 -- but only if reasoning is enabled (checked via Reasoning config).
-glmEnsureMinTokens :: forall provider model.
+glmEnsureMinTokens :: forall provider model s.
                       (ProviderRequest provider ~ OpenAIRequest)
                    => Int  -- Minimum max_tokens
-                   -> ComposableProvider provider model
-                   -> ComposableProvider provider model
-glmEnsureMinTokens minTokens base = base `chainProviders` tokenEnforcer
-  where
-    tokenEnforcer _p _m configs = noopHandler
-      { cpConfigHandler = \req ->
-          -- Only enforce if reasoning is not explicitly disabled
+                   -> ComposableProvider provider model s
+                   -> ComposableProvider provider model s
+glmEnsureMinTokens minTokens base p m configs s =
+  (base p m configs s)
+    { cpConfigHandler = \req ->
+        let baseHandler = cpConfigHandler (base p m configs s)
+        in baseHandler $
           if reasoningDisabled configs
-            then req  -- Reasoning disabled, no minimum needed
+            then req
             else case max_tokens req of
-              Nothing -> req { max_tokens = Just minTokens }  -- No limit set, apply minimum
-              Just current | current < minTokens -> req { max_tokens = Just minTokens }  -- Too low, enforce minimum
-              Just _ -> req  -- User set a reasonable limit, respect it
-      }
-
+              Nothing -> req { max_tokens = Just minTokens }
+              Just current | current < minTokens -> req { max_tokens = Just minTokens }
+              Just _ -> req
+    }
+  where
     -- Check if reasoning is explicitly disabled in config
     reasoningDisabled :: [ModelConfig provider model] -> Bool
     reasoningDisabled configs = any isReasoningFalse configs
@@ -83,16 +87,15 @@ glmEnsureMinTokens minTokens base = base `chainProviders` tokenEnforcer
 -- This combinator fixes both by replacing null/problematic content with empty strings.
 --
 -- Apply this AFTER openAIWithTools in the provider chain.
-glmFixNullContent :: forall provider model.
+glmFixNullContent :: forall provider model s.
                      (ProviderRequest provider ~ OpenAIRequest)
-                  => ComposableProvider provider model
-                  -> ComposableProvider provider model
-glmFixNullContent base = base `chainProviders` fixerProvider
+                  => ComposableProvider provider model s
+                  -> ComposableProvider provider model s
+glmFixNullContent base p m configs s =
+  (base p m configs s)
+    { cpToRequest = \msg req -> cpToRequest (base p m configs s) msg (fixAllNullContent req)
+    }
   where
-    fixerProvider _p _m _configs = noopHandler
-      { cpToRequest = \_msg req -> fixAllNullContent req
-      }
-
     -- Fix all messages in the request that have null content
     fixAllNullContent :: OpenAIRequest -> OpenAIRequest
     fixAllNullContent req = req { messages = map fixNullContent (messages req) }
@@ -128,13 +131,14 @@ instance ModelName Anthropic ClaudeSonnet45 where
   modelName _ = "claude-sonnet-4-5-20250929"
 
 instance HasTools ClaudeSonnet45 Anthropic where
-  withTools = AnthropicProvider.anthropicWithTools
+  withTools = chainProviders AnthropicProvider.anthropicTools
 
 instance HasReasoning ClaudeSonnet45 Anthropic where
-  withReasoning = AnthropicProvider.anthropicWithReasoning
+  withReasoning = chainProviders AnthropicProvider.anthropicReasoning
 
-instance ProviderImplementation Anthropic ClaudeSonnet45 where
-  getComposableProvider = withReasoning . withTools $ AnthropicProvider.baseComposableProvider
+-- Composable provider for ClaudeSonnet45
+claudeSonnet45ComposableProvider :: ComposableProvider Anthropic ClaudeSonnet45 (ReasoningState ClaudeSonnet45 Anthropic, (ToolState ClaudeSonnet45 Anthropic, ()))
+claudeSonnet45ComposableProvider = withReasoning . withTools $ AnthropicProvider.baseComposableProvider
 
 instance ModelDefaults Anthropic ClaudeSonnet45 where
   defaultConfigs =
@@ -163,11 +167,11 @@ instance HasTools GLM45Air LlamaCpp where
   withTools = withXMLResponseParsing
 
 instance HasReasoning GLM45Air LlamaCpp where
-  withReasoning = OpenAI.openAIWithReasoning
+  withReasoning = chainProviders OpenAI.openAIReasoning
 
-instance ProviderImplementation LlamaCpp GLM45Air where
-  -- Chain: base -> openAIWithTools (native tool format) -> glmEnsureMinTokens (prevent mid-reasoning cutoff) -> glmFixNullContent (fix template bug) -> openAIWithReasoning (extract reasoning) -> withXMLResponseParsing (parse XML in responses)
-  getComposableProvider = withTools $ glmFixNullContent $ glmEnsureMinTokens 2048 $ withReasoning $ OpenAI.openAIWithTools OpenAI.baseComposableProvider
+-- Composable provider for GLM45Air
+glm45AirComposableProvider :: ComposableProvider LlamaCpp GLM45Air ((), ((), (ToolState GLM45Air LlamaCpp, ())))
+glm45AirComposableProvider = withTools $ glmFixNullContent $ glmEnsureMinTokens 2048 $ withReasoning $ chainProviders OpenAI.openAITools OpenAI.baseComposableProvider
 
 instance ModelDefaults LlamaCpp GLM45Air where
   defaultConfigs =
@@ -186,11 +190,11 @@ instance ModelName LlamaCpp Qwen3Coder where
   modelName _ = "qwen3-coder"
 
 instance HasTools Qwen3Coder LlamaCpp where
-  withTools = OpenAI.openAIWithTools
+  withTools = chainProviders OpenAI.openAITools
 
-instance ProviderImplementation LlamaCpp Qwen3Coder where
-  -- Chain: base -> openAIWithTools (handles OpenAI-format tool calls from llama.cpp's template)
-  getComposableProvider = withTools OpenAI.baseComposableProvider
+-- Composable provider for Qwen3Coder
+qwen3CoderComposableProvider :: ComposableProvider LlamaCpp Qwen3Coder (ToolState Qwen3Coder LlamaCpp, ())
+qwen3CoderComposableProvider = withTools OpenAI.baseComposableProvider
 
 instance ModelDefaults LlamaCpp Qwen3Coder where
   defaultConfigs =
