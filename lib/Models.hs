@@ -29,8 +29,9 @@ import qualified UniversalLLM.Providers.Anthropic as AnthropicProvider
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..))
-import UniversalLLM.Providers.XMLToolCalls (withXMLResponseParsing, xmlResponseParser)
-import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..), OpenAIResponse)
+import UniversalLLM.Providers.XMLToolCalls (xmlResponseParser)
+import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..))
+import qualified UniversalLLM.Providers.OpenAI as Openai
 
 --------------------------------------------------------------------------------
 -- Default Configuration Class
@@ -134,10 +135,17 @@ instance HasReasoning ClaudeSonnet45 Anthropic where
   withReasoning = AnthropicProvider.anthropicReasoning
 
 -- Composable provider for ClaudeSonnet45
-claudeSonnet45ComposableProvider :: ComposableProvider Anthropic ClaudeSonnet45 (ReasoningState ClaudeSonnet45 Anthropic, (ToolState ClaudeSonnet45 Anthropic, ()))
-claudeSonnet45ComposableProvider = withReasoning `chainProviders` withTools `chainProviders` AnthropicProvider.baseComposableProvider
+claudeSonnet45ComposableProvider :: 
+  (HasReasoning model Anthropic, HasTools model Anthropic,
+  BaseComposableProvider model Anthropic ) =>
+ ComposableProvider Anthropic model (ToolState model Anthropic, (ReasoningState model Anthropic, BaseState model Anthropic)) 
+claudeSonnet45ComposableProvider = providerReasoningTools
+
+instance BaseComposableProvider ClaudeSonnet45 Anthropic where
+  baseProvider = AnthropicProvider.baseComposableProvider
 
 instance ModelDefaults Anthropic ClaudeSonnet45 where
+  defaultConfigs :: [ModelConfig Anthropic ClaudeSonnet45]
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable extended thinking
@@ -161,22 +169,23 @@ instance ModelName LlamaCpp GLM45Air where
   modelName _ = "glm-4.5-air"
 
 instance HasTools GLM45Air LlamaCpp where
-  withTools = xmlResponseParser
+  type ToolState GLM45Air LlamaCpp = ((), ())
+  withTools = xmlResponseParser `chainProviders` OpenAI.openAITools
 
 instance HasReasoning GLM45Air LlamaCpp where
   withReasoning = OpenAI.openAIReasoning
 
 -- Composable provider for GLM45Air
 glm45AirComposableProvider :: 
-  ( HasTools model LlamaCpp, HasReasoning model LlamaCpp, ModelName LlamaCpp model ) =>
-  ComposableProvider LlamaCpp model 
-  (ToolState model LlamaCpp, ((), ((), (ReasoningState model LlamaCpp, ((), ())))))
-glm45AirComposableProvider = withTools 
-  `chainProviders` glmFixNullContent 
-  `chainProviders` glmEnsureMinTokens 2048 
-  `chainProviders` withReasoning 
-  `chainProviders` OpenAI.openAITools
-  `chainProviders` OpenAI.baseComposableProvider
+  ( HasTools model provider, HasReasoning model provider,
+  BaseComposableProvider model provider ) =>
+  ComposableProvider provider model
+  (ToolState model provider, (ReasoningState model provider, BaseState model provider ))
+glm45AirComposableProvider = providerReasoningTools
+
+instance BaseComposableProvider GLM45Air LlamaCpp where
+  type BaseState GLM45Air LlamaCpp = ((), ((), ()))
+  baseProvider = glmFixNullContent `chainProviders` glmEnsureMinTokens 2048 `chainProviders` OpenAI.baseComposableProvider
 
 instance ModelDefaults LlamaCpp GLM45Air where
   defaultConfigs =
@@ -199,7 +208,10 @@ instance HasTools Qwen3Coder LlamaCpp where
 
 -- Composable provider for Qwen3Coder
 qwen3CoderComposableProvider :: ComposableProvider LlamaCpp Qwen3Coder (ToolState Qwen3Coder LlamaCpp, ())
-qwen3CoderComposableProvider = withTools `chainProviders` OpenAI.baseComposableProvider
+qwen3CoderComposableProvider = providerTools
+
+instance BaseComposableProvider Qwen3Coder LlamaCpp where
+  baseProvider = Openai.baseComposableProvider
 
 instance ModelDefaults LlamaCpp Qwen3Coder where
   defaultConfigs =
