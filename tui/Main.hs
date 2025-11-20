@@ -12,6 +12,7 @@ module Main (main) where
 
 import qualified Data.Text as T
 import Data.Text (Text)
+import Data.Text (pack)
 import Data.IORef
 import System.Environment (lookupEnv)
 import System.IO (hPutStr)
@@ -25,8 +26,8 @@ import Polysemy (interpret, embed)
 
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..))
-import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, withLLMCancellation)
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
+import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, withLLMCancellation)
 import Runix.Secret.Effects (runSecret)
 
 import Config
@@ -260,6 +261,17 @@ createRunner UseQwen3Coder cfg uiVars = do
   let runner = Runner $ \agent ->
         runBaseEffects uiVars
           . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
+          $ withLLMCancellation agent
+  return $ AgentRunner historyRef runner
+
+createRunner UseOpenRouter _cfg uiVars = do
+  apiKey <- getOpenRouterApiKey
+  modelName <- getOpenRouterModel
+  historyRef <- newIORef ([] :: [Message Universal OpenRouter])
+  let runner = Runner $ \agent ->
+        runBaseEffects uiVars
+          . runSecret (pure apiKey)
+          . interpretOpenRouter universalComposableProvider OpenRouter (Universal (pack modelName))
           $ withLLMCancellation agent
   return $ AgentRunner historyRef runner
 

@@ -14,12 +14,15 @@ module Models
     -- * LlamaCpp Models
   , GLM45Air(..)
   , Qwen3Coder(..)
+    -- * OpenRouter Models
+  , Universal(..)
     -- * Default Configurations
   , ModelDefaults(..)
     -- * Composable Providers
   , claudeSonnet45ComposableProvider
   , glm45AirComposableProvider
   , qwen3CoderComposableProvider
+  , universalComposableProvider
   ) where
 
 import Data.Text (Text)
@@ -28,7 +31,7 @@ import UniversalLLM
 import qualified UniversalLLM.Providers.Anthropic as AnthropicProvider
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenAI(..), OpenRouter(..))
 import UniversalLLM.Providers.XMLToolCalls (xmlResponseParser)
 import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..))
 import qualified UniversalLLM.Providers.OpenAI as Openai
@@ -136,10 +139,10 @@ instance HasReasoning ClaudeSonnet45 Anthropic where
 
 -- Composable provider for ClaudeSonnet45
 claudeSonnet45ComposableProvider :: 
-  (HasReasoning model Anthropic, HasTools model Anthropic,
+  (HasTools model Anthropic,
   BaseComposableProvider model Anthropic ) =>
- ComposableProvider Anthropic model (ToolState model Anthropic, (ReasoningState model Anthropic, BaseState model Anthropic)) 
-claudeSonnet45ComposableProvider = providerReasoningTools
+ ComposableProvider Anthropic model (ToolState model Anthropic, BaseState model Anthropic) 
+claudeSonnet45ComposableProvider = providerTools
 
 instance BaseComposableProvider ClaudeSonnet45 Anthropic where
   baseProvider = AnthropicProvider.baseComposableProvider
@@ -217,4 +220,41 @@ instance ModelDefaults LlamaCpp Qwen3Coder where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     -- No reasoning for Qwen3Coder
+    ]
+
+--------------------------------------------------------------------------------
+-- OpenRouter Models
+--------------------------------------------------------------------------------
+
+-- | Universal model for OpenRouter
+--
+-- This model allows specifying any OpenRouter-compatible model by storing the
+-- model name as a value. The model name is read from the OPENROUTER_MODEL
+-- environment variable.
+data Universal = Universal Text deriving stock (Show, Eq)
+
+instance ModelName OpenRouter Universal where
+  modelName (Universal name) = name
+
+instance HasTools Universal OpenRouter where
+  withTools = OpenAI.openAITools
+
+instance HasReasoning Universal OpenRouter where
+  withReasoning = OpenAI.openAIReasoning
+
+-- Composable provider for Universal
+universalComposableProvider ::
+  (HasTools model OpenRouter, HasReasoning model OpenRouter,
+  BaseComposableProvider model OpenRouter) =>
+  ComposableProvider OpenRouter model
+  (ToolState model OpenRouter, (ReasoningState model OpenRouter, BaseState model OpenRouter))
+universalComposableProvider = providerReasoningTools
+
+instance BaseComposableProvider Universal OpenRouter where
+  baseProvider = OpenAI.baseComposableProvider
+
+instance ModelDefaults OpenRouter Universal where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning/extended thinking
     ]

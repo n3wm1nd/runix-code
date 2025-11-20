@@ -19,6 +19,8 @@ module Config
   , getModelSelection
     -- * Helper Functions
   , getLlamaCppEndpoint
+  , getOpenRouterApiKey
+  , getOpenRouterModel
   ) where
 
 import System.Environment (getArgs, lookupEnv)
@@ -36,6 +38,7 @@ data ModelSelection
   = UseClaudeSonnet45
   | UseGLM45Air
   | UseQwen3Coder
+  | UseOpenRouter
   deriving (Show, Eq)
 
 -- | Application configuration
@@ -98,6 +101,8 @@ getModelSelection = do
       "qwen3-coder" -> return UseQwen3Coder
       "qwen3coder" -> return UseQwen3Coder
       "qwen" -> return UseQwen3Coder
+      "openrouter" -> return UseOpenRouter
+      "openrouter-universal" -> return UseOpenRouter
       unknown -> do
         hPutStr IO.stderr $ "warn: Unknown model '" <> T.unpack unknown <> "', using claude-sonnet-45\n"
         return UseClaudeSonnet45
@@ -111,3 +116,29 @@ getLlamaCppEndpoint = do
   case maybeEndpoint of
     Nothing -> return "http://localhost:8080/v1"
     Just endpoint -> return endpoint
+
+-- | Get OpenRouter API key from environment
+--
+-- Required when using OpenRouter models. Returns the OPENROUTER_API_KEY value
+-- or throws an error if not set.
+getOpenRouterApiKey :: IO String
+getOpenRouterApiKey = do
+  maybeKey <- lookupEnv "OPENROUTER_API_KEY"
+  case maybeKey of
+    Nothing -> do
+      hPutStr IO.stderr "error: OPENROUTER_API_KEY environment variable not set\n"
+      error "OPENROUTER_API_KEY is required for OpenRouter models"
+    Just key -> return key
+
+-- | Get OpenRouter model name from environment
+--
+-- Returns the OPENROUTER_MODEL value. Used to specify which model to use
+-- when RUNIX_MODEL is set to 'openrouter'.
+getOpenRouterModel :: IO String
+getOpenRouterModel = do
+  maybeModel <- lookupEnv "OPENROUTER_MODEL"
+  case maybeModel of
+    Nothing -> do
+      hPutStr IO.stderr "error: OPENROUTER_MODEL environment variable not set\n"
+      error "OPENROUTER_MODEL is required when using OpenRouter"
+    Just model -> return model

@@ -17,6 +17,7 @@ import Polysemy.Fail
 
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter hiding (SystemPrompt)
+import UniversalLLM.Providers.OpenAI (OpenRouter(..))
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
@@ -26,8 +27,9 @@ import Runix.Logging.Effects (Logging)
 import Runix.Secret.Effects (runSecret)
 
 import Agent (SystemPrompt(..), UserPrompt(..), runRunixCode, responseText)
-import Models (ModelDefaults(..), ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider)
+import Models (ModelDefaults(..), ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider)
 import Config
+import Data.Text (pack)
 import Runner
 import UI.UserInput (UserInput, ImplementsWidget(..), RenderRequest)
 
@@ -80,6 +82,7 @@ main = do
         UseClaudeSonnet45 -> runWithClaudeSonnet45 cfg userInput
         UseGLM45Air -> runWithGLM45Air cfg userInput
         UseQwen3Coder -> runWithQwen3Coder cfg userInput
+        UseOpenRouter -> runWithOpenRouter cfg userInput
 
       case result of
         Right response -> TIO.putStrLn response
@@ -117,6 +120,16 @@ runWithQwen3Coder cfg userInput =
   runWithEffects @CLIWidget $
     interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder $
       runAgent @LlamaCpp @Qwen3Coder qwen3CoderComposableProvider cfg userInput
+
+-- | Run with OpenRouter
+runWithOpenRouter :: Config -> Text -> IO (Either String Text)
+runWithOpenRouter cfg userInput = do
+  apiKey <- getOpenRouterApiKey
+  modelName <- getOpenRouterModel
+  runWithEffects @CLIWidget $
+    runSecret (pure apiKey) $
+      interpretOpenRouter universalComposableProvider OpenRouter (Universal (pack modelName)) $
+        runAgent @OpenRouter @Universal universalComposableProvider cfg userInput
 
 --------------------------------------------------------------------------------
 -- Generic Agent Runner (Model-Agnostic)
