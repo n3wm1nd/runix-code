@@ -32,6 +32,7 @@ import Runix.Secret.Effects (runSecret)
 
 import Config
 import Models
+import Runner (loadSystemPrompt)
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
 import TUI.UI (runUI)
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
@@ -104,8 +105,16 @@ main = do
     -- Start agent thread that processes user input
     case agentRunner of
       AgentRunner (historyRef :: IORef [Message model provider]) (Runner runner) -> do
+        -- Load system prompt (once at startup)
+        sysPromptText <- runner $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+        let sysPrompt = case sysPromptText of
+              Right promptText -> SystemPrompt promptText
+              Left err ->
+                -- If loading fails, log error and use default
+                (hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n") `seq`
+                SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
         -- Fork agent thread
-        _ <- forkIO $ agentLoop uiVars historyRef runner
+        _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runner
         return uiVars
 
 --------------------------------------------------------------------------------
@@ -136,9 +145,10 @@ agentLoop :: forall model provider.
              )
           => UIVars
           -> IORef [Message model provider]
+          -> SystemPrompt
           -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a))
           -> IO ()
-agentLoop uiVars historyRef runner = forever $ do
+agentLoop uiVars historyRef sysPrompt runner = forever $ do
   -- Wait for user input
   userInput <- atomically $ waitForUserInput (userInputQueue uiVars)
 
@@ -156,7 +166,7 @@ agentLoop uiVars historyRef runner = forever $ do
   -- runixCode will add the user message to the history internally (so we pass the old history)
   let configs = defaultConfigs @provider @model
   result <- runner $ runRunixCode @provider @model @TUIWidget
-                       (SystemPrompt "you are a helpful agent")
+                       sysPrompt
                        configs
                        currentHistory
                        (UserPrompt userInput)
