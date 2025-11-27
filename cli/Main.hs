@@ -167,7 +167,7 @@ runAgent composableProvider cfg userInput = do
 
   let sysPrompt = SystemPrompt sysPromptText
       userPrompt = UserPrompt userInput
-      configs = defaultConfigs @provider @model
+      configs =  Streaming False : defaultConfigs @provider @model
 
   -- Load session (if specified)
   initialHistory <- case cfgSessionFile cfg of
