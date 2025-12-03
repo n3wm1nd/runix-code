@@ -34,7 +34,9 @@ import Config
 import Models
 import Runner (loadSystemPrompt)
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
+import qualified TUI.UI
 import TUI.UI (runUI)
+import qualified Brick.BChan
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
@@ -87,7 +89,7 @@ newtype Runner model provider = Runner
 -- | Wrapper for a function that builds everything and returns UIVars
 -- Each model has its own concrete types, wrapped existentially
 data AgentRunnerBuilder where
-  AgentRunnerBuilder :: forall msg. Eq msg => (msg -> Text) -> (IO () -> IO (UIVars msg)) -> AgentRunnerBuilder
+  AgentRunnerBuilder :: forall msg. Eq msg => (msg -> Text) -> ((AgentEvent msg -> IO ()) -> IO (UIVars msg)) -> AgentRunnerBuilder
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -146,12 +148,10 @@ agentLoop uiVars historyRef sysPrompt runner = forever $ do
   -- Get current history
   currentHistory <- readIORef historyRef
 
-  -- Immediately add user message to history and show in UI
-  let historyWithUser = currentHistory ++ [UserText userInput]
-  updateHistory uiVars historyRef historyWithUser
+  -- Send user message to UI immediately
+  sendAgentEvent uiVars (UserMessageEvent (UserText userInput))
 
   -- Run the agent with model-specific default configs
-  -- runixCode will add the user message to the history internally (so we pass the old history)
   let configs = defaultConfigs @provider @model
   result <- runner $ runRunixCode @provider @model @TUIWidget
                        sysPrompt

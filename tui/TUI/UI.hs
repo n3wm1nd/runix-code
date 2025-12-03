@@ -40,7 +40,7 @@ import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, sendAgentEvent, readAgentEvents, SomeInputWidget(..), AgentEvent(..))
+import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..))
 import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, renderItemMarkdown, renderItemRaw, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, LogLevel(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
@@ -49,7 +49,9 @@ import qualified TUI.InputPanel as IP
 import Graphics.Vty (Key(..), Event(..))
 
 -- | Custom events for the TUI
-data CustomEvent = RefreshUI | UpdateViewport
+data CustomEvent msg
+  = AgentEvent (AgentEvent msg)  -- ^ Event from agent thread
+  | UpdateViewport               -- ^ Update viewport state after render
   deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -78,7 +80,7 @@ data AppState msg = AppState
   , _inputMode :: InputMode                -- Current input mode
   , _markdownMode :: MarkdownMode          -- Whether to render markdown or show raw
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
-  , _eventChan :: Brick.BChan.BChan CustomEvent  -- Event channel for sending custom events
+  , _eventChan :: Brick.BChan.BChan (CustomEvent msg)  -- Event channel for sending custom events
   }
 
 --------------------------------------------------------------------------------
@@ -109,7 +111,7 @@ markdownModeL = lens _markdownMode (\st m -> st { _markdownMode = m })
 lastViewportL :: Lens' (AppState msg) (Maybe T.Viewport)
 lastViewportL = lens _lastViewport (\st v -> st { _lastViewport = v })
 
-eventChanL :: Lens' (AppState msg) (Brick.BChan.BChan CustomEvent)
+eventChanL :: Lens' (AppState msg) (Brick.BChan.BChan (CustomEvent msg))
 eventChanL = lens _eventChan (\st c -> st { _eventChan = c })
 
 --------------------------------------------------------------------------------
@@ -135,19 +137,16 @@ renderDisplayText = lines . Text.unpack
 -- Refreshes are triggered by the effect interpreters, not by polling.
 runUI :: forall msg. Eq msg =>
          (msg -> Text)                    -- ^ How to render messages
-      -> (IO () -> IO (UIVars msg))      -- ^ Function to create UIVars with refresh callback
+      -> ((AgentEvent msg -> IO ()) -> IO (UIVars msg))  -- ^ Function to create UIVars with send callback
       -> IO ()
 runUI renderMsg mkUIVars = do
-  -- Create event channel for UI refreshes
-  -- Size 1 to coalesce multiple refresh requests - if channel has a pending refresh,
-  -- we don't need to queue another one (writeBChanNonBlocking will return False)
-  eventChan <- newBChan 1
+  -- Create event channel - agent events and UI events use same channel
+  -- This ensures proper ordering and eliminates the separate refresh signal
+  eventChan <- newBChan 10  -- Reasonable buffer size
 
-  -- Create UI vars with refresh callback that coalesces requests
-  uiVars <- mkUIVars $ do
-    -- Non-blocking write - if channel is full (already has a pending refresh), returns False
-    _ <- Brick.BChan.writeBChanNonBlocking eventChan RefreshUI
-    return ()
+  -- Create UI vars with callback that writes AgentEvents wrapped in CustomEvent
+  let sendAgentEventCallback agentEvent = Brick.BChan.writeBChan eventChan (AgentEvent agentEvent)
+  uiVars <- mkUIVars sendAgentEventCallback
 
   let initialState = AppState
         { _uiVars = uiVars
@@ -175,7 +174,7 @@ runUI renderMsg mkUIVars = do
 -- Brick App Definition
 --------------------------------------------------------------------------------
 
-app :: forall msg. Eq msg => M.App (AppState msg) CustomEvent Name
+app :: forall msg. Eq msg => M.App (AppState msg) (CustomEvent msg) Name
 app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
@@ -272,7 +271,7 @@ drawUI st = [indicatorLayer, baseLayer]
 -- Event Handling
 --------------------------------------------------------------------------------
 
-handleEvent :: Eq msg => T.BrickEvent Name CustomEvent -> T.EventM Name (AppState msg) ()
+handleEvent :: Eq msg => T.BrickEvent Name (CustomEvent msg) -> T.EventM Name (AppState msg) ()
 -- Check if input widget is active first
 handleEvent ev = do
   -- Read pending input widget from AppState
@@ -283,7 +282,7 @@ handleEvent ev = do
     Nothing -> handleNormalEvent ev
 
 -- Handle events when input widget is active
-handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name CustomEvent -> T.EventM Name (AppState msg) ()
+handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name (CustomEvent msg) -> T.EventM Name (AppState msg) ()
 -- Esc cancels the input widget - signal cancellation
 handleInputWidgetEvent (SomeInputWidget _ _currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEsc [])) = do
   -- Submit Nothing to signal cancellation and fail the tool call
@@ -311,7 +310,7 @@ handleInputWidgetEvent widget ev = do
     Nothing -> return ()
 
 -- Normal event handling (when no input widget active)
-handleNormalEvent :: Eq msg => T.BrickEvent Name CustomEvent -> T.EventM Name (AppState msg) ()
+handleNormalEvent :: Eq msg => T.BrickEvent Name (CustomEvent msg) -> T.EventM Name (AppState msg) ()
 -- ESC: Request cancellation of current operation
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL
@@ -323,16 +322,10 @@ handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
 -- Ctrl+C: Actually exit the application
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
--- Refresh UI: process all pending agent events and update zipper
-handleNormalEvent (T.AppEvent RefreshUI) = do
-  vars <- use uiVarsL
-
-  -- Read all pending events from the queue
-  events <- liftIO $ atomically $ readAgentEvents vars
-
-  -- Process each event and update the zipper
-  forM_ events $ \event -> do
-    case event of
+-- Handle agent events directly from the event channel
+handleNormalEvent (T.AppEvent (AgentEvent event)) = do
+  -- Process the agent event
+  case event of
       StreamChunkEvent text -> do
         -- Accumulate streaming text: if last item in back is StreamingChunkItem, append to it
         zipper <- use outputZipperL
@@ -350,6 +343,10 @@ handleNormalEvent (T.AppEvent RefreshUI) = do
             outputZipperL .= zipper { zipperBack = StreamingReasoningItem (prevText <> text) : rest }
           _ ->
             outputZipperL %= insertItem (StreamingReasoningItem text)
+
+      UserMessageEvent msg -> do
+        -- Add user message immediately to output
+        outputZipperL %= insertItem (MessageItem msg)
 
       AgentCompleteEvent msgs -> do
         -- Use mergeOutputMessages to properly merge messages with existing output
@@ -370,9 +367,12 @@ handleNormalEvent (T.AppEvent RefreshUI) = do
 
         -- Convert back to zipper
         outputZipperL .= listToZipper mergedItems
+        -- Agent is done, update status
+        statusL .= Text.pack "Ready"
 
-      AgentErrorEvent text ->
+      AgentErrorEvent text -> do
         outputZipperL %= insertItem (SystemEventItem text)
+        statusL .= Text.append (Text.pack "Error: ") text
 
       LogEvent level text ->
         outputZipperL %= insertItem (LogItem level text)
@@ -385,15 +385,6 @@ handleNormalEvent (T.AppEvent RefreshUI) = do
 
       ClearInputWidgetEvent ->
         pendingInputL .= Nothing
-
-  -- Update status based on events
-  forM_ events $ \event -> do
-    case event of
-      AgentCompleteEvent _ ->
-        statusL .= Text.pack "Ready"
-      AgentErrorEvent text ->
-        statusL .= Text.append (Text.pack "Error: ") text
-      _ -> return ()  -- Don't update status for other events
 
   -- Scroll viewport to bottom to show new content
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
