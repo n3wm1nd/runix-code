@@ -9,27 +9,27 @@ import qualified Data.Text as T
 import Data.List (nub, sort)
 import UI.OutputHistory
 
--- Helper to create output messages
-convMsg :: Text -> OutputMessage
-convMsg = ConversationMessage 0
+-- Helper to create output items with Text as the message type
+convMsg :: Text -> OutputItem Text
+convMsg = MessageItem
 
-logMsg :: Text -> OutputMessage
-logMsg = LogEntry Info
+logMsg :: Text -> OutputItem Text
+logMsg = LogItem Info
 
 -- Helper to extract text for comparison
-getText :: OutputMessage -> Text
-getText (ConversationMessage _ t) = t
-getText (LogEntry _ t) = "Log: " <> t
-getText (StreamingChunk t) = "Stream: " <> t
-getText (StreamingReasoning t) = "Reasoning: " <> t
-getText (SystemEvent t) = "System: " <> t
-getText (ToolExecution t) = "Tool: " <> t
+getText :: OutputItem Text -> Text
+getText (MessageItem t) = t
+getText (LogItem _ t) = "Log: " <> t
+getText (StreamingChunkItem t) = "Stream: " <> t
+getText (StreamingReasoningItem t) = "Reasoning: " <> t
+getText (SystemEventItem t) = "System: " <> t
+getText (ToolExecutionItem t) = "Tool: " <> t
 
-isConv :: OutputMessage -> Bool
-isConv (ConversationMessage _ _) = True
+isConv :: OutputItem Text -> Bool
+isConv (MessageItem _) = True
 isConv _ = False
 
-extractConvs :: [OutputMessage] -> [OutputMessage]
+extractConvs :: [OutputItem Text] -> [OutputItem Text]
 extractConvs = filter isConv
 
 --------------------------------------------------------------------------------
@@ -50,13 +50,13 @@ arbitraryText = elements
   , "Cache hit"
   ]
 
-instance Arbitrary OutputMessage where
+instance Arbitrary (OutputItem Text) where
   arbitrary = oneof
-    [ ConversationMessage 0 <$> arbitraryConvText
-    , LogEntry Info <$> arbitraryLogText
-    , StreamingChunk <$> arbitraryText
-    , SystemEvent <$> arbitraryText
-    , ToolExecution <$> arbitraryText
+    [ MessageItem <$> arbitraryConvText
+    , LogItem Info <$> arbitraryLogText
+    , StreamingChunkItem <$> arbitraryText
+    , SystemEventItem <$> arbitraryText
+    , ToolExecutionItem <$> arbitraryText
     ]
     where
       arbitraryConvText = elements
@@ -75,7 +75,7 @@ instance Arbitrary OutputMessage where
         ]
 
 -- Generate a valid old output history (conversations + logs, newest first)
-genOldOutput :: Gen [OutputMessage]
+genOldOutput :: Gen [OutputItem Text]
 genOldOutput = do
   convs <- listOf1 arbitrary `suchThat` (all isConv)
   let uniqueConvs = reverse $ nub $ reverse convs  -- Keep newest duplicates
@@ -88,7 +88,7 @@ genOldOutput = do
       return (logsBefore ++ [c] ++ rest)
 
 -- Generate new conversation messages (subset/superset of old conversations)
-genNewConvs :: [OutputMessage] -> Gen [OutputMessage]
+genNewConvs :: [OutputItem Text] -> Gen [OutputItem Text]
 genNewConvs oldOutput = do
   let oldConvs = extractConvs oldOutput
   -- Either keep all, add some new, or remove some

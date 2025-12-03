@@ -31,7 +31,8 @@ import qualified Brick.Widgets.Border.Style as BS
 import Control.Monad.IO.Class (liftIO)
 import Data.Text (Text)
 import UI.Attributes (inputPanelAttr, inputPanelLabelAttr, inputPanelHelpAttr)
-import UI.State (Name, SomeInputWidget (..))
+import UI.State (Name)
+import UI.State (SomeInputWidget (..))
 import UI.UserInput.InputWidget (InputWidget(renderWidget, handleWidgetEvent, isWidgetComplete))
 
 -- | Draw the input panel for an active input widget

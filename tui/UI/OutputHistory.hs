@@ -3,46 +3,259 @@
 -- | Unified output history for the TUI
 --
 -- This module provides a single timeline of all observable events:
--- messages, logs, streaming updates, etc. The timeline can be patched
--- when the underlying message history changes while preserving logs
--- and other events.
+-- messages, logs, streaming updates, etc. The timeline uses a zipper
+-- structure to efficiently support navigation, editing, and rendering.
 module UI.OutputHistory
-  ( -- * Types
-    OutputMessage(..)
-  , RenderedMessage(..)
-  , OutputHistory
+  ( -- * Core Types
+    OutputItem(..)
+  , OutputHistoryZipper(..)
   , LogLevel(..)
   , DisplayFilter(..)
+    -- * Zipper Operations
+  , emptyZipper
+  , zipperToList
+  , listToZipper
+  , focusNewest
+  , focusOldest
+  , moveNewer
+  , moveOlder
+  , insertItem
+  , updateCurrent
+  , extractMessages
     -- * Filters
   , defaultFilter
   , shouldDisplay
-    -- * Smart Constructors
+    -- * Rendering
+  , renderItem
+  , renderItemMarkdown
+  , renderItemRaw
+    -- * Merge logic
+  , mergeOutputMessages
+    -- * Legacy compatibility (to be removed)
+  , OutputMessage(..)
+  , RenderedMessage(..)
+  , OutputHistory
   , renderMessage
   , renderMessageList
-    -- * Rendering (legacy)
   , renderOutputMessage
   , renderOutputMessageRaw
   , renderOutputMessages
-    -- * History Management
-  , patchOutputHistory
-  , mergeOutputMessages
+  -- , patchOutputHistory  -- Removed: not used
   , addLog
   , addSystemEvent
   , addStreamingChunk
   , addStreamingReasoning
   , addToolExecution
   , removeStreamingChunks
-    -- * Performance Optimization
   , splitHistory
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import UniversalLLM.Core.Types (Message)
 import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
 import Brick.Types (Widget)
 import Brick.Widgets.Core (txt, padLeft, (<+>), vBox)
 import Brick.Widgets.Core (Padding(..))
+
+--------------------------------------------------------------------------------
+-- New Zipper-Based Types
+--------------------------------------------------------------------------------
+
+-- | A single item in the output history timeline
+-- Parametrized over message type to store actual typed messages
+data OutputItem msg
+  = MessageItem msg           -- ^ Conversation message (typed)
+  | LogItem LogLevel Text     -- ^ Log entry
+  | StreamingChunkItem Text   -- ^ Streaming text chunk
+  | StreamingReasoningItem Text  -- ^ Streaming reasoning chunk
+  | SystemEventItem Text      -- ^ System event notification
+  | ToolExecutionItem Text    -- ^ Tool execution indicator
+  deriving (Eq, Show, Ord)
+
+-- | Zipper structure for output history
+-- Structure: back (newer) <- current -> front (older)
+-- This allows efficient navigation and modification of focused elements
+data OutputHistoryZipper msg = OutputHistoryZipper
+  { zipperBack :: [OutputItem msg]      -- ^ Newer items (reverse chronological)
+  , zipperCurrent :: Maybe (OutputItem msg)  -- ^ Focused/streaming item
+  , zipperFront :: [OutputItem msg]     -- ^ Older items (reverse chronological)
+  }
+
+--------------------------------------------------------------------------------
+-- Zipper Operations
+--------------------------------------------------------------------------------
+
+-- | Create an empty zipper
+emptyZipper :: OutputHistoryZipper msg
+emptyZipper = OutputHistoryZipper [] Nothing []
+
+-- | Convert zipper to a list (newest first)
+zipperToList :: OutputHistoryZipper msg -> [OutputItem msg]
+zipperToList (OutputHistoryZipper back current front) =
+  back ++ maybe [] (:[]) current ++ front
+
+-- | Create a zipper from a list (items in newest-first order)
+-- Focus will be on the last (newest) item
+listToZipper :: [OutputItem msg] -> OutputHistoryZipper msg
+listToZipper [] = emptyZipper
+listToZipper items = OutputHistoryZipper items Nothing []
+
+-- | Focus on the newest item (move to head of back)
+focusNewest :: OutputHistoryZipper msg -> OutputHistoryZipper msg
+focusNewest z@(OutputHistoryZipper [] Nothing []) = z  -- Empty zipper
+focusNewest z@(OutputHistoryZipper [] Nothing _) = z   -- Already at newest (empty back)
+focusNewest (OutputHistoryZipper [] (Just cur) front) =
+  -- Current is newest, stay here
+  OutputHistoryZipper [] (Just cur) front
+focusNewest (OutputHistoryZipper (b:bs) current front) =
+  -- Move newest from back to current, push old current to front
+  let front' = maybe front (:front) current
+  in OutputHistoryZipper bs (Just b) front'
+
+-- | Focus on the oldest item
+focusOldest :: OutputHistoryZipper msg -> OutputHistoryZipper msg
+focusOldest z@(OutputHistoryZipper _ Nothing []) = z  -- Already at oldest (empty front)
+focusOldest (OutputHistoryZipper back (Just cur) []) =
+  -- Current is oldest, stay here
+  OutputHistoryZipper back (Just cur) []
+focusOldest (OutputHistoryZipper back current (f:fs)) =
+  -- Move oldest from front to current, push old current to back
+  let back' = maybe back (:back) current
+  in OutputHistoryZipper back' (Just f) fs
+
+-- | Move focus to newer item (toward back)
+moveNewer :: OutputHistoryZipper msg -> OutputHistoryZipper msg
+moveNewer z@(OutputHistoryZipper [] _ _) = z  -- No newer items
+moveNewer (OutputHistoryZipper (b:bs) current front) =
+  let front' = maybe front (:front) current
+  in OutputHistoryZipper bs (Just b) front'
+
+-- | Move focus to older item (toward front)
+moveOlder :: OutputHistoryZipper msg -> OutputHistoryZipper msg
+moveOlder z@(OutputHistoryZipper _ _ []) = z  -- No older items
+moveOlder (OutputHistoryZipper back current (f:fs)) =
+  let back' = maybe back (:back) current
+  in OutputHistoryZipper back' (Just f) fs
+
+-- | Insert a new item at the newest position (prepend to back)
+insertItem :: OutputItem msg -> OutputHistoryZipper msg -> OutputHistoryZipper msg
+insertItem item (OutputHistoryZipper back current front) =
+  OutputHistoryZipper (item:back) current front
+
+-- | Update the current focused item
+updateCurrent :: OutputItem msg -> OutputHistoryZipper msg -> OutputHistoryZipper msg
+updateCurrent item (OutputHistoryZipper back _ front) =
+  OutputHistoryZipper back (Just item) front
+
+-- | Extract typed messages from zipper (filters out logs, streaming, etc.)
+-- Returns messages in oldest-first order (ready to pass to agent)
+extractMessages :: OutputHistoryZipper msg -> [msg]
+extractMessages zipper =
+  let items = zipperToList zipper
+      extractMsg (MessageItem msg) = Just msg
+      extractMsg _ = Nothing
+  in reverse $ foldr (\item acc -> maybe acc (:acc) (extractMsg item)) [] items
+
+-- | Log levels for filtering
+data LogLevel = Info | Warning | Error
+  deriving stock (Eq, Show, Ord)
+
+--------------------------------------------------------------------------------
+-- Rendering Functions
+--------------------------------------------------------------------------------
+
+-- | Render an OutputItem with markdown formatting
+-- Takes a function to render msg to Text
+renderItemMarkdown :: forall msg n. (msg -> Text) -> OutputItem msg -> [Widget n]
+renderItemMarkdown renderMsg item = case item of
+  MessageItem msg ->
+    let text = renderMsg msg
+        contentWidgets = case T.stripPrefix "You:\n  " text of
+          Just content ->
+            let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+            in combineMarkerWithContent "<" widgets
+          Nothing -> case T.stripPrefix "Agent:\n  " text of
+            Just content ->
+              let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+              in combineMarkerWithContent ">" widgets
+            Nothing -> case T.stripPrefix "[Agent reasoning]:\n  " text of
+              Just content ->
+                let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
+                in combineMarkerWithContent "?" widgets
+              Nothing -> markdownToWidgetsWithIndent 1 text
+    in txt " " : contentWidgets ++ [txt " "]
+
+  LogItem level msg ->
+    let marker = case level of
+          Info -> "I "
+          Warning -> "W "
+          Error -> "E "
+    in [txt marker <+> vBox (markdownToWidgets msg)]
+
+  StreamingChunkItem text ->
+    let contentWidgets = markdownToWidgetsWithIndent 1 text
+    in combineMarkerWithContent "}" contentWidgets
+
+  StreamingReasoningItem text ->
+    let contentWidgets = markdownToWidgetsWithIndent 1 text
+    in combineMarkerWithContent "~" contentWidgets
+
+  SystemEventItem msg ->
+    [txt "S " <+> vBox (markdownToWidgets msg)]
+
+  ToolExecutionItem name ->
+    [txt "T " <+> vBox (markdownToWidgets name)]
+  where
+    combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
+    combineMarkerWithContent marker [] = [txt marker]
+    combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
+
+-- | Render an OutputItem as raw text (no markdown processing)
+-- Takes a function to render msg to Text
+renderItemRaw :: forall msg n. (msg -> Text) -> OutputItem msg -> [Widget n]
+renderItemRaw renderMsg item = case item of
+  MessageItem msg ->
+    let text = renderMsg msg
+    in case T.stripPrefix "You:\n  " text of
+      Just content ->
+        [txt "<" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
+      Nothing -> case T.stripPrefix "Agent:\n  " text of
+        Just content ->
+          [txt ">" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
+        Nothing -> case T.stripPrefix "[Agent reasoning]:\n  " text of
+          Just content ->
+            [txt "?" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
+          Nothing -> [padLeft (Pad 1) (txt text)]
+
+  LogItem level msg ->
+    let marker = case level of
+          Info -> "I "
+          Warning -> "W "
+          Error -> "E "
+    in [txt marker <+> txt msg]
+
+  StreamingChunkItem text ->
+    [txt "}" <+> padLeft (Pad 1) (txt text)]
+
+  StreamingReasoningItem text ->
+    [txt "~" <+> padLeft (Pad 1) (txt text)]
+
+  SystemEventItem msg ->
+    [txt "S " <+> txt msg]
+
+  ToolExecutionItem name ->
+    [txt "T " <+> txt name]
+
+-- | Polymorphic render function - choose markdown or raw
+renderItem :: forall msg n. Bool -> (msg -> Text) -> OutputItem msg -> [Widget n]
+renderItem useMarkdown renderMsg item =
+  if useMarkdown
+    then renderItemMarkdown renderMsg item
+    else renderItemRaw renderMsg item
+
+--------------------------------------------------------------------------------
+-- Legacy Types (for backward compatibility during migration)
+--------------------------------------------------------------------------------
 
 -- | A single entry in the output timeline
 data OutputMessage
@@ -52,9 +265,6 @@ data OutputMessage
   | StreamingReasoning Text
   | SystemEvent Text
   | ToolExecution Text
-  deriving stock (Eq, Show, Ord)
-
-data LogLevel = Info | Warning | Error
   deriving stock (Eq, Show, Ord)
 
 -- | A rendered message with cached widgets
@@ -221,6 +431,17 @@ extractConvTexts = foldr (\msg acc -> case msg of
                             ConversationMessage _ t -> t : acc
                             _ -> acc) []
 
+-- | Check if an OutputItem is a message item
+isMessageItem :: OutputItem msg -> Bool
+isMessageItem (MessageItem _) = True
+isMessageItem _ = False
+
+-- | Extract message values from a list of OutputItems (for merge comparison)
+extractMessageItems :: Eq msg => [OutputItem msg] -> [msg]
+extractMessageItems = foldr (\item acc -> case item of
+                                MessageItem m -> m : acc
+                                _ -> acc) []
+
 -- | Merge two lists of OutputMessages
 --
 -- Contract:
@@ -237,10 +458,10 @@ extractConvTexts = foldr (\msg acc -> case msg of
 --   - All new conversation messages appear in result
 --   - All old non-conversation messages are preserved
 --   - Relative order of non-conversation messages is maintained
-mergeOutputMessages :: [OutputMessage] -> [OutputMessage] -> [OutputMessage]
+mergeOutputMessages :: Eq msg => [OutputItem msg] -> [OutputItem msg] -> [OutputItem msg]
 mergeOutputMessages [] oldItems =
-  -- No new items: keep all non-conversation items, discard old conversations
-  filter (not . isConversationMessage) oldItems
+  -- No new items: keep all non-message items, discard old messages
+  filter (not . isMessageItem) oldItems
 
 mergeOutputMessages newItems [] =
   -- No old items: just use new items
@@ -248,79 +469,73 @@ mergeOutputMessages newItems [] =
 
 mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
   case (newItem, oldItem) of
-    (ConversationMessage _ newText, ConversationMessage _ oldText)
-      | newText == oldText ->
+    (MessageItem newMsg, MessageItem oldMsg)
+      | newMsg == oldMsg ->
           -- Messages match: collect any logs after old message, keep them
-          let (logsAfter, restAfterLogs) = span (not . isConversationMessage) restOld
+          let (logsAfter, restAfterLogs) = span (not . isMessageItem) restOld
           in newItem : logsAfter ++ mergeOutputMessages restNew restAfterLogs
-      | newText `elem` extractConvTexts restOld ->
+      | newMsg `elem` extractMessageItems restOld ->
           -- New message exists later in old: old message was deleted, skip it
           mergeOutputMessages newItems restOld
-      | oldText `elem` extractConvTexts restNew ->
+      | oldMsg `elem` extractMessageItems restNew ->
           -- Old message exists later in new: new message is insertion, add it
           newItem : mergeOutputMessages restNew (oldItem:restOld)
       | otherwise ->
           -- Neither exists later: new message is addition
           newItem : mergeOutputMessages restNew (oldItem:restOld)
 
-    (ConversationMessage _ _, _) ->
-      -- Old item is not a conversation message (log, etc)
-      -- Collect all non-conversation items until next conversation message
-      let (nonConvItems, rest) = span (not . isConversationMessage) (oldItem:restOld)
+    (MessageItem newMsg, _) ->
+      -- Old item is not a message (log, etc)
+      -- Collect all non-message items until next message
+      let (nonMsgItems, rest) = span (not . isMessageItem) (oldItem:restOld)
       in case rest of
         [] ->
-          -- No more conversation messages: keep logs, add remaining new
-          nonConvItems ++ mergeOutputMessages newItems []
-        (nextConv:restAfter) ->
-          -- Check if new message matches the conversation message after the logs
-          case (newItem, nextConv) of
-            (ConversationMessage _ newText, ConversationMessage _ oldText)
-              | newText == oldText ->
+          -- No more messages: keep logs, add remaining new
+          nonMsgItems ++ mergeOutputMessages newItems []
+        (nextMsg:restAfter) ->
+          -- Check if new message matches the message after the logs
+          case (newItem, nextMsg) of
+            (MessageItem newM, MessageItem oldM)
+              | newM == oldM ->
                   -- Match: logs came before msg in old (newer), so keep them first
-                  nonConvItems ++ newItem : mergeOutputMessages restNew restAfter
-              | oldText `elem` extractConvTexts restNew ->
+                  nonMsgItems ++ newItem : mergeOutputMessages restNew restAfter
+              | oldM `elem` extractMessageItems restNew ->
                   -- Old message exists later in new: defer logs, process new items first
-                  newItem : mergeOutputMessages restNew (nonConvItems ++ [nextConv] ++ restAfter)
-              | newText `elem` extractConvTexts restAfter ->
+                  newItem : mergeOutputMessages restNew (nonMsgItems ++ [nextMsg] ++ restAfter)
+              | newM `elem` extractMessageItems restAfter ->
                   -- New message exists later in old: skip old message with its logs
                   mergeOutputMessages newItems restAfter
               | otherwise ->
                   -- Neither exists later: new is insertion, keep logs with old
-                  newItem : nonConvItems ++ nextConv : mergeOutputMessages restNew restAfter
+                  newItem : nonMsgItems ++ nextMsg : mergeOutputMessages restNew restAfter
 
     _ ->
-      -- New item is not a conversation message (shouldn't happen)
+      -- New item is not a message (shouldn't happen)
       newItem : mergeOutputMessages restNew (oldItem:restOld)
 
 -- | Patch the output history with a new message list
+-- LEGACY: Not used, kept for reference only
+-- patchOutputHistory :: forall model provider n.
+--                       [Message model provider]  -- ^ New messages from this turn (oldest first)
+--                    -> (Message model provider -> Text)  -- ^ Message renderer
+--                    -> OutputHistory n  -- ^ Current output history (newest first)
+--                    -> OutputHistory n  -- ^ Patched output history (newest first)
+-- patchOutputHistory newMessages renderMsg currentOutput =
+--   let
+--     -- Remove all streaming chunks first
+--     withoutStreaming = removeStreamingChunks currentOutput
 --
--- Intelligently merges new message history with existing output history:
--- - Preserves all non-message items (logs, system events, etc.) in their original positions
--- - Handles message additions, deletions, and modifications
--- - Works recursively without counting
+--     -- Extract OutputMessages from current output (already newest-first)
+--     oldOutputMsgs = map rmMessage withoutStreaming
 --
--- Note: Input message list is oldest-first (from agent), output history is newest-first
-patchOutputHistory :: forall model provider n.
-                      [Message model provider]  -- ^ New messages from this turn (oldest first)
-                   -> (Message model provider -> Text)  -- ^ Message renderer
-                   -> OutputHistory n  -- ^ Current output history (newest first)
-                   -> OutputHistory n  -- ^ Patched output history (newest first)
-patchOutputHistory newMessages renderMsg currentOutput =
-  let
-    -- Remove all streaming chunks first
-    withoutStreaming = removeStreamingChunks currentOutput
-
-    -- Extract OutputMessages from current output (already newest-first)
-    oldOutputMsgs = map rmMessage withoutStreaming
-
-    -- Reverse new messages to newest-first, then convert to OutputMessages
-    newMessagesNewestFirst = reverse newMessages
-    newOutputMsgs = map (\msg -> ConversationMessage 0 (renderMsg msg)) newMessagesNewestFirst
-
-    -- Merge at OutputMessage level (both are newest-first)
-    mergedMsgs = mergeOutputMessages newOutputMsgs oldOutputMsgs
-
-  in renderMessageList mergedMsgs
+--     -- Reverse new messages to newest-first, then convert to OutputMessages
+--     newMessagesNewestFirst = reverse newMessages
+--     newOutputMsgs = map (\msg -> ConversationMessage 0 (renderMsg msg)) newMessagesNewestFirst
+--
+--     -- Merge at OutputMessage level (both are newest-first)
+--     mergedMsgs = mergeOutputMessages newOutputMsgs oldOutputMsgs
+--
+--   in renderMessageList mergedMsgs
 
 -- | Add a log entry to the output history (cons to front - newest first)
 addLog :: forall n. LogLevel -> Text -> OutputHistory n -> OutputHistory n

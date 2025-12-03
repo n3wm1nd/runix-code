@@ -47,8 +47,8 @@ import Runix.Cancellation.Effects (Cancellation(..), isCanceled)
 import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
 import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
 import UI.Effects (UI, messageToDisplay)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, patchMessages, appendLog, setStatus, uiStateVar, uiOutputHistory, appendStreamingChunk, appendStreamingReasoning, readCancellationFlag, clearCancellationFlag, requestCancelFromUI)
-import UI.OutputHistory (patchOutputHistory, RenderedMessage(..), OutputMessage(ConversationMessage))
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, requestCancelFromUI, AgentEvent(..))
+import UI.OutputHistory (LogLevel(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
@@ -84,6 +84,11 @@ newtype Runner model provider = Runner
   { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
   }
 
+-- | Wrapper for a function that builds everything and returns UIVars
+-- Each model has its own concrete types, wrapped existentially
+data AgentRunnerBuilder where
+  AgentRunnerBuilder :: forall msg. Eq msg => (msg -> Text) -> (IO () -> IO (UIVars msg)) -> AgentRunnerBuilder
+
 --------------------------------------------------------------------------------
 -- Main Entry Point
 --------------------------------------------------------------------------------
@@ -94,48 +99,31 @@ main = do
   -- Load configuration
   cfg <- loadConfig
 
-  -- Run UI with a function that creates UIVars after getting the refresh callback
-  runUI $ \refreshCallback -> do
-    -- Create UI state variables with the refresh callback
-    uiVars <- newUIVars refreshCallback
+  -- Create runner builder (returns a function that takes UIVars)
+  let runnerBuilder = createRunnerBuilder (cfgModelSelection cfg) cfg
 
-    -- Create the appropriate runner
-    agentRunner <- createRunner (cfgModelSelection cfg) cfg uiVars
-
-    -- Start agent thread that processes user input
-    case agentRunner of
-      AgentRunner (historyRef :: IORef [Message model provider]) (Runner runner) -> do
-        -- Load system prompt (once at startup)
-        sysPromptText <- runner $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
-        let sysPrompt = case sysPromptText of
-              Right promptText -> SystemPrompt promptText
-              Left err ->
-                -- If loading fails, log error and use default
-                (hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n") `seq`
-                SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
-        -- Fork agent thread
-        _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runner
-        return uiVars
+  -- Apply the builder: it contains render function and mkRunner
+  case runnerBuilder of
+    AgentRunnerBuilder renderMsg mkRunner -> do
+      -- The builder hides the model/provider types
+      runUI renderMsg mkRunner
 
 --------------------------------------------------------------------------------
 -- Agent Loop
 --------------------------------------------------------------------------------
 
 -- | Agent loop that processes user input from the UI
--- | Update history and sync outputHistory - single source of truth
+-- | Update history by sending AgentCompleteEvent
 updateHistory :: forall model provider.
-                 UIVars
+                 UIVars (Message model provider)
               -> IORef [Message model provider]
               -> [Message model provider]
-              -> (Message model provider -> Text)
               -> IO ()
-updateHistory uiVars historyRef newHistory renderMsg = do
+updateHistory uiVars historyRef newHistory = do
   -- Update historyRef (source of truth)
   writeIORef historyRef newHistory
-  -- Patch outputHistory from the new history
-  currentOutput <- atomically $ uiOutputHistory <$> readTVar (uiStateVar uiVars)
-  let patchedOutput = patchOutputHistory newHistory renderMsg currentOutput
-  patchMessages uiVars patchedOutput
+  -- Send event with new messages
+  sendAgentEvent uiVars (AgentCompleteEvent newHistory)
 
 agentLoop :: forall model provider.
              ( HasTools model provider
@@ -143,7 +131,7 @@ agentLoop :: forall model provider.
              , SupportsStreaming provider
              , ModelDefaults provider model
              )
-          => UIVars
+          => UIVars (Message model provider)
           -> IORef [Message model provider]
           -> SystemPrompt
           -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a))
@@ -160,7 +148,7 @@ agentLoop uiVars historyRef sysPrompt runner = forever $ do
 
   -- Immediately add user message to history and show in UI
   let historyWithUser = currentHistory ++ [UserText userInput]
-  updateHistory uiVars historyRef historyWithUser (messageToDisplay @model @provider)
+  updateHistory uiVars historyRef historyWithUser
 
   -- Run the agent with model-specific default configs
   -- runixCode will add the user message to the history internally (so we pass the old history)
@@ -177,14 +165,12 @@ agentLoop uiVars historyRef sysPrompt runner = forever $ do
   case result of
     Left err -> do
       -- Show error in UI
-      appendLog uiVars (T.pack $ "Agent error: " ++ err)
-      setStatus uiVars (T.pack "Error occurred")
+      sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Agent error: " ++ err))
       -- History already has user message from above, nothing more to do
 
     Right (_result, newHistory) -> do
       -- Update history with agent's response
-      updateHistory uiVars historyRef newHistory (messageToDisplay @model @provider)
-      setStatus uiVars (T.pack "Ready")
+      updateHistory uiVars historyRef newHistory
 
 --------------------------------------------------------------------------------
 -- Runner Creation
@@ -201,20 +187,20 @@ reinterpretSSEChunks = reinterpret $ \case
 
 -- | Interpret StreamChunk StreamingContent by sending to UI
 interpretStreamChunkToUI :: Member (Embed IO) r
-                         => UIVars
+                         => UIVars msg
                          -> Sem (StreamChunk StreamingContent : r) a
                          -> Sem r a
 interpretStreamChunkToUI uiVars = interpret $ \case
   EmitChunk (StreamingText text) ->
-    embed $ appendStreamingChunk uiVars text
+    embed $ sendAgentEvent uiVars (StreamChunkEvent text)
   EmitChunk (StreamingReasoning reasoning) ->
-    embed $ appendStreamingReasoning uiVars reasoning
+    embed $ sendAgentEvent uiVars (StreamReasoningEvent reasoning)
 
 -- | Interpret Cancellation effect for TUI
 -- Reads the cancellation flag from UIVars (set by UI when user presses ESC)
 -- The flag is checked at strategic points: before QueryLLM, between HTTP chunks
 interpretCancellation :: Member (Embed IO) r
-                      => UIVars
+                      => UIVars msg
                       -> Sem (Cancellation : r) a
                       -> Sem r a
 interpretCancellation uiVars = interpret $ \case
@@ -241,9 +227,10 @@ runBaseEffects uiVars =
     . filesystemIO
     . grepIO
 
--- | Create an AgentRunner based on the selected model
-createRunner :: ModelSelection -> Config -> UIVars -> IO AgentRunner
-createRunner UseClaudeSonnet45 _cfg uiVars = do
+-- | Create an AgentRunner builder based on the selected model
+createRunnerBuilder :: ModelSelection -> Config -> AgentRunnerBuilder
+createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder (messageToDisplay @ClaudeSonnet45 @Anthropic) $ \refreshCallback -> do
+  uiVars <- newUIVars @(Message ClaudeSonnet45 Anthropic) refreshCallback
   historyRef <- newIORef ([] :: [Message ClaudeSonnet45 Anthropic])
   maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
   case maybeToken of
@@ -251,39 +238,83 @@ createRunner UseClaudeSonnet45 _cfg uiVars = do
       hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
       error "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr -> do
-      let runner = Runner $ \agent ->
+      let runAgent :: forall a. (forall r. (Member (LLM Anthropic ClaudeSonnet45) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+          runAgent agent =
             runBaseEffects uiVars
               . runSecret (pure tokenStr)
               . interpretAnthropicOAuth claudeSonnet45ComposableProvider Anthropic ClaudeSonnet45
               $ withLLMCancellation agent
-      return $ AgentRunner historyRef runner
+      -- Load system prompt (once at startup)
+      sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+      let sysPrompt = case sysPromptText of
+            Right promptText -> SystemPrompt promptText
+            Left err ->
+              -- If loading fails, log error and use default
+              (hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n") `seq`
+              SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+      -- Fork agent thread
+      _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
+      return uiVars
 
-createRunner UseGLM45Air cfg uiVars = do
+createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder (messageToDisplay @GLM45Air @LlamaCpp) $ \refreshCallback -> do
+  uiVars <- newUIVars @(Message GLM45Air LlamaCpp) refreshCallback
   historyRef <- newIORef ([] :: [Message GLM45Air LlamaCpp])
-  let runner = Runner $ \agent ->
+  let runAgent :: forall a. (forall r. (Member (LLM LlamaCpp GLM45Air) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+      runAgent agent =
         runBaseEffects uiVars
           . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
           $ withLLMCancellation agent
-  return $ AgentRunner historyRef runner
+  -- Load system prompt
+  sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  let sysPrompt = case sysPromptText of
+        Right promptText -> SystemPrompt promptText
+        Left err ->
+          (hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n") `seq`
+          SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  -- Fork agent thread
+  _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
+  return uiVars
 
-createRunner UseQwen3Coder cfg uiVars = do
+createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder (messageToDisplay @Qwen3Coder @LlamaCpp) $ \refreshCallback -> do
+  uiVars <- newUIVars @(Message Qwen3Coder LlamaCpp) refreshCallback
   historyRef <- newIORef ([] :: [Message Qwen3Coder LlamaCpp])
-  let runner = Runner $ \agent ->
+  let runAgent :: forall a. (forall r. (Member (LLM LlamaCpp Qwen3Coder) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+      runAgent agent =
         runBaseEffects uiVars
           . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
           $ withLLMCancellation agent
-  return $ AgentRunner historyRef runner
+  -- Load system prompt
+  sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  let sysPrompt = case sysPromptText of
+        Right promptText -> SystemPrompt promptText
+        Left err ->
+          (hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n") `seq`
+          SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  -- Fork agent thread
+  _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
+  return uiVars
 
-createRunner UseOpenRouter _cfg uiVars = do
+createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder (messageToDisplay @Universal @OpenRouter) $ \refreshCallback -> do
+  uiVars <- newUIVars @(Message Universal OpenRouter) refreshCallback
   apiKey <- getOpenRouterApiKey
   modelName <- getOpenRouterModel
   historyRef <- newIORef ([] :: [Message Universal OpenRouter])
-  let runner = Runner $ \agent ->
+  let runAgent :: forall a. (forall r. (Member (LLM OpenRouter Universal) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+      runAgent agent =
         runBaseEffects uiVars
           . runSecret (pure apiKey)
           . interpretOpenRouter universalComposableProvider OpenRouter (Universal (pack modelName))
           $ withLLMCancellation agent
-  return $ AgentRunner historyRef runner
+  -- Load system prompt
+  sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  let sysPrompt = case sysPromptText of
+        Right promptText -> SystemPrompt promptText
+        Left err ->
+          (hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n") `seq`
+          SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  -- Fork agent thread
+  _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
+  return uiVars
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)

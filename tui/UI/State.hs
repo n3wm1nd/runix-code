@@ -5,40 +5,27 @@
 -- | STM-based UI state for concurrent UI updates
 --
 -- This module defines the shared state between the effect interpreter stack
--- and the brick UI thread. The effect interpreters write to this state,
--- and the UI reads from it.
+-- and the brick UI thread. Uses a zipper-based history and event queue for
+-- clean separation between agent and UI threads.
 module UI.State
-  ( UIState(..)
-  , UIVars(..)
+  ( UIVars(..)
   , Name(..)
+  , AgentEvent(..)
   , SomeInputWidget(..)
-  , emptyUIState
   , newUIVars
-  , appendLog
-  , appendStreamingChunk
-  , appendStreamingReasoning
-  , setStatus
-  , patchMessages
-  , setDisplayFilter
-  , readUIState
+  , sendAgentEvent
+  , readAgentEvents
   , waitForUserInput
   , provideUserInput
-  , setPendingInput
-  , clearPendingInput
-  , uiStateVar
-  , userInputQueue
-  , userResponseQueue
   , requestCancelFromUI
   , readCancellationFlag
   , clearCancellationFlag
   ) where
 
-import Brick (Widget, EventM)
-import Brick.Types (BrickEvent)
+import Brick (Widget)
 import Control.Concurrent.STM
 import Data.Text (Text)
-import qualified Data.Text as T
-import UI.OutputHistory (OutputHistory, RenderedMessage, DisplayFilter, defaultFilter, LogLevel(..), addLog, addStreamingChunk, addStreamingReasoning)
+import UI.OutputHistory (LogLevel(..))
 import UI.UserInput.InputWidget (InputWidget(..))
 
 -- | Resource names for widgets (defined here to avoid circular dependency)
@@ -46,7 +33,7 @@ data Name = InputEditor | HistoryViewport | CompletedHistory
   deriving stock (Eq, Ord, Show)
 
 -- | Existential wrapper for input widgets of any type
--- This allows us to store a typed widget in UIState without knowing its type
+-- This allows us to store a typed widget without knowing its type
 data SomeInputWidget where
   SomeInputWidget
     :: InputWidget a
@@ -55,87 +42,60 @@ data SomeInputWidget where
     -> (Maybe a -> IO ()) -- ^ Callback: Just value = confirmed, Nothing = cancelled
     -> SomeInputWidget
 
--- | UI state shared between agent thread and UI thread
-data UIState = UIState
-  { uiOutputHistory :: OutputHistory Name  -- ^ Complete timeline with cached widgets (newest first)
-  , uiStatus :: Text                        -- ^ Current status message
-  , uiDisplayFilter :: DisplayFilter        -- ^ What to show in the UI
-  , uiPendingInput :: Maybe SomeInputWidget -- ^ Active input widget, if any
-  }
-
--- | Initial empty UI state
-emptyUIState :: UIState
-emptyUIState = UIState
-  { uiOutputHistory = []
-  , uiStatus = T.pack "Ready"
-  , uiDisplayFilter = defaultFilter
-  , uiPendingInput = Nothing
-  }
+-- | Events sent from agent thread to UI thread
+-- Note: Events carry typed messages when relevant
+data AgentEvent msg
+  = StreamChunkEvent Text         -- ^ New streaming chunk
+  | StreamReasoningEvent Text     -- ^ New streaming reasoning chunk
+  | AgentCompleteEvent [msg]      -- ^ Agent completed with new messages
+  | AgentErrorEvent Text          -- ^ Agent encountered error
+  | LogEvent LogLevel Text        -- ^ New log entry
+  | ToolExecutionEvent Text       -- ^ Tool execution started
+  | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
+  | ClearInputWidgetEvent         -- ^ Clear the current input widget
 
 -- | Shared state variables for UI communication
-data UIVars = UIVars
-  { uiStateVar :: TVar UIState      -- ^ Main UI state (agent writes, UI reads)
-  , userInputQueue :: TQueue Text   -- ^ User input queue (UI writes, agent reads)
-  , refreshSignal :: IO ()          -- ^ Callback to trigger UI refresh (non-blocking, coalesces multiple requests)
-  , cancellationFlag :: TVar Bool   -- ^ Cancellation flag (UI writes, agent reads)
+-- Parametrized over message type to work with typed events
+-- STM is ONLY used for communication queues
+data UIVars msg = UIVars
+  { agentEventQueue :: TQueue (AgentEvent msg)  -- ^ Events from agent to UI
+  , userInputQueue :: TQueue Text         -- ^ User input queue (UI writes, agent reads)
+  , refreshSignal :: IO ()                -- ^ Callback to trigger UI refresh
+  , cancellationFlag :: TVar Bool         -- ^ Cancellation flag (UI writes, agent reads)
   }
 
 -- Note: userResponseQueue is managed per-request in SomeInputWidget callback
 
--- | Create fresh UI state variables
+-- | Create fresh UI state variables (communication queues only)
 -- The refresh callback will be set later by the UI
-newUIVars :: IO () -> IO UIVars
+newUIVars :: IO () -> IO (UIVars msg)
 newUIVars refreshCallback = do
-  stateVar <- newTVarIO emptyUIState
+  eventQueue <- newTQueueIO
   inputQueue <- newTQueueIO
   cancelFlag <- newTVarIO False
-  return $ UIVars stateVar inputQueue refreshCallback cancelFlag
+  return $ UIVars eventQueue inputQueue refreshCallback cancelFlag
 
--- | Append a log message to output history and trigger refresh
-appendLog :: UIVars -> Text -> IO ()
-appendLog vars msg = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiOutputHistory = addLog Info msg (uiOutputHistory st) }
+--------------------------------------------------------------------------------
+-- New Event-Based API
+--------------------------------------------------------------------------------
+
+-- | Send an agent event to the UI thread
+sendAgentEvent :: UIVars msg -> AgentEvent msg -> IO ()
+sendAgentEvent vars event = do
+  atomically $ writeTQueue (agentEventQueue vars) event
   refreshSignal vars
 
--- | Append a streaming chunk to output history and trigger refresh
-appendStreamingChunk :: UIVars -> Text -> IO ()
-appendStreamingChunk vars chunk = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiOutputHistory = addStreamingChunk chunk (uiOutputHistory st) }
-  refreshSignal vars
-
--- | Append a streaming reasoning chunk to output history and trigger refresh
-appendStreamingReasoning :: UIVars -> Text -> IO ()
-appendStreamingReasoning vars chunk = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiOutputHistory = addStreamingReasoning chunk (uiOutputHistory st) }
-  refreshSignal vars
-
--- | Update the status line and trigger refresh
-setStatus :: UIVars -> Text -> IO ()
-setStatus vars status = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiStatus = status }
-  refreshSignal vars
-
--- | Patch the output history with new rendered messages and trigger refresh
-patchMessages :: UIVars -> OutputHistory Name -> IO ()
-patchMessages vars newOutput = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiOutputHistory = newOutput }
-  refreshSignal vars
-
--- | Update the display filter and trigger refresh
-setDisplayFilter :: UIVars -> DisplayFilter -> IO ()
-setDisplayFilter vars filt = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiDisplayFilter = filt }
-  refreshSignal vars
-
--- | Read the current UI state (for UI rendering)
-readUIState :: TVar UIState -> STM UIState
-readUIState = readTVar
+-- | Read all pending agent events (non-blocking)
+readAgentEvents :: UIVars msg -> STM [AgentEvent msg]
+readAgentEvents vars = go []
+  where
+    go acc = do
+      isEmpty <- isEmptyTQueue (agentEventQueue vars)
+      if isEmpty
+        then return (reverse acc)
+        else do
+          event <- readTQueue (agentEventQueue vars)
+          go (event:acc)
 
 -- | Block until user provides input
 waitForUserInput :: TQueue Text -> STM Text
@@ -145,32 +105,14 @@ waitForUserInput = readTQueue
 provideUserInput :: TQueue Text -> Text -> STM ()
 provideUserInput = writeTQueue
 
--- | Set a pending input widget (from interpreter)
-setPendingInput :: UIVars -> SomeInputWidget -> IO ()
-setPendingInput vars widget = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiPendingInput = Just widget }
-  refreshSignal vars
-
--- | Clear pending input widget (when completed or cancelled)
-clearPendingInput :: UIVars -> IO ()
-clearPendingInput vars = do
-  atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-    st { uiPendingInput = Nothing }
-  refreshSignal vars
-
--- | Dummy export for compatibility (not actually used with new approach)
-userResponseQueue :: ()
-userResponseQueue = ()
-
 -- | Request cancellation from the UI thread (sets flag)
-requestCancelFromUI :: UIVars -> STM ()
+requestCancelFromUI :: UIVars msg -> STM ()
 requestCancelFromUI vars = writeTVar (cancellationFlag vars) True
 
 -- | Check the cancellation flag (non-blocking read)
-readCancellationFlag :: UIVars -> STM Bool
+readCancellationFlag :: UIVars msg -> STM Bool
 readCancellationFlag vars = readTVar (cancellationFlag vars)
 
 -- | Clear the cancellation flag after handling cancellation (so next request can proceed)
-clearCancellationFlag :: UIVars -> IO ()
+clearCancellationFlag :: UIVars msg -> IO ()
 clearCancellationFlag vars = atomically $ writeTVar (cancellationFlag vars) False

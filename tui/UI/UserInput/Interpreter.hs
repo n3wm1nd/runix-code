@@ -13,7 +13,7 @@ import Control.Concurrent.STM (STM, TVar, atomically, newTVarIO, readTVar, retry
 import Control.Monad.IO.Class (liftIO)
 import Polysemy
 import Polysemy.Embed (Embed, embed)
-import UI.State (SomeInputWidget (..), UIVars, setPendingInput, clearPendingInput)
+import UI.State (UIVars, sendAgentEvent, SomeInputWidget (..), AgentEvent(..))
 import UI.UserInput (UserInput (..))
 import UI.UserInput.InputWidget (InputWidget, TUIWidget, ImplementsWidget (..), RenderRequest (..))
 
@@ -25,9 +25,9 @@ import UI.UserInput.InputWidget (InputWidget, TUIWidget, ImplementsWidget (..), 
 -- 4. Blocks until the callback is invoked by the UI
 -- Returns Maybe a: Just = confirmed, Nothing = cancelled
 interpretUserInput
-  :: forall r a
+  :: forall msg r a
    . Member (Embed IO) r
-  => UIVars
+  => UIVars msg
   -> Sem (UserInput TUIWidget ': r) a
   -> Sem r a
 interpretUserInput uiVars = interpret $ \case
@@ -41,7 +41,7 @@ interpretUserInput uiVars = interpret $ \case
 -- | Fulfill a TUI render request
 -- This is where the TUI-specific implementation lives
 -- The InputWidget constraint comes from pattern matching on the GADT
-fulfillRequest :: forall a r. Member (Embed IO) r => UIVars -> RenderRequest TUIWidget a -> Sem r (Maybe a)
+fulfillRequest :: forall msg a r. Member (Embed IO) r => UIVars msg -> RenderRequest TUIWidget a -> Sem r (Maybe a)
 fulfillRequest uiVars (RenderRequest prompt defaultValue) = do
   -- Pattern matching brings InputWidget a constraint
   -- Create a response variable for this specific request
@@ -56,14 +56,14 @@ fulfillRequest uiVars (RenderRequest prompt defaultValue) = do
   -- Package everything into existential wrapper
   let widget = SomeInputWidget prompt defaultValue submitCallback
 
-  -- Set pending input in UI state (triggers UI to show widget)
-  embed $ setPendingInput uiVars widget
+  -- Send event to show the widget (triggers UI to display it)
+  embed $ sendAgentEvent uiVars (ShowInputWidgetEvent widget)
 
   -- Block until user provides input
   result <- embed $ atomically $ waitForResponse responseVar
 
-  -- Clear the widget from UI
-  embed $ clearPendingInput uiVars
+  -- Send event to clear the widget from UI
+  embed $ sendAgentEvent uiVars ClearInputWidgetEvent
 
   -- Return the Maybe a directly (Nothing = cancelled, Just = confirmed)
   return result

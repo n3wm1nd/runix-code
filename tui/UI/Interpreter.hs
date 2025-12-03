@@ -12,26 +12,27 @@ import Polysemy.Embed (embed)
 import Control.Concurrent.STM
 
 import UI.Effects
-import qualified UI.State as State
-import UI.State (UIVars, userInputQueue, waitForUserInput)
+import UI.State (UIVars, userInputQueue, waitForUserInput, sendAgentEvent)
+import UI.OutputHistory (LogLevel(..))
+import UI.State (AgentEvent(..))
 
--- | Interpret UI effect using STM-based state
+-- | Interpret UI effect by sending events to the UI thread
 --
 -- This interpreter:
--- - Writes log messages, status updates, and display messages to TVar UIState
--- - Triggers UI refresh after each update
--- - Blocks on TMVar when prompting for user input
+-- - Sends log messages and status updates as AgentEvents to the UI queue
+-- - Triggers UI refresh after each event
+-- - Blocks on user input queue when prompting for input
 interpretUI :: Member (Embed IO) r
-            => UIVars
+            => UIVars msg
             -> Sem (UI ': r) a
             -> Sem r a
 interpretUI uiVars = interpret $ \case
-  LogMessage msg -> embed $ State.appendLog uiVars msg
+  LogMessage msg -> embed $ sendAgentEvent uiVars (LogEvent Info msg)
 
-  UpdateStatus status -> embed $ State.setStatus uiVars status
+  UpdateStatus status -> embed $ sendAgentEvent uiVars (LogEvent Info status)
 
   PromptUser prompt -> do
-    -- First, update status to show we're waiting for input
-    embed $ State.setStatus uiVars prompt
+    -- First, send status update to show we're waiting for input
+    embed $ sendAgentEvent uiVars (LogEvent Info prompt)
     -- Then block until user provides input
     embed $ atomically $ waitForUserInput (userInputQueue uiVars)

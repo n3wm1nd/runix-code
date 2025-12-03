@@ -35,13 +35,13 @@ import Data.Text.Zipper (cursorPosition, breakLine, deletePrevChar)
 import Lens.Micro
 import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (when, void)
+import Control.Monad (when, void, forM_, unless)
 import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), UIState(..), Name(..), provideUserInput, readUIState, uiStateVar, clearPendingInput, SomeInputWidget(..), requestCancelFromUI, clearCancellationFlag)
-import UI.OutputHistory (RenderedMessage(..), OutputMessage(..), shouldDisplay)
+import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, sendAgentEvent, readAgentEvents, SomeInputWidget(..), AgentEvent(..))
+import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, renderItemMarkdown, renderItemRaw, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, LogLevel(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified TUI.Widgets.MessageHistory as MH
@@ -66,13 +66,17 @@ data MarkdownMode = RenderMarkdown | ShowRaw
 
 -- | TUI application state
 --
--- Now uses STM-based state for concurrent updates from effect interpreters.
-data AppState = AppState
-  { _uiVars :: UIVars                      -- STM variables for UI state
+-- Parametrized over message type to store typed messages in zipper
+-- The zipper lives here - UI owns the state, interpreters send events to update it
+data AppState msg = AppState
+  { _uiVars :: UIVars msg                  -- STM queues for communication
+  , _renderMsg :: msg -> Text              -- How to render messages to text
+  , _outputZipper :: OutputHistoryZipper msg  -- History zipper with typed messages
+  , _status :: Text                         -- Current status message
+  , _pendingInput :: Maybe SomeInputWidget  -- Active input widget (cached from TVar)
   , _inputEditor :: Editor String Name     -- Input field
   , _inputMode :: InputMode                -- Current input mode
   , _markdownMode :: MarkdownMode          -- Whether to render markdown or show raw
-  , _cachedUIState :: UIState              -- Cached copy updated on each refresh event
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
   , _eventChan :: Brick.BChan.BChan CustomEvent  -- Event channel for sending custom events
   }
@@ -81,25 +85,31 @@ data AppState = AppState
 -- Lenses
 --------------------------------------------------------------------------------
 
-uiVarsL :: Lens' AppState UIVars
+uiVarsL :: Lens' (AppState msg) (UIVars msg)
 uiVarsL = lens _uiVars (\st v -> st { _uiVars = v })
 
-inputEditorL :: Lens' AppState (Editor String Name)
+outputZipperL :: Lens' (AppState msg) (OutputHistoryZipper msg)
+outputZipperL = lens _outputZipper (\st z -> st { _outputZipper = z })
+
+statusL :: Lens' (AppState msg) Text
+statusL = lens _status (\st s -> st { _status = s })
+
+pendingInputL :: Lens' (AppState msg) (Maybe SomeInputWidget)
+pendingInputL = lens _pendingInput (\st p -> st { _pendingInput = p })
+
+inputEditorL :: Lens' (AppState msg) (Editor String Name)
 inputEditorL = lens _inputEditor (\st e -> st { _inputEditor = e })
 
-inputModeL :: Lens' AppState InputMode
+inputModeL :: Lens' (AppState msg) InputMode
 inputModeL = lens _inputMode (\st m -> st { _inputMode = m })
 
-markdownModeL :: Lens' AppState MarkdownMode
+markdownModeL :: Lens' (AppState msg) MarkdownMode
 markdownModeL = lens _markdownMode (\st m -> st { _markdownMode = m })
 
-cachedUIStateL :: Lens' AppState UIState
-cachedUIStateL = lens _cachedUIState (\st s -> st { _cachedUIState = s })
-
-lastViewportL :: Lens' AppState (Maybe T.Viewport)
+lastViewportL :: Lens' (AppState msg) (Maybe T.Viewport)
 lastViewportL = lens _lastViewport (\st v -> st { _lastViewport = v })
 
-eventChanL :: Lens' AppState (Brick.BChan.BChan CustomEvent)
+eventChanL :: Lens' (AppState msg) (Brick.BChan.BChan CustomEvent)
 eventChanL = lens _eventChan (\st c -> st { _eventChan = c })
 
 --------------------------------------------------------------------------------
@@ -118,12 +128,16 @@ renderDisplayText = lines . Text.unpack
 
 -- | Run the TUI with STM-based state
 --
--- The UI reads from UIVars (written to by effect interpreters) and
--- writes user input to the TQueue when user sends a message.
+-- The UI is parametrized over the message type and takes:
+-- - A render function to convert messages to text
+-- - A function to create UIVars with a refresh callback
+--
 -- Refreshes are triggered by the effect interpreters, not by polling.
-runUI :: (IO () -> IO UIVars)  -- ^ Function to create UIVars with refresh callback
+runUI :: forall msg. Eq msg =>
+         (msg -> Text)                    -- ^ How to render messages
+      -> (IO () -> IO (UIVars msg))      -- ^ Function to create UIVars with refresh callback
       -> IO ()
-runUI mkUIVars = do
+runUI renderMsg mkUIVars = do
   -- Create event channel for UI refreshes
   -- Size 1 to coalesce multiple refresh requests - if channel has a pending refresh,
   -- we don't need to queue another one (writeBChanNonBlocking will return False)
@@ -135,15 +149,15 @@ runUI mkUIVars = do
     _ <- Brick.BChan.writeBChanNonBlocking eventChan RefreshUI
     return ()
 
-  -- Read initial UI state
-  initialUIState <- atomically $ readUIState (uiStateVar uiVars)
-
   let initialState = AppState
         { _uiVars = uiVars
+        , _renderMsg = renderMsg
+        , _outputZipper = emptyZipper
+        , _status = Text.pack "Ready"
+        , _pendingInput = Nothing
         , _inputEditor = editor InputEditor Nothing ""
         , _inputMode = EnterSends
         , _markdownMode = RenderMarkdown
-        , _cachedUIState = initialUIState
         , _lastViewport = Nothing
         , _eventChan = eventChan
         }
@@ -161,7 +175,7 @@ runUI mkUIVars = do
 -- Brick App Definition
 --------------------------------------------------------------------------------
 
-app :: M.App AppState CustomEvent Name
+app :: forall msg. Eq msg => M.App (AppState msg) CustomEvent Name
 app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
@@ -174,10 +188,25 @@ app = M.App
 -- UI Rendering
 --------------------------------------------------------------------------------
 
-drawUI :: AppState -> [T.Widget Name]
+drawUI :: AppState msg -> [T.Widget Name]
 drawUI st = [indicatorLayer, baseLayer]
   where
-    uiState = _cachedUIState st
+    -- Read state directly from AppState
+    status = _status st
+    mPendingInput = _pendingInput st
+    zipper = _outputZipper st
+
+    -- Render the zipper to widgets
+    renderItem = case _markdownMode st of
+                   RenderMarkdown -> renderItemMarkdown (_renderMsg st)
+                   ShowRaw -> renderItemRaw (_renderMsg st)
+
+    -- Render zipper: front (older), current, back (newer)
+    frontWidgets = concatMap renderItem (reverse $ zipperFront zipper)
+    currentWidgets = maybe [] renderItem (zipperCurrent zipper)
+    backWidgets = concatMap renderItem (reverse $ zipperBack zipper)
+
+    (cachedFrontWidgets, cachedBackWidgets) = (frontWidgets, backWidgets)
 
     -- Calculate dimensions
     availHeight = 100  -- This will be determined by context, placeholder for now
@@ -194,37 +223,10 @@ drawUI st = [indicatorLayer, baseLayer]
                     RenderMarkdown -> "Markdown: rendered"
                     ShowRaw -> "Markdown: raw"
 
-    -- Separate streaming chunks from completed output
-    (streamingMsgs, completedMsgs) = span isStreaming (uiOutputHistory uiState)
+    -- Combine widgets: front (oldest) ++ current ++ back (newest at bottom)
+    historyWidgets = frontWidgets ++ currentWidgets ++ backWidgets
 
-    isStreaming m = case rmMessage m of
-      StreamingChunk _ -> True
-      StreamingReasoning _ -> True
-      _ -> False
-
-    -- Filter based on display filter
-    filteredCompleted = filter (shouldDisplay (uiDisplayFilter uiState) . rmMessage) completedMsgs
-    filteredStreaming = filter (shouldDisplay (uiDisplayFilter uiState) . rmMessage) streamingMsgs
-
-    -- Extract completed widgets (cached, oldest-first for display)
-    completedWidgets = case _markdownMode st of
-      RenderMarkdown -> concatMap rmMarkdownWidgets (reverse filteredCompleted)
-      ShowRaw -> concatMap rmRawWidgets (reverse filteredCompleted)
-
-    -- Extract streaming widgets (not cached, oldest-first for display)
-    streamingWidgets = case _markdownMode st of
-      RenderMarkdown -> concatMap rmMarkdownWidgets (reverse filteredStreaming)
-      ShowRaw -> concatMap rmRawWidgets (reverse filteredStreaming)
-
-    -- Combine: cache completed (including logs), don't cache streaming
-    historyWidgets =
-      if null completedWidgets
-      then streamingWidgets
-      else if null streamingWidgets
-        then [cached CompletedHistory (vBox completedWidgets)]
-        else [cached CompletedHistory (vBox completedWidgets), hBorder] ++ streamingWidgets
-
-    statusText = Text.unpack (uiStatus uiState)
+    statusText = Text.unpack status
 
     -- MessageHistory returns (base, indicators) for Brick's layer system
     (historyBase, historyIndicators) = MH.messageHistory HistoryViewport (_lastViewport st) historyWidgets
@@ -235,7 +237,7 @@ drawUI st = [indicatorLayer, baseLayer]
       let availH = ctx ^. T.availHeightL
 
           -- Check if we have a pending input widget
-          ui = case uiPendingInput uiState of
+          ui = case mPendingInput of
             -- Input widget is active - show it instead of normal input
             Just widget ->
               let (inputPanel, panelHeight) = IP.drawInputPanel widget
@@ -270,62 +272,46 @@ drawUI st = [indicatorLayer, baseLayer]
 -- Event Handling
 --------------------------------------------------------------------------------
 
-handleEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
+handleEvent :: Eq msg => T.BrickEvent Name CustomEvent -> T.EventM Name (AppState msg) ()
 -- Check if input widget is active first
 handleEvent ev = do
-  vars <- use uiVarsL
-  uiState <- use cachedUIStateL
+  -- Read pending input widget from AppState
+  mWidget <- use pendingInputL
 
-  case uiPendingInput uiState of
+  case mWidget of
     Just widget -> handleInputWidgetEvent widget ev
     Nothing -> handleNormalEvent ev
 
 -- Handle events when input widget is active
-handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
+handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name CustomEvent -> T.EventM Name (AppState msg) ()
 -- Esc cancels the input widget - signal cancellation
 handleInputWidgetEvent (SomeInputWidget _ _currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEsc [])) = do
-  vars <- use uiVarsL
   -- Submit Nothing to signal cancellation and fail the tool call
+  -- The interpreter will send ClearInputWidgetEvent after callback
   liftIO $ submitCallback Nothing
-  liftIO $ clearPendingInput vars
-  -- Update cached state
-  uiState <- use cachedUIStateL
-  cachedUIStateL .= uiState { uiPendingInput = Nothing }
 
 -- Enter confirms and submits the current value
 handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEnter [])) = do
-  vars <- use uiVarsL
   -- Check if value is complete
   if isWidgetComplete currentValue
     then do
       -- Submit Just value to signal successful confirmation
+      -- The interpreter will send ClearInputWidgetEvent after callback
       liftIO $ submitCallback (Just currentValue)
-      -- Clear the widget from UI (will be done by interpreter, but we can do it here too)
-      liftIO $ clearPendingInput vars
-      -- Update cached state
-      uiState <- use cachedUIStateL
-      cachedUIStateL .= uiState { uiPendingInput = Nothing }
     else
       return ()  -- Don't submit if incomplete
 
 -- All other events go to the widget
 handleInputWidgetEvent widget ev = do
-  vars <- use uiVarsL
   -- Run the widget event handler which uses EventM Name () instead of AppState
   ((), mNewWidget) <- T.nestEventM () $ IP.handleInputPanelEvent widget ev
-  -- Update the widget in UIState if it changed
+  -- Update the widget in AppState if it changed
   case mNewWidget of
-    Just newWidget -> do
-      uiState <- use cachedUIStateL
-      let newUIState = uiState { uiPendingInput = Just newWidget }
-      cachedUIStateL .= newUIState
-      -- Also update in the shared state var
-      liftIO $ atomically $ modifyTVar' (uiStateVar vars) $ \st ->
-        st { uiPendingInput = Just newWidget }
+    Just newWidget -> pendingInputL .= Just newWidget
     Nothing -> return ()
 
 -- Normal event handling (when no input widget active)
-handleNormalEvent :: T.BrickEvent Name CustomEvent -> T.EventM Name AppState ()
+handleNormalEvent :: Eq msg => T.BrickEvent Name CustomEvent -> T.EventM Name (AppState msg) ()
 -- ESC: Request cancellation of current operation
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL
@@ -337,24 +323,78 @@ handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
 -- Ctrl+C: Actually exit the application
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
--- Refresh UI state from STM and scroll to bottom
+-- Refresh UI: process all pending agent events and update zipper
 handleNormalEvent (T.AppEvent RefreshUI) = do
   vars <- use uiVarsL
-  oldUIState <- use cachedUIStateL
-  newUIState <- liftIO $ atomically $ readUIState (uiStateVar vars)
 
-  -- Check if completed (non-streaming) output changed
-  let oldCompleted = filter (not . isStreamingMsg . rmMessage) (uiOutputHistory oldUIState)
-      newCompleted = filter (not . isStreamingMsg . rmMessage) (uiOutputHistory newUIState)
-      isStreamingMsg (StreamingChunk _) = True
-      isStreamingMsg (StreamingReasoning _) = True
-      isStreamingMsg _ = False
+  -- Read all pending events from the queue
+  events <- liftIO $ atomically $ readAgentEvents vars
 
-  -- Invalidate cache if completed output changed
-  when (length oldCompleted /= length newCompleted) $
-    invalidateCacheEntry CompletedHistory
+  -- Process each event and update the zipper
+  forM_ events $ \event -> do
+    case event of
+      StreamChunkEvent text -> do
+        -- Accumulate streaming text: if last item in back is StreamingChunkItem, append to it
+        zipper <- use outputZipperL
+        case zipperBack zipper of
+          (StreamingChunkItem prevText : rest) ->
+            outputZipperL .= zipper { zipperBack = StreamingChunkItem (prevText <> text) : rest }
+          _ ->
+            outputZipperL %= insertItem (StreamingChunkItem text)
 
-  cachedUIStateL .= newUIState
+      StreamReasoningEvent text -> do
+        -- Accumulate reasoning text similarly
+        zipper <- use outputZipperL
+        case zipperBack zipper of
+          (StreamingReasoningItem prevText : rest) ->
+            outputZipperL .= zipper { zipperBack = StreamingReasoningItem (prevText <> text) : rest }
+          _ ->
+            outputZipperL %= insertItem (StreamingReasoningItem text)
+
+      AgentCompleteEvent msgs -> do
+        -- Use mergeOutputMessages to properly merge messages with existing output
+        zipper <- use outputZipperL
+        let currentItems = zipperToList zipper  -- newest-first
+
+            -- Remove streaming items first
+            withoutStreaming = filter (\case
+                StreamingChunkItem _ -> False
+                StreamingReasoningItem _ -> False
+                _ -> True) currentItems
+
+            -- Convert messages to OutputItems (newest-first)
+            newItems = map MessageItem (reverse msgs)
+
+            -- Merge using the tested merge logic
+            mergedItems = mergeOutputMessages newItems withoutStreaming
+
+        -- Convert back to zipper
+        outputZipperL .= listToZipper mergedItems
+
+      AgentErrorEvent text ->
+        outputZipperL %= insertItem (SystemEventItem text)
+
+      LogEvent level text ->
+        outputZipperL %= insertItem (LogItem level text)
+
+      ToolExecutionEvent text ->
+        outputZipperL %= insertItem (ToolExecutionItem text)
+
+      ShowInputWidgetEvent widget ->
+        pendingInputL .= Just widget
+
+      ClearInputWidgetEvent ->
+        pendingInputL .= Nothing
+
+  -- Update status based on events
+  forM_ events $ \event -> do
+    case event of
+      AgentCompleteEvent _ ->
+        statusL .= Text.pack "Ready"
+      AgentErrorEvent text ->
+        statusL .= Text.append (Text.pack "Error: ") text
+      _ -> return ()  -- Don't update status for other events
+
   -- Scroll viewport to bottom to show new content
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
   -- Send event to update viewport indicators after render (non-blocking)
@@ -476,7 +516,7 @@ handleNormalEvent ev = do
 -- Message Sending
 --------------------------------------------------------------------------------
 
-sendMessage :: T.EventM Name AppState ()
+sendMessage :: T.EventM Name (AppState msg) ()
 sendMessage = do
   ed <- use inputEditorL
   let contentLines = getEditContents ed
@@ -486,6 +526,9 @@ sendMessage = do
     else do
       -- Get the UI vars
       vars <- use uiVarsL
+
+      -- Set status to Processing immediately
+      statusL .= Text.pack "Processing..."
 
       -- Send user input to the agent via TMVar
       liftIO $ atomically $ provideUserInput (userInputQueue vars) (Text.pack content)
