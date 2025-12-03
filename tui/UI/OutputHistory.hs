@@ -53,8 +53,9 @@ module UI.OutputHistory
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
+import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
 import Brick.Types (Widget)
-import Brick.Widgets.Core (txt, padLeft, (<+>), vBox)
+import Brick.Widgets.Core (txt, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
 
 --------------------------------------------------------------------------------
@@ -182,15 +183,25 @@ renderItemMarkdown renderMsg item = case item of
               Just content ->
                 let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
                 in combineMarkerWithContent "?" widgets
-              Nothing -> markdownToWidgetsWithIndent 1 text
+              Nothing -> case T.stripPrefix "Agent (tool call):\n  " text of
+                Just content ->
+                  -- Render tool calls as plain text, not markdown
+                  let plainText = T.replace "\n  " "\n" content
+                  in combineMarkerWithContent "T" [padLeft (Pad 1) (txt plainText)]
+                Nothing -> case T.stripPrefix "Tool result:\n  " text of
+                  Just content ->
+                    -- Render tool results as plain text, not markdown
+                    let plainText = T.replace "\n  " "\n" content
+                    in combineMarkerWithContent "R" [padLeft (Pad 1) (txt plainText)]
+                  Nothing -> markdownToWidgetsWithIndent 1 text
     in txt " " : contentWidgets ++ [txt " "]
 
   LogItem level msg ->
-    let marker = case level of
-          Info -> "I "
-          Warning -> "W "
-          Error -> "E "
-    in [txt marker <+> vBox (markdownToWidgets msg)]
+    let (marker, attr) = case level of
+          Info -> ("I ", logInfoAttr)
+          Warning -> ("W ", logWarningAttr)
+          Error -> ("E ", logErrorAttr)
+    in [withAttr attr (txt marker) <+> txt msg]
 
   StreamingChunkItem text ->
     let contentWidgets = markdownToWidgetsWithIndent 1 text

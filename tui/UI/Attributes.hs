@@ -20,6 +20,9 @@ module UI.Attributes
   , inputPanelAttr
   , inputPanelLabelAttr
   , inputPanelHelpAttr
+  , logInfoAttr
+  , logWarningAttr
+  , logErrorAttr
     -- * Attribute map
   , theMap
   ) where
@@ -52,6 +55,11 @@ inputPanelAttr = attrName "inputPanel"
 inputPanelLabelAttr = attrName "inputPanelLabel"
 inputPanelHelpAttr = attrName "inputPanelHelp"
 
+logInfoAttr, logWarningAttr, logErrorAttr :: AttrName
+logInfoAttr = attrName "logInfo"
+logWarningAttr = attrName "logWarning"
+logErrorAttr = attrName "logError"
+
 -- | The attribute map defining all styles
 theMap :: AttrMap
 theMap = attrMap V.defAttr
@@ -70,4 +78,8 @@ theMap = attrMap V.defAttr
   , (inputPanelAttr, V.defAttr `V.withForeColor` V.brightWhite `V.withBackColor` V.black)
   , (inputPanelLabelAttr, V.defAttr `V.withStyle` V.bold `V.withForeColor` V.brightYellow `V.withBackColor` V.black)
   , (inputPanelHelpAttr, V.defAttr `V.withStyle` V.italic `V.withForeColor` V.brightCyan `V.withBackColor` V.black)
+  -- Log level styling - subtle markers
+  , (logInfoAttr, V.defAttr `V.withForeColor` V.cyan)
+  , (logWarningAttr, V.defAttr `V.withForeColor` V.yellow)
+  , (logErrorAttr, V.defAttr `V.withForeColor` V.red)
   ]
