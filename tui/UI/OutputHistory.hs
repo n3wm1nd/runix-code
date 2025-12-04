@@ -9,7 +9,6 @@ module UI.OutputHistory
   ( -- * Core Types
     OutputItem(..)
   , OutputHistoryZipper(..)
-  , LogLevel(..)
   , DisplayFilter(..)
     -- * Zipper Operations
   , emptyZipper
@@ -57,6 +56,7 @@ import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
 import Brick.Types (Widget)
 import Brick.Widgets.Core (txt, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
+import Runix.Logging.Effects (Level(..))
 
 --------------------------------------------------------------------------------
 -- New Zipper-Based Types
@@ -66,7 +66,7 @@ import Brick.Widgets.Core (Padding(..))
 -- Parametrized over message type to store actual typed messages
 data OutputItem msg
   = MessageItem msg           -- ^ Conversation message (typed)
-  | LogItem LogLevel Text     -- ^ Log entry
+  | LogItem Level Text        -- ^ Log entry
   | StreamingChunkItem Text   -- ^ Streaming text chunk
   | StreamingReasoningItem Text  -- ^ Streaming reasoning chunk
   | SystemEventItem Text      -- ^ System event notification
@@ -157,10 +157,6 @@ extractMessages zipper =
       extractMsg _ = Nothing
   in reverse $ foldr (\item acc -> maybe acc (:acc) (extractMsg item)) [] items
 
--- | Log levels for filtering
-data LogLevel = Info | Warning | Error
-  deriving stock (Eq, Show, Ord)
-
 --------------------------------------------------------------------------------
 -- Rendering Functions
 --------------------------------------------------------------------------------
@@ -212,10 +208,10 @@ renderItemMarkdown renderMsg item = case item of
     in combineMarkerWithContent "~" contentWidgets
 
   SystemEventItem msg ->
-    [txt "S " <+> vBox (markdownToWidgets msg)]
+    [txt "S " <+> txt msg]
 
   ToolExecutionItem name ->
-    [txt "T " <+> vBox (markdownToWidgets name)]
+    [txt "T " <+> txt name]
   where
     combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
     combineMarkerWithContent marker [] = [txt marker]
@@ -271,7 +267,7 @@ renderItem useMarkdown renderMsg item =
 -- | A single entry in the output timeline
 data OutputMessage
   = ConversationMessage Int Text
-  | LogEntry LogLevel Text
+  | LogEntry Level Text
   | StreamingChunk Text
   | StreamingReasoning Text
   | SystemEvent Text
@@ -549,7 +545,7 @@ mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
 --   in renderMessageList mergedMsgs
 
 -- | Add a log entry to the output history (cons to front - newest first)
-addLog :: forall n. LogLevel -> Text -> OutputHistory n -> OutputHistory n
+addLog :: forall n. Level -> Text -> OutputHistory n -> OutputHistory n
 addLog level msg output = renderMessage (LogEntry level msg) : output
 
 -- | Add a system event to the output history (cons to front - newest first)

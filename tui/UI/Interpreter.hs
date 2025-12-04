@@ -13,8 +13,8 @@ import Control.Concurrent.STM
 
 import UI.Effects
 import UI.State (UIVars, userInputQueue, waitForUserInput, sendAgentEvent)
-import UI.OutputHistory (LogLevel(..))
 import UI.State (AgentEvent(..))
+import Runix.Logging.Effects (Level(..))
 
 -- | Interpret UI effect by sending events to the UI thread
 --
@@ -27,7 +27,7 @@ interpretUI :: Member (Embed IO) r
             -> Sem (UI ': r) a
             -> Sem r a
 interpretUI uiVars = interpret $ \case
-  LogMessage msg -> embed $ sendAgentEvent uiVars (LogEvent Info msg)
+  LogMessage level msg -> embed $ sendAgentEvent uiVars (LogEvent level msg)
 
   UpdateStatus status -> embed $ sendAgentEvent uiVars (LogEvent Info status)
 

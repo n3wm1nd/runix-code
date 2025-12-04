@@ -8,6 +8,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.List (nub, sort)
 import UI.OutputHistory
+import Runix.Logging.Effects (Level(..))
 
 -- Helper to create output items with Text as the message type
 convMsg :: Text -> OutputItem Text

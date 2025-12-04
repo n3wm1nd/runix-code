@@ -17,16 +17,11 @@ import UI.Effects (UI, logMessage)
 
 -- | Reinterpret Logging effect as UI effect
 --
--- Logging messages are formatted with their severity level and
--- sent to the UI via the logMessage operation.
+-- Logging messages are sent to the UI with their severity level preserved.
 interpretLoggingToUI :: Member UI r => Sem (Logging ': r) a -> Sem r a
 interpretLoggingToUI = interpret $ \case
   Log level _callStack msg ->
-    logMessage $ levelPrefix level <> msg
-  where
-    levelPrefix Info = T.pack "[INFO] "
-    levelPrefix Warning = T.pack "[WARNING] "
-    levelPrefix Error = T.pack "[ERROR] "
+    logMessage level msg
 
 -- | Reinterpret Logging with call stack information
 --
@@ -34,8 +29,4 @@ interpretLoggingToUI = interpret $ \case
 interpretLoggingToUIWithStack :: Member UI r => Sem (Logging ': r) a -> Sem r a
 interpretLoggingToUIWithStack = interpret $ \case
   Log level callStack msg ->
-    logMessage $ levelPrefix level <> msg <> T.pack "\n  " <> T.pack (prettyCallStack callStack)
-  where
-    levelPrefix Info = T.pack "[INFO] "
-    levelPrefix Warning = T.pack "[WARNING] "
-    levelPrefix Error = T.pack "[ERROR] "
+    logMessage level (msg <> T.pack "\n  " <> T.pack (prettyCallStack callStack))

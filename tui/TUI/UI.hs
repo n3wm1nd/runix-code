@@ -41,7 +41,8 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..))
-import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, renderItemMarkdown, renderItemRaw, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, LogLevel(..))
+import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, renderItemMarkdown, renderItemRaw, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
+import Runix.Logging.Effects (Level(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified TUI.Widgets.MessageHistory as MH
@@ -286,8 +287,9 @@ handleInputWidgetEvent :: SomeInputWidget -> T.BrickEvent Name (CustomEvent msg)
 -- Esc cancels the input widget - signal cancellation
 handleInputWidgetEvent (SomeInputWidget _ _currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEsc [])) = do
   -- Submit Nothing to signal cancellation and fail the tool call
-  -- The interpreter will send ClearInputWidgetEvent after callback
   liftIO $ submitCallback Nothing
+  -- Clear the widget immediately so future events aren't intercepted
+  pendingInputL .= Nothing
 
 -- Enter confirms and submits the current value
 handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEnter [])) = do
@@ -295,8 +297,9 @@ handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T
   if isWidgetComplete currentValue
     then do
       -- Submit Just value to signal successful confirmation
-      -- The interpreter will send ClearInputWidgetEvent after callback
       liftIO $ submitCallback (Just currentValue)
+      -- Clear the widget immediately so future events aren't intercepted
+      pendingInputL .= Nothing
     else
       return ()  -- Don't submit if incomplete
 

@@ -19,6 +19,7 @@ import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
 import UniversalLLM.Core.Types (Message(..))
+import Runix.Logging.Effects (Level(..))
 
 -- | UI effect for interacting with the user interface
 --
@@ -28,8 +29,8 @@ import UniversalLLM.Core.Types (Message(..))
 -- - Showing messages in chat history
 -- - Prompting the user for input (blocking)
 data UI (m :: Type -> Type) a where
-  -- | Display a log message in the UI
-  LogMessage :: Text -> UI m ()
+  -- | Display a log message in the UI with severity level
+  LogMessage :: Level -> Text -> UI m ()
 
   -- | Update the status line
   UpdateStatus :: Text -> UI m ()
@@ -38,8 +39,8 @@ data UI (m :: Type -> Type) a where
   PromptUser :: Text -> UI m Text
 
 -- | Smart constructors for UI effect
-logMessage :: Member UI r => Text -> Sem r ()
-logMessage msg = send (LogMessage msg)
+logMessage :: Member UI r => Level -> Text -> Sem r ()
+logMessage level msg = send (LogMessage level msg)
 
 updateStatus :: Member UI r => Text -> Sem r ()
 updateStatus status = send (UpdateStatus status)

@@ -25,7 +25,7 @@ import Brick (Widget)
 import qualified Brick.BChan
 import Control.Concurrent.STM
 import Data.Text (Text)
-import UI.OutputHistory (LogLevel(..))
+import Runix.Logging.Effects (Level(..))
 import UI.UserInput.InputWidget (InputWidget(..))
 
 -- | Resource names for widgets (defined here to avoid circular dependency)
@@ -50,7 +50,7 @@ data AgentEvent msg
   | UserMessageEvent msg          -- ^ User message received (before agent processes it)
   | AgentCompleteEvent [msg]      -- ^ Agent completed with new messages
   | AgentErrorEvent Text          -- ^ Agent encountered error
-  | LogEvent LogLevel Text        -- ^ New log entry
+  | LogEvent Level Text           -- ^ New log entry
   | ToolExecutionEvent Text       -- ^ Tool execution started
   | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
   | ClearInputWidgetEvent         -- ^ Clear the current input widget
