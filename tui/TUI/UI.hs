@@ -464,12 +464,9 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
 
 -- Handle paste events - insert content without triggering send
-handleNormalEvent (T.VtyEvent (V.EvPaste pastedBytes)) = do
-  let pastedText = Text.decodeUtf8 pastedBytes
-  ed <- use inputEditorL
-  let currentLines = getEditContents ed
-      newContent = unlines currentLines ++ Text.unpack pastedText
-  inputEditorL .= editor InputEditor Nothing newContent
+-- Just pass the paste event to the editor's normal handler
+handleNormalEvent ev@(T.VtyEvent (V.EvPaste _)) = do
+  zoom inputEditorL $ handleEditorEvent ev
 
 -- Enter key behavior depends on mode and backslash handling
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEnter [])) = do
