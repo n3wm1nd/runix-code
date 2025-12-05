@@ -322,16 +322,17 @@ wrapSegments maxWidth segments =
           in [nonQuotedGroup] ++ groupQuotedSegments rest
 
     -- Convert a group of segments to words
+    -- IMPORTANT: Each segment must preserve its own attribute when split into words
     segmentGroupToWords :: [TextSegment] -> [[TextSegment]]
     segmentGroupToWords [] = []
     segmentGroupToWords segs
       | all (\s -> segmentAttr s == Just quotedAttr) segs = [segs]  -- Keep quoted segments together
       | otherwise =
-          let segText = T.concat $ map segmentText segs
-              segAttr = if null segs then Nothing else segmentAttr (head segs)
-              ws = T.words segText
-              wordSegs = map (\w -> TextSegment segAttr w) ws
-          in map (:[]) wordSegs
+          -- Split each segment individually, preserving its attribute
+          let splitSegment seg =
+                let ws = T.words (segmentText seg)
+                in map (\w -> [TextSegment (segmentAttr seg) w]) ws
+          in concatMap splitSegment segs
 
     -- Wrap words into lines
     wrapWords :: Int -> [[TextSegment]] -> [[TextSegment]]

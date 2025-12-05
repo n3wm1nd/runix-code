@@ -1,4 +1,6 @@
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 -- | Unified output history for the TUI
 --
@@ -10,6 +12,8 @@ module UI.OutputHistory
     OutputItem(..)
   , OutputHistoryZipper(..)
   , DisplayFilter(..)
+  , RenderOptions(..)
+  , defaultRenderOptions
     -- * Zipper Operations
   , emptyZipper
   , zipperToList
@@ -26,8 +30,6 @@ module UI.OutputHistory
   , shouldDisplay
     -- * Rendering
   , renderItem
-  , renderItemMarkdown
-  , renderItemRaw
     -- * Merge logic
   , mergeOutputMessages
     -- * Legacy compatibility (to be removed)
@@ -54,13 +56,25 @@ import qualified Data.Text as T
 import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
 import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
 import Brick.Types (Widget)
-import Brick.Widgets.Core (txt, padLeft, (<+>), vBox, withAttr)
+import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
 import Runix.Logging.Effects (Level(..))
+import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
 
 --------------------------------------------------------------------------------
 -- New Zipper-Based Types
 --------------------------------------------------------------------------------
+
+-- | Rendering options for OutputItems
+data RenderOptions = RenderOptions
+  { useMarkdown :: Bool  -- ^ Render markdown in user/assistant text
+  } deriving (Eq, Show)
+
+-- | Default rendering options
+defaultRenderOptions :: RenderOptions
+defaultRenderOptions = RenderOptions
+  { useMarkdown = True
+  }
 
 -- | A single item in the output history timeline
 -- Parametrized over message type to store actual typed messages
@@ -161,37 +175,51 @@ extractMessages zipper =
 -- Rendering Functions
 --------------------------------------------------------------------------------
 
--- | Render an OutputItem with markdown formatting
--- Takes a function to render msg to Text
-renderItemMarkdown :: forall msg n. (msg -> Text) -> OutputItem msg -> [Widget n]
-renderItemMarkdown renderMsg item = case item of
-  MessageItem msg ->
-    let text = renderMsg msg
-        contentWidgets = case T.stripPrefix "You:\n  " text of
-          Just content ->
-            let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
-            in combineMarkerWithContent "<" widgets
-          Nothing -> case T.stripPrefix "Agent:\n  " text of
-            Just content ->
-              let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
-              in combineMarkerWithContent ">" widgets
-            Nothing -> case T.stripPrefix "[Agent reasoning]:\n  " text of
-              Just content ->
-                let widgets = markdownToWidgetsWithIndent 1 (T.replace "\n  " "\n" content)
-                in combineMarkerWithContent "?" widgets
-              Nothing -> case T.stripPrefix "Agent (tool call):\n  " text of
-                Just content ->
-                  -- Render tool calls as plain text, not markdown
-                  let plainText = T.replace "\n  " "\n" content
-                  in combineMarkerWithContent "T" [padLeft (Pad 1) (txt plainText)]
-                Nothing -> case T.stripPrefix "Tool result:\n  " text of
-                  Just content ->
-                    -- Render tool results as plain text, not markdown
-                    let plainText = T.replace "\n  " "\n" content
-                    in combineMarkerWithContent "R" [padLeft (Pad 1) (txt plainText)]
-                  Nothing -> markdownToWidgetsWithIndent 1 text
-    in txt " " : contentWidgets ++ [txt " "]
+-- | Render an OutputItem with optional markdown formatting
+-- Pattern matches directly on Message constructors to determine rendering
+-- Only UserText, AssistantText, AssistantReasoning, and streaming items use markdown when enabled
+renderItem :: forall model provider n. RenderOptions -> OutputItem (Message model provider) -> [Widget n]
+renderItem opts item = case item of
+  -- User messages
+  MessageItem (UserText text) ->
+    [txt " ", txt "<" <+> renderContent text, txt " "]
 
+  -- Assistant text
+  MessageItem (AssistantText text) ->
+    [txt " ", txt ">" <+> renderContent text, txt " "]
+
+  -- Assistant reasoning
+  MessageItem (AssistantReasoning text) ->
+    [txt " ", txt "?" <+> renderContent text, txt " "]
+
+  -- Tool calls: ALWAYS plain text (ignore markdown flag)
+  MessageItem (AssistantTool toolCall) ->
+    let toolText = T.pack (show toolCall)
+    in txt " " : [txt "T" <+> padLeft (Pad 1) (txt toolText)] ++ [txt " "]
+
+  -- Tool results: ALWAYS plain text (ignore markdown flag)
+  MessageItem (ToolResultMsg toolResult) ->
+    let resultText = T.pack (show toolResult)
+    in txt " " : [txt "R" <+> padLeft (Pad 1) (txt resultText)] ++ [txt " "]
+
+  -- User images: simple text representation
+  MessageItem (UserImage desc _imageData) ->
+    txt " " : [txt "<" <+> padLeft (Pad 1) (txt $ "[Image: " <> desc <> "]")] ++ [txt " "]
+
+  -- JSON messages: show as formatted text
+  MessageItem (UserRequestJSON query schema) ->
+    let jsonText = "Query: " <> query <> "\nSchema: " <> T.pack (show schema)
+    in txt " " : [txt "<" <+> padLeft (Pad 1) (txt jsonText)] ++ [txt " "]
+
+  MessageItem (AssistantJSON value) ->
+    let jsonText = T.pack (show value)
+    in txt " " : [txt ">" <+> padLeft (Pad 1) (txt jsonText)] ++ [txt " "]
+
+  -- System messages: plain text
+  MessageItem (SystemText text) ->
+    txt " " : [txt "S" <+> padLeft (Pad 1) (txt text)] ++ [txt " "]
+
+  -- Log items: always same rendering
   LogItem level msg ->
     let (marker, attr) = case level of
           Info -> ("I ", logInfoAttr)
@@ -199,66 +227,30 @@ renderItemMarkdown renderMsg item = case item of
           Error -> ("E ", logErrorAttr)
     in [withAttr attr (txt marker) <+> txt msg]
 
+  -- Streaming chunks
   StreamingChunkItem text ->
-    let contentWidgets = markdownToWidgetsWithIndent 1 text
-    in combineMarkerWithContent "}" contentWidgets
+    [txt "}" <+> renderContent text]
 
+  -- Streaming reasoning
   StreamingReasoningItem text ->
-    let contentWidgets = markdownToWidgetsWithIndent 1 text
-    in combineMarkerWithContent "~" contentWidgets
+    [txt "~" <+> renderContent text]
 
+  -- System events: always same rendering
   SystemEventItem msg ->
     [txt "S " <+> txt msg]
 
+  -- Tool execution indicators: always same rendering
   ToolExecutionItem name ->
     [txt "T " <+> txt name]
   where
-    combineMarkerWithContent :: Text -> [Widget n] -> [Widget n]
-    combineMarkerWithContent marker [] = [txt marker]
-    combineMarkerWithContent marker (first:rest) = (txt marker <+> first) : rest
+    useMd = useMarkdown opts
 
--- | Render an OutputItem as raw text (no markdown processing)
--- Takes a function to render msg to Text
-renderItemRaw :: forall msg n. (msg -> Text) -> OutputItem msg -> [Widget n]
-renderItemRaw renderMsg item = case item of
-  MessageItem msg ->
-    let text = renderMsg msg
-    in case T.stripPrefix "You:\n  " text of
-      Just content ->
-        [txt "<" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
-      Nothing -> case T.stripPrefix "Agent:\n  " text of
-        Just content ->
-          [txt ">" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
-        Nothing -> case T.stripPrefix "[Agent reasoning]:\n  " text of
-          Just content ->
-            [txt "?" <+> padLeft (Pad 1) (txt (T.replace "\n  " "\n" content))]
-          Nothing -> [padLeft (Pad 1) (txt text)]
-
-  LogItem level msg ->
-    let marker = case level of
-          Info -> "I "
-          Warning -> "W "
-          Error -> "E "
-    in [txt marker <+> txt msg]
-
-  StreamingChunkItem text ->
-    [txt "}" <+> padLeft (Pad 1) (txt text)]
-
-  StreamingReasoningItem text ->
-    [txt "~" <+> padLeft (Pad 1) (txt text)]
-
-  SystemEventItem msg ->
-    [txt "S " <+> txt msg]
-
-  ToolExecutionItem name ->
-    [txt "T " <+> txt name]
-
--- | Polymorphic render function - choose markdown or raw
-renderItem :: forall msg n. Bool -> (msg -> Text) -> OutputItem msg -> [Widget n]
-renderItem useMarkdown renderMsg item =
-  if useMarkdown
-    then renderItemMarkdown renderMsg item
-    else renderItemRaw renderMsg item
+    -- Render text content with optional markdown
+    renderContent :: Text -> Widget n
+    renderContent text = padLeft (Pad 1) $
+      if useMd
+      then vBox (markdownToWidgetsWithIndent 0 text)
+      else txtWrap text
 
 --------------------------------------------------------------------------------
 -- Legacy Types (for backward compatibility during migration)

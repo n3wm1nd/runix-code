@@ -48,7 +48,7 @@ import Runix.Logging.Effects (Logging(..))
 import Runix.Cancellation.Effects (Cancellation(..), isCanceled)
 import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
 import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
-import UI.Effects (UI, messageToDisplay)
+import UI.Effects (UI)
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, requestCancelFromUI, AgentEvent(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
@@ -88,7 +88,8 @@ newtype Runner model provider = Runner
 -- | Wrapper for a function that builds everything and returns UIVars
 -- Each model has its own concrete types, wrapped existentially
 data AgentRunnerBuilder where
-  AgentRunnerBuilder :: forall msg. Eq msg => (msg -> Text) -> ((AgentEvent msg -> IO ()) -> IO (UIVars msg)) -> AgentRunnerBuilder
+  AgentRunnerBuilder :: forall model provider. Eq (Message model provider) =>
+    ((AgentEvent (Message model provider) -> IO ()) -> IO (UIVars (Message model provider))) -> AgentRunnerBuilder
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -103,11 +104,11 @@ main = do
   -- Create runner builder (returns a function that takes UIVars)
   let runnerBuilder = createRunnerBuilder (cfgModelSelection cfg) cfg
 
-  -- Apply the builder: it contains render function and mkRunner
+  -- Apply the builder: it contains the mkRunner function
   case runnerBuilder of
-    AgentRunnerBuilder renderMsg mkRunner -> do
+    AgentRunnerBuilder mkRunner -> do
       -- The builder hides the model/provider types
-      runUI renderMsg mkRunner
+      runUI mkRunner
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -228,7 +229,7 @@ runBaseEffects uiVars =
 
 -- | Create an AgentRunner builder based on the selected model
 createRunnerBuilder :: ModelSelection -> Config -> AgentRunnerBuilder
-createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder (messageToDisplay @ClaudeSonnet45 @Anthropic) $ \refreshCallback -> do
+createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder $ \refreshCallback -> do
   uiVars <- newUIVars @(Message ClaudeSonnet45 Anthropic) refreshCallback
   historyRef <- newIORef ([] :: [Message ClaudeSonnet45 Anthropic])
   maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
@@ -255,7 +256,7 @@ createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder (messageToDispla
       _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
       return uiVars
 
-createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder (messageToDisplay @GLM45Air @LlamaCpp) $ \refreshCallback -> do
+createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder $ \refreshCallback -> do
   uiVars <- newUIVars @(Message GLM45Air LlamaCpp) refreshCallback
   historyRef <- newIORef ([] :: [Message GLM45Air LlamaCpp])
   let runAgent :: forall a. (forall r. (Member (LLM LlamaCpp GLM45Air) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
@@ -274,7 +275,7 @@ createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder (messageToDisplay @GLM4
   _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
   return uiVars
 
-createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder (messageToDisplay @Qwen3Coder @LlamaCpp) $ \refreshCallback -> do
+createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder $ \refreshCallback -> do
   uiVars <- newUIVars @(Message Qwen3Coder LlamaCpp) refreshCallback
   historyRef <- newIORef ([] :: [Message Qwen3Coder LlamaCpp])
   let runAgent :: forall a. (forall r. (Member (LLM LlamaCpp Qwen3Coder) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
@@ -293,7 +294,7 @@ createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder (messageToDisplay @Qw
   _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runAgent
   return uiVars
 
-createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder (messageToDisplay @Universal @OpenRouter) $ \refreshCallback -> do
+createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder $ \refreshCallback -> do
   uiVars <- newUIVars @(Message Universal OpenRouter) refreshCallback
   apiKey <- getOpenRouterApiKey
   modelName <- getOpenRouterModel

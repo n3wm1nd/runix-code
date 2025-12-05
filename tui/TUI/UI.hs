@@ -41,8 +41,9 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..))
-import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, renderItemMarkdown, renderItemRaw, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
+import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
 import Runix.Logging.Effects (Level(..))
+import UniversalLLM.Core.Types (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified TUI.Widgets.MessageHistory as MH
@@ -73,7 +74,6 @@ data MarkdownMode = RenderMarkdown | ShowRaw
 -- The zipper lives here - UI owns the state, interpreters send events to update it
 data AppState msg = AppState
   { _uiVars :: UIVars msg                  -- STM queues for communication
-  , _renderMsg :: msg -> Text              -- How to render messages to text
   , _outputZipper :: OutputHistoryZipper msg  -- History zipper with typed messages
   , _status :: Text                         -- Current status message
   , _pendingInput :: Maybe SomeInputWidget  -- Active input widget (cached from TVar)
@@ -131,16 +131,14 @@ renderDisplayText = lines . Text.unpack
 
 -- | Run the TUI with STM-based state
 --
--- The UI is parametrized over the message type and takes:
--- - A render function to convert messages to text
--- - A function to create UIVars with a refresh callback
+-- The UI is parametrized over the Message type (specific model/provider instances)
+-- Messages are rendered directly by pattern matching on Message constructors
 --
 -- Refreshes are triggered by the effect interpreters, not by polling.
-runUI :: forall msg. Eq msg =>
-         (msg -> Text)                    -- ^ How to render messages
-      -> ((AgentEvent msg -> IO ()) -> IO (UIVars msg))  -- ^ Function to create UIVars with send callback
+runUI :: forall model provider. Eq (Message model provider) =>
+         ((AgentEvent (Message model provider) -> IO ()) -> IO (UIVars (Message model provider)))  -- ^ Function to create UIVars with send callback
       -> IO ()
-runUI renderMsg mkUIVars = do
+runUI mkUIVars = do
   -- Create event channel - agent events and UI events use same channel
   -- This ensures proper ordering and eliminates the separate refresh signal
   eventChan <- newBChan 10  -- Reasonable buffer size
@@ -151,7 +149,6 @@ runUI renderMsg mkUIVars = do
 
   let initialState = AppState
         { _uiVars = uiVars
-        , _renderMsg = renderMsg
         , _outputZipper = emptyZipper
         , _status = Text.pack "Ready"
         , _pendingInput = Nothing
@@ -175,7 +172,7 @@ runUI renderMsg mkUIVars = do
 -- Brick App Definition
 --------------------------------------------------------------------------------
 
-app :: forall msg. Eq msg => M.App (AppState msg) (CustomEvent msg) Name
+app :: forall model provider. Eq (Message model provider) => M.App (AppState (Message model provider)) (CustomEvent (Message model provider)) Name
 app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
@@ -188,7 +185,8 @@ app = M.App
 -- UI Rendering
 --------------------------------------------------------------------------------
 
-drawUI :: AppState msg -> [T.Widget Name]
+-- Draw UI is specific to Message types since renderItem requires it
+drawUI :: forall model provider. AppState (Message model provider) -> [T.Widget Name]
 drawUI st = [indicatorLayer, baseLayer]
   where
     -- Read state directly from AppState
@@ -196,15 +194,17 @@ drawUI st = [indicatorLayer, baseLayer]
     mPendingInput = _pendingInput st
     zipper = _outputZipper st
 
-    -- Render the zipper to widgets
-    renderItem = case _markdownMode st of
-                   RenderMarkdown -> renderItemMarkdown (_renderMsg st)
-                   ShowRaw -> renderItemRaw (_renderMsg st)
+    -- Create render options based on markdown mode
+    renderOpts = defaultRenderOptions
+                 { useMarkdown = case _markdownMode st of
+                     RenderMarkdown -> True
+                     ShowRaw -> False
+                 }
 
-    -- Render zipper: front (older), current, back (newer)
-    frontWidgets = concatMap renderItem (reverse $ zipperFront zipper)
-    currentWidgets = maybe [] renderItem (zipperCurrent zipper)
-    backWidgets = concatMap renderItem (reverse $ zipperBack zipper)
+    -- Render the zipper to widgets using the unified renderItem
+    frontWidgets = concatMap (renderItem renderOpts) (reverse $ zipperFront zipper)
+    currentWidgets = maybe [] (renderItem renderOpts) (zipperCurrent zipper)
+    backWidgets = concatMap (renderItem renderOpts) (reverse $ zipperBack zipper)
 
     (cachedFrontWidgets, cachedBackWidgets) = (frontWidgets, backWidgets)
 
@@ -272,7 +272,7 @@ drawUI st = [indicatorLayer, baseLayer]
 -- Event Handling
 --------------------------------------------------------------------------------
 
-handleEvent :: Eq msg => T.BrickEvent Name (CustomEvent msg) -> T.EventM Name (AppState msg) ()
+handleEvent :: forall model provider. Eq (Message model provider) => T.BrickEvent Name (CustomEvent (Message model provider)) -> T.EventM Name (AppState (Message model provider)) ()
 -- Check if input widget is active first
 handleEvent ev = do
   -- Read pending input widget from AppState
