@@ -41,7 +41,7 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..))
-import UI.OutputHistory (OutputHistoryZipper(..), OutputItem(..), emptyZipper, insertItem, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
+import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
 import Runix.Logging.Effects (Level(..))
 import UniversalLLM.Core.Types (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
@@ -72,9 +72,11 @@ data MarkdownMode = RenderMarkdown | ShowRaw
 --
 -- Parametrized over message type to store typed messages in zipper
 -- The zipper lives here - UI owns the state, interpreters send events to update it
+-- Uses parallel zippers: one for data, one for pre-rendered widgets
 data AppState msg = AppState
   { _uiVars :: UIVars msg                  -- STM queues for communication
-  , _outputZipper :: OutputHistoryZipper msg  -- History zipper with typed messages
+  , _outputZipper :: OutputHistoryZipper msg  -- History zipper with typed messages (data)
+  , _widgetZipper :: Zipper (T.Widget Name)  -- Pre-rendered widgets (parallel structure)
   , _status :: Text                         -- Current status message
   , _pendingInput :: Maybe SomeInputWidget  -- Active input widget (cached from TVar)
   , _inputEditor :: Editor String Name     -- Input field
@@ -93,6 +95,9 @@ uiVarsL = lens _uiVars (\st v -> st { _uiVars = v })
 
 outputZipperL :: Lens' (AppState msg) (OutputHistoryZipper msg)
 outputZipperL = lens _outputZipper (\st z -> st { _outputZipper = z })
+
+widgetZipperL :: Lens' (AppState msg) (Zipper (T.Widget Name))
+widgetZipperL = lens _widgetZipper (\st z -> st { _widgetZipper = z })
 
 statusL :: Lens' (AppState msg) Text
 statusL = lens _status (\st s -> st { _status = s })
@@ -150,6 +155,7 @@ runUI mkUIVars = do
   let initialState = AppState
         { _uiVars = uiVars
         , _outputZipper = emptyZipper
+        , _widgetZipper = emptyZipper
         , _status = Text.pack "Ready"
         , _pendingInput = Nothing
         , _inputEditor = editor InputEditor Nothing ""
@@ -192,21 +198,22 @@ drawUI st = [indicatorLayer, baseLayer]
     -- Read state directly from AppState
     status = _status st
     mPendingInput = _pendingInput st
-    zipper = _outputZipper st
+    wzipper = _widgetZipper st
 
-    -- Create render options based on markdown mode
-    renderOpts = defaultRenderOptions
-                 { useMarkdown = case _markdownMode st of
-                     RenderMarkdown -> True
-                     ShowRaw -> False
-                 }
+    -- Extract pre-rendered widgets from the widget zipper
+    -- Zipper structure: front is reversed (newest at head), back is natural order (oldest at head)
+    -- To display oldest→newest: reverse front, then current, then back
+    frontWidgets = if null (zipperFront wzipper)
+                   then []
+                   else [cached CachedFront $ vBox $ reverse $ zipperFront wzipper]
 
-    -- Render the zipper to widgets using the unified renderItem
-    frontWidgets = concatMap (renderItem renderOpts) (reverse $ zipperFront zipper)
-    currentWidgets = maybe [] (renderItem renderOpts) (zipperCurrent zipper)
-    backWidgets = concatMap (renderItem renderOpts) (reverse $ zipperBack zipper)
+    currentWidgets = case zipperCurrent wzipper of
+                       Nothing -> []
+                       Just widget -> [cached CachedCurrent widget]
 
-    (cachedFrontWidgets, cachedBackWidgets) = (frontWidgets, backWidgets)
+    backWidgets = if null (zipperBack wzipper)
+                  then []
+                  else [cached CachedBack $ vBox $ zipperBack wzipper]
 
     -- Calculate dimensions
     availHeight = 100  -- This will be determined by context, placeholder for now
@@ -272,6 +279,24 @@ drawUI st = [indicatorLayer, baseLayer]
 -- Event Handling
 --------------------------------------------------------------------------------
 
+-- | Re-render the widget zipper from the output zipper
+-- Call this after: (1) output zipper changes, (2) markdown mode changes
+reRenderWidgetZipper :: T.EventM Name (AppState (Message model provider)) ()
+reRenderWidgetZipper = do
+  mode <- use markdownModeL
+  ozipper <- use outputZipperL
+  let opts = defaultRenderOptions { useMarkdown = case mode of
+                                      RenderMarkdown -> True
+                                      ShowRaw -> False }
+      -- Render each OutputItem to Widget Name
+      renderZipper (Zipper back current front) =
+        Zipper
+          { zipperBack = map (renderItem opts) back
+          , zipperCurrent = fmap (renderItem opts) current
+          , zipperFront = map (renderItem opts) front
+          }
+  widgetZipperL .= renderZipper ozipper
+
 handleEvent :: forall model provider. Eq (Message model provider) => T.BrickEvent Name (CustomEvent (Message model provider)) -> T.EventM Name (AppState (Message model provider)) ()
 -- Check if input widget is active first
 handleEvent ev = do
@@ -313,7 +338,7 @@ handleInputWidgetEvent widget ev = do
     Nothing -> return ()
 
 -- Normal event handling (when no input widget active)
-handleNormalEvent :: Eq msg => T.BrickEvent Name (CustomEvent msg) -> T.EventM Name (AppState msg) ()
+handleNormalEvent :: forall model provider. Eq (Message model provider) => T.BrickEvent Name (CustomEvent (Message model provider)) -> T.EventM Name (AppState (Message model provider)) ()
 -- ESC: Request cancellation of current operation
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL
@@ -322,6 +347,7 @@ handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
   -- Clear the flag again for the next request after agent stops
   -- (This happens when the agent main loop gets control back)
   return ()
+
 -- Ctrl+C: Actually exit the application
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
@@ -330,26 +356,52 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
   -- Process the agent event
   case event of
       StreamChunkEvent text -> do
-        -- Accumulate streaming text: if last item in back is StreamingChunkItem, append to it
+        -- Accumulate streaming text: if current is StreamingChunkItem, append to it
         zipper <- use outputZipperL
-        case zipperBack zipper of
-          (StreamingChunkItem prevText : rest) ->
-            outputZipperL .= zipper { zipperBack = StreamingChunkItem (prevText <> text) : rest }
-          _ ->
-            outputZipperL %= insertItem (StreamingChunkItem text)
+        mode <- use markdownModeL
+        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
+        case zipperCurrent zipper of
+          Just (StreamingChunkItem prevText) -> do
+            let newItem = StreamingChunkItem (prevText <> text)
+            outputZipperL %= updateCurrent newItem
+            -- Only re-render current, not entire zipper
+            widgetZipperL %= updateCurrent (renderItem opts newItem)
+            invalidateCacheEntry CachedCurrent
+          _ -> do
+            -- First chunk: create new streaming item
+            let newItem = StreamingChunkItem text
+            outputZipperL %= appendItem newItem
+            widgetZipperL %= appendItem (renderItem opts newItem)
+            invalidateCacheEntry CachedFront
+            invalidateCacheEntry CachedCurrent
 
       StreamReasoningEvent text -> do
         -- Accumulate reasoning text similarly
         zipper <- use outputZipperL
-        case zipperBack zipper of
-          (StreamingReasoningItem prevText : rest) ->
-            outputZipperL .= zipper { zipperBack = StreamingReasoningItem (prevText <> text) : rest }
-          _ ->
-            outputZipperL %= insertItem (StreamingReasoningItem text)
+        mode <- use markdownModeL
+        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
+        case zipperCurrent zipper of
+          Just (StreamingReasoningItem prevText) -> do
+            let newItem = StreamingReasoningItem (prevText <> text)
+            outputZipperL %= updateCurrent newItem
+            widgetZipperL %= updateCurrent (renderItem opts newItem)
+            invalidateCacheEntry CachedCurrent
+          _ -> do
+            let newItem = StreamingReasoningItem text
+            outputZipperL %= appendItem newItem
+            widgetZipperL %= appendItem (renderItem opts newItem)
+            invalidateCacheEntry CachedFront
+            invalidateCacheEntry CachedCurrent
 
       UserMessageEvent msg -> do
-        -- Add user message immediately to output
-        outputZipperL %= insertItem (MessageItem msg)
+        -- Add user message as new current
+        mode <- use markdownModeL
+        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
+            newItem = MessageItem msg
+        outputZipperL %= appendItem newItem
+        widgetZipperL %= appendItem (renderItem opts newItem)
+        invalidateCacheEntry CachedFront
+        invalidateCacheEntry CachedCurrent
 
       AgentCompleteEvent msgs -> do
         -- Use mergeOutputMessages to properly merge messages with existing output
@@ -368,20 +420,43 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
             -- Merge using the tested merge logic
             mergedItems = mergeOutputMessages newItems withoutStreaming
 
-        -- Convert back to zipper
+        -- Convert back to zipper (full rebuild)
         outputZipperL .= listToZipper mergedItems
+        reRenderWidgetZipper
         -- Agent is done, update status
         statusL .= Text.pack "Ready"
+        -- Invalidate all caches (full rebuild of zipper structure)
+        invalidateCacheEntry CachedFront
+        invalidateCacheEntry CachedCurrent
+        invalidateCacheEntry CachedBack
 
       AgentErrorEvent text -> do
-        outputZipperL %= insertItem (SystemEventItem text)
+        mode <- use markdownModeL
+        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
+            newItem = SystemEventItem text
+        outputZipperL %= appendItem newItem
+        widgetZipperL %= appendItem (renderItem opts newItem)
         statusL .= Text.append (Text.pack "Error: ") text
+        invalidateCacheEntry CachedFront
+        invalidateCacheEntry CachedCurrent
 
-      LogEvent level text ->
-        outputZipperL %= insertItem (LogItem level text)
+      LogEvent level text -> do
+        mode <- use markdownModeL
+        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
+            newItem = LogItem level text
+        outputZipperL %= appendItem newItem
+        widgetZipperL %= appendItem (renderItem opts newItem)
+        invalidateCacheEntry CachedFront
+        invalidateCacheEntry CachedCurrent
 
-      ToolExecutionEvent text ->
-        outputZipperL %= insertItem (ToolExecutionItem text)
+      ToolExecutionEvent text -> do
+        mode <- use markdownModeL
+        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
+            newItem = ToolExecutionItem text
+        outputZipperL %= appendItem newItem
+        widgetZipperL %= appendItem (renderItem opts newItem)
+        invalidateCacheEntry CachedFront
+        invalidateCacheEntry CachedCurrent
 
       ShowInputWidgetEvent widget ->
         pendingInputL .= Just widget
@@ -444,8 +519,12 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
         RenderMarkdown -> ShowRaw
         ShowRaw -> RenderMarkdown
   markdownModeL .= newMode
-  -- Invalidate cache since we're switching between markdown/raw rendering
-  invalidateCacheEntry CompletedHistory
+  -- Re-render widget zipper with new markdown mode
+  reRenderWidgetZipper
+  -- Invalidate all caches since widgets changed
+  invalidateCacheEntry CachedFront
+  invalidateCacheEntry CachedCurrent
+  invalidateCacheEntry CachedBack
 
   -- Check if we're at the bottom before switching rendering mode
   wasAtBottom <- use lastViewportL >>= \case

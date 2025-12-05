@@ -10,7 +10,8 @@
 module UI.OutputHistory
   ( -- * Core Types
     OutputItem(..)
-  , OutputHistoryZipper(..)
+  , Zipper(..)
+  , OutputHistoryZipper
   , DisplayFilter(..)
   , RenderOptions(..)
   , defaultRenderOptions
@@ -24,6 +25,7 @@ module UI.OutputHistory
   , moveOlder
   , insertItem
   , updateCurrent
+  , appendItem
   , extractMessages
     -- * Filters
   , defaultFilter
@@ -87,80 +89,94 @@ data OutputItem msg
   | ToolExecutionItem Text    -- ^ Tool execution indicator
   deriving (Eq, Show, Ord)
 
--- | Zipper structure for output history
+-- | Generic zipper structure for navigable lists
 -- Structure: back (newer) <- current -> front (older)
 -- This allows efficient navigation and modification of focused elements
-data OutputHistoryZipper msg = OutputHistoryZipper
-  { zipperBack :: [OutputItem msg]      -- ^ Newer items (reverse chronological)
-  , zipperCurrent :: Maybe (OutputItem msg)  -- ^ Focused/streaming item
-  , zipperFront :: [OutputItem msg]     -- ^ Older items (reverse chronological)
+data Zipper a = Zipper
+  { zipperBack :: [a]      -- ^ Newer items (reverse chronological)
+  , zipperCurrent :: Maybe a  -- ^ Focused/streaming item
+  , zipperFront :: [a]     -- ^ Older items (reverse chronological)
   }
+
+-- | Type alias for output history (zipper of OutputItems)
+type OutputHistoryZipper msg = Zipper (OutputItem msg)
 
 --------------------------------------------------------------------------------
 -- Zipper Operations
 --------------------------------------------------------------------------------
 
 -- | Create an empty zipper
-emptyZipper :: OutputHistoryZipper msg
-emptyZipper = OutputHistoryZipper [] Nothing []
+emptyZipper :: Zipper a
+emptyZipper = Zipper [] Nothing []
 
 -- | Convert zipper to a list (newest first)
-zipperToList :: OutputHistoryZipper msg -> [OutputItem msg]
-zipperToList (OutputHistoryZipper back current front) =
+zipperToList :: Zipper a -> [a]
+zipperToList (Zipper back current front) =
   back ++ maybe [] (:[]) current ++ front
 
 -- | Create a zipper from a list (items in newest-first order)
--- Focus will be on the last (newest) item
-listToZipper :: [OutputItem msg] -> OutputHistoryZipper msg
+-- Focus will be on the newest item (head of list), rest go to front (reversed)
+-- Maintains invariant: back is empty, current is newest, front contains older items
+-- Note: front stores items in reverse order, so we reverse the older list
+listToZipper :: [a] -> Zipper a
 listToZipper [] = emptyZipper
-listToZipper items = OutputHistoryZipper items Nothing []
+listToZipper (newest:older) = Zipper [] (Just newest) (reverse older)
 
 -- | Focus on the newest item (move to head of back)
-focusNewest :: OutputHistoryZipper msg -> OutputHistoryZipper msg
-focusNewest z@(OutputHistoryZipper [] Nothing []) = z  -- Empty zipper
-focusNewest z@(OutputHistoryZipper [] Nothing _) = z   -- Already at newest (empty back)
-focusNewest (OutputHistoryZipper [] (Just cur) front) =
+focusNewest :: Zipper a -> Zipper a
+focusNewest z@(Zipper [] Nothing []) = z  -- Empty zipper
+focusNewest z@(Zipper [] Nothing _) = z   -- Already at newest (empty back)
+focusNewest (Zipper [] (Just cur) front) =
   -- Current is newest, stay here
-  OutputHistoryZipper [] (Just cur) front
-focusNewest (OutputHistoryZipper (b:bs) current front) =
+  Zipper [] (Just cur) front
+focusNewest (Zipper (b:bs) current front) =
   -- Move newest from back to current, push old current to front
   let front' = maybe front (:front) current
-  in OutputHistoryZipper bs (Just b) front'
+  in Zipper bs (Just b) front'
 
 -- | Focus on the oldest item
-focusOldest :: OutputHistoryZipper msg -> OutputHistoryZipper msg
-focusOldest z@(OutputHistoryZipper _ Nothing []) = z  -- Already at oldest (empty front)
-focusOldest (OutputHistoryZipper back (Just cur) []) =
+focusOldest :: Zipper a -> Zipper a
+focusOldest z@(Zipper _ Nothing []) = z  -- Already at oldest (empty front)
+focusOldest (Zipper back (Just cur) []) =
   -- Current is oldest, stay here
-  OutputHistoryZipper back (Just cur) []
-focusOldest (OutputHistoryZipper back current (f:fs)) =
+  Zipper back (Just cur) []
+focusOldest (Zipper back current (f:fs)) =
   -- Move oldest from front to current, push old current to back
   let back' = maybe back (:back) current
-  in OutputHistoryZipper back' (Just f) fs
+  in Zipper back' (Just f) fs
 
 -- | Move focus to newer item (toward back)
-moveNewer :: OutputHistoryZipper msg -> OutputHistoryZipper msg
-moveNewer z@(OutputHistoryZipper [] _ _) = z  -- No newer items
-moveNewer (OutputHistoryZipper (b:bs) current front) =
+moveNewer :: Zipper a -> Zipper a
+moveNewer z@(Zipper [] _ _) = z  -- No newer items
+moveNewer (Zipper (b:bs) current front) =
   let front' = maybe front (:front) current
-  in OutputHistoryZipper bs (Just b) front'
+  in Zipper bs (Just b) front'
 
 -- | Move focus to older item (toward front)
-moveOlder :: OutputHistoryZipper msg -> OutputHistoryZipper msg
-moveOlder z@(OutputHistoryZipper _ _ []) = z  -- No older items
-moveOlder (OutputHistoryZipper back current (f:fs)) =
+moveOlder :: Zipper a -> Zipper a
+moveOlder z@(Zipper _ _ []) = z  -- No older items
+moveOlder (Zipper back current (f:fs)) =
   let back' = maybe back (:back) current
-  in OutputHistoryZipper back' (Just f) fs
+  in Zipper back' (Just f) fs
 
 -- | Insert a new item at the newest position (prepend to back)
-insertItem :: OutputItem msg -> OutputHistoryZipper msg -> OutputHistoryZipper msg
-insertItem item (OutputHistoryZipper back current front) =
-  OutputHistoryZipper (item:back) current front
+insertItem :: a -> Zipper a -> Zipper a
+insertItem item (Zipper back current front) =
+  Zipper (item:back) current front
 
 -- | Update the current focused item
-updateCurrent :: OutputItem msg -> OutputHistoryZipper msg -> OutputHistoryZipper msg
-updateCurrent item (OutputHistoryZipper back _ front) =
-  OutputHistoryZipper back (Just item) front
+updateCurrent :: a -> Zipper a -> Zipper a
+updateCurrent item (Zipper back _ front) =
+  Zipper back (Just item) front
+
+-- | Add a new item as current, moving the old current to front
+-- This maintains the invariant that back is always empty (newest item is current)
+appendItem :: a -> Zipper a -> Zipper a
+appendItem item (Zipper back current front) =
+  let front' = case current of
+        Nothing -> front
+        Just c -> c : front
+  in Zipper back (Just item) front'
 
 -- | Extract typed messages from zipper (filters out logs, streaming, etc.)
 -- Returns messages in oldest-first order (ready to pass to agent)
@@ -178,8 +194,8 @@ extractMessages zipper =
 -- | Render an OutputItem with optional markdown formatting
 -- Pattern matches directly on Message constructors to determine rendering
 -- Only UserText, AssistantText, AssistantReasoning, and streaming items use markdown when enabled
-renderItem :: forall model provider n. RenderOptions -> OutputItem (Message model provider) -> [Widget n]
-renderItem opts item = case item of
+renderItem :: forall model provider n. RenderOptions -> OutputItem (Message model provider) -> Widget n
+renderItem opts item = vBox $ case item of
   -- User messages
   MessageItem (UserText text) ->
     [txt " ", txt "<" <+> renderContent text, txt " "]
@@ -195,29 +211,29 @@ renderItem opts item = case item of
   -- Tool calls: ALWAYS plain text (ignore markdown flag)
   MessageItem (AssistantTool toolCall) ->
     let toolText = T.pack (show toolCall)
-    in txt " " : [txt "T" <+> padLeft (Pad 1) (txt toolText)] ++ [txt " "]
+    in [txt " ", txt "T" <+> padLeft (Pad 1) (txt toolText), txt " "]
 
   -- Tool results: ALWAYS plain text (ignore markdown flag)
   MessageItem (ToolResultMsg toolResult) ->
     let resultText = T.pack (show toolResult)
-    in txt " " : [txt "R" <+> padLeft (Pad 1) (txt resultText)] ++ [txt " "]
+    in [txt " ", txt "R" <+> padLeft (Pad 1) (txt resultText), txt " "]
 
   -- User images: simple text representation
   MessageItem (UserImage desc _imageData) ->
-    txt " " : [txt "<" <+> padLeft (Pad 1) (txt $ "[Image: " <> desc <> "]")] ++ [txt " "]
+    [txt " ", txt "<" <+> padLeft (Pad 1) (txt $ "[Image: " <> desc <> "]"), txt " "]
 
   -- JSON messages: show as formatted text
   MessageItem (UserRequestJSON query schema) ->
     let jsonText = "Query: " <> query <> "\nSchema: " <> T.pack (show schema)
-    in txt " " : [txt "<" <+> padLeft (Pad 1) (txt jsonText)] ++ [txt " "]
+    in [txt " ", txt "<" <+> padLeft (Pad 1) (txt jsonText), txt " "]
 
   MessageItem (AssistantJSON value) ->
     let jsonText = T.pack (show value)
-    in txt " " : [txt ">" <+> padLeft (Pad 1) (txt jsonText)] ++ [txt " "]
+    in [txt " ", txt ">" <+> padLeft (Pad 1) (txt jsonText), txt " "]
 
   -- System messages: plain text
   MessageItem (SystemText text) ->
-    txt " " : [txt "S" <+> padLeft (Pad 1) (txt text)] ++ [txt " "]
+    [txt " ", txt "S" <+> padLeft (Pad 1) (txt text), txt " "]
 
   -- Log items: always same rendering
   LogItem level msg ->
