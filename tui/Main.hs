@@ -19,6 +19,7 @@ import System.IO (hPutStr)
 import qualified System.IO as IO
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
+import qualified Control.Exception as Exception
 
 import Polysemy
 import Polysemy.Error (runError, Error)
@@ -138,39 +139,48 @@ agentLoop :: forall model provider.
           -> SystemPrompt
           -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a))
           -> IO ()
-agentLoop uiVars historyRef sysPrompt runner = forever $ do
-  -- Wait for user input
-  userInput <- atomically $ waitForUserInput (userInputQueue uiVars)
+agentLoop uiVars historyRef sysPrompt runner = forever $
+  Exception.catch runOneIteration handleException
+  where
+    runOneIteration = do
+      -- Wait for user input
+      userInput <- atomically $ waitForUserInput (userInputQueue uiVars)
 
-  -- Clear any previous cancellation flag before starting new request
-  clearCancellationFlag uiVars
+      -- Clear any previous cancellation flag before starting new request
+      clearCancellationFlag uiVars
 
-  -- Get current history
-  currentHistory <- readIORef historyRef
+      -- Get current history
+      currentHistory <- readIORef historyRef
 
-  -- Send user message to UI immediately
-  sendAgentEvent uiVars (UserMessageEvent (UserText userInput))
+      -- Send user message to UI immediately
+      sendAgentEvent uiVars (UserMessageEvent (UserText userInput))
 
-  -- Run the agent with model-specific default configs
-  let configs = defaultConfigs @provider @model
-  result <- runner $ runRunixCode @provider @model @TUIWidget
-                       sysPrompt
-                       configs
-                       currentHistory
-                       (UserPrompt userInput)
+      -- Run the agent with model-specific default configs
+      let configs = defaultConfigs @provider @model
+      result <- runner $ runRunixCode @provider @model @TUIWidget
+                           sysPrompt
+                           configs
+                           currentHistory
+                           (UserPrompt userInput)
 
-  -- Always clear cancellation flag after request completes (whether success or error)
-  clearCancellationFlag uiVars
+      -- Always clear cancellation flag after request completes (whether success or error)
+      clearCancellationFlag uiVars
 
-  case result of
-    Left err -> do
-      -- Show error in UI
-      sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Agent error: " ++ err))
-      -- History already has user message from above, nothing more to do
+      case result of
+        Left err -> do
+          -- Show error in UI
+          sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Agent error: " ++ err))
+          -- History already has user message from above, nothing more to do
 
-    Right (_result, newHistory) -> do
-      -- Update history with agent's response
-      updateHistory uiVars historyRef newHistory
+        Right (_result, newHistory) -> do
+          -- Update history with agent's response
+          updateHistory uiVars historyRef newHistory
+
+    handleException :: Exception.SomeException -> IO ()
+    handleException e = do
+      -- Catch any IO exception in this iteration and show in UI
+      clearCancellationFlag uiVars
+      sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Uncaught exception: " ++ Exception.displayException e))
 
 --------------------------------------------------------------------------------
 -- Runner Creation
