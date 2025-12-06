@@ -115,12 +115,12 @@ zipperToList (Zipper back current front) =
   back ++ maybe [] (:[]) current ++ front
 
 -- | Create a zipper from a list (items in newest-first order)
--- Focus will be on the newest item (head of list), rest go to front (reversed)
+-- Focus will be on the newest item (head of list), rest go to front
 -- Maintains invariant: back is empty, current is newest, front contains older items
--- Note: front stores items in reverse order, so we reverse the older list
+-- Note: front stores items in chronological order (second-newest to oldest)
 listToZipper :: [a] -> Zipper a
 listToZipper [] = emptyZipper
-listToZipper (newest:older) = Zipper [] (Just newest) (reverse older)
+listToZipper (newest:older) = Zipper [] (Just newest) older
 
 -- | Focus on the newest item (move to head of back)
 focusNewest :: Zipper a -> Zipper a
