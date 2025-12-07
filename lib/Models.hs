@@ -104,14 +104,14 @@ glmFixNullContent _provider _model _configs _s =
     -- Replace null/problematic content with empty string and strip malformed think tags
     fixNullContent :: OpenAIMessage -> OpenAIMessage
     -- Assistant messages with null content (when they have tool calls)
-    fixNullContent (OpenAIMessage "assistant" Nothing reasoning toolCalls toolCallId) =
-      OpenAIMessage "assistant" (Just "") reasoning toolCalls toolCallId
+    fixNullContent msg@OpenAIMessage{ role = "assistant", content = Nothing } =
+      msg { content = Just "" }
     -- Tool result messages with the string "null"
-    fixNullContent (OpenAIMessage "tool" (Just "null") reasoning toolCalls toolCallId) =
-      OpenAIMessage "tool" (Just "") reasoning toolCalls toolCallId
+    fixNullContent msg@OpenAIMessage{ role = "tool", content = Just "null" } =
+      msg { content = Just "" }
     -- Assistant messages with content - strip any <think> tags that might be malformed
-    fixNullContent (OpenAIMessage "assistant" (Just contentTxt) reasoning toolCalls toolCallId) =
-      OpenAIMessage "assistant" (Just (stripThinkTags contentTxt)) reasoning toolCalls toolCallId
+    fixNullContent msg@OpenAIMessage{ role = "assistant", content = Just contentTxt } =
+      msg { content = Just (stripThinkTags contentTxt) }
     -- Everything else passes through unchanged
     fixNullContent msg = msg
 
