@@ -135,6 +135,7 @@ instance HasTools ClaudeSonnet45 Anthropic where
   withTools = AnthropicProvider.anthropicTools
 
 instance HasReasoning ClaudeSonnet45 Anthropic where
+  type ReasoningState ClaudeSonnet45 Anthropic = AnthropicProvider.AnthropicReasoningState
   withReasoning = AnthropicProvider.anthropicReasoning
 
 -- Composable provider for ClaudeSonnet45
