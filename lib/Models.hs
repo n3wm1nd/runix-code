@@ -241,7 +241,8 @@ instance HasTools Universal OpenRouter where
   withTools = OpenAI.openAITools
 
 instance HasReasoning Universal OpenRouter where
-  withReasoning = OpenAI.openAIReasoning
+  type ReasoningState Universal OpenRouter = OpenAI.OpenRouterReasoningState
+  withReasoning = OpenAI.openRouterReasoning
 
 -- Composable provider for Universal
 universalComposableProvider ::
