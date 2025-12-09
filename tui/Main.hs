@@ -61,8 +61,25 @@ import qualified UI.Effects
 -- | Wrapper for a function that builds everything and returns UIVars
 -- Each model has its own concrete types, wrapped existentially
 data AgentRunnerBuilder where
-  AgentRunnerBuilder :: forall model. Eq (Message model) =>
-    ((AgentEvent (Message model) -> IO ()) -> IO (UIVars (Message model))) -> AgentRunnerBuilder
+  AgentRunnerBuilder :: forall model.
+    ( Eq (Message model)
+    , HasTools model
+    , SupportsSystemPrompt (ProviderOf model)
+    , ModelDefaults model
+    ) =>
+    (UIVars (Message model) -> AgentRunner model) -> AgentRunnerBuilder
+
+-- | Smart constructor for AgentRunnerBuilder
+-- The Eq constraint is implied by the GADT and will be available when pattern matching
+mkAgentRunnerBuilder :: forall model.
+                        ( HasTools model
+                        , SupportsSystemPrompt (ProviderOf model)
+                        , ModelDefaults model
+                        , Eq (Message model)  -- Required by buildModelRunner -> newUIVars
+                        )
+                     => (UIVars (Message model) -> AgentRunner model)
+                     -> AgentRunnerBuilder
+mkAgentRunnerBuilder mkRunner = AgentRunnerBuilder mkRunner
 
 --------------------------------------------------------------------------------
 -- Type Aliases
@@ -101,13 +118,14 @@ main = do
   cfg <- loadConfig
 
   -- Create runner builder (returns a function that takes UIVars)
-  let runnerBuilder = createRunnerBuilder (cfgModelSelection cfg) cfg
+  runnerBuilder <- createRunnerBuilder (cfgModelSelection cfg) cfg
 
   -- Apply the builder: it contains the mkRunner function
   case runnerBuilder of
     AgentRunnerBuilder mkRunner -> do
       -- The builder hides the model/provider types
-      runUI mkRunner
+      -- runUI will provide the refresh callback and call buildModelRunner internally
+      runUI (buildModelRunner mkRunner)
 
 --------------------------------------------------------------------------------
 -- System Prompt Loading
@@ -307,52 +325,48 @@ runToIO :: Sem '[Error String, Embed IO] a -> IO (Either String a)
 runToIO = runM . runError
 
 -- | Create an AgentRunner builder based on the selected model
-createRunnerBuilder :: ModelSelection -> Config -> AgentRunnerBuilder
-createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder $ \refreshCallback -> do
+createRunnerBuilder :: ModelSelection -> Config -> IO AgentRunnerBuilder
+createRunnerBuilder UseClaudeSonnet45 _cfg = do
   maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
   case maybeToken of
     Nothing -> do
       hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
       error "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr ->
-      buildModelRunner @(Model ClaudeSonnet45 Anthropic)
-        (\uiVars -> AgentRunner $ \agent ->
-            runToIO
-              . interpretTUIEffects uiVars
-              . runSecret (pure tokenStr)
-              . interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic)
-              $ withLLMCancellation agent)
-        refreshCallback
+      pure $ mkAgentRunnerBuilder @(Model ClaudeSonnet45 Anthropic) $
+        \uiVars -> AgentRunner $ \agent ->
+          runToIO
+            . interpretTUIEffects uiVars
+            . runSecret (pure tokenStr)
+            . interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic)
+            . withLLMCancellation $ agent
 
-createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder $ \refreshCallback ->
-  buildModelRunner @(Model GLM45Air LlamaCpp)
-    (\uiVars -> AgentRunner $ \agent ->
-        runToIO
-          . interpretTUIEffects uiVars
-          . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) (Model GLM45Air LlamaCpp)
-          $ withLLMCancellation agent)
-    refreshCallback
+createRunnerBuilder UseGLM45Air cfg =
+  pure $ mkAgentRunnerBuilder @(Model GLM45Air LlamaCpp) $
+    \uiVars -> AgentRunner $ \agent ->
+      runToIO
+        . interpretTUIEffects uiVars
+        . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) (Model GLM45Air LlamaCpp)
+        . withLLMCancellation $ agent
 
-createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder $ \refreshCallback ->
-  buildModelRunner @(Model Qwen3Coder LlamaCpp)
-    (\uiVars -> AgentRunner $ \agent ->
-        runToIO
-          . interpretTUIEffects uiVars
-          . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) (Model Qwen3Coder LlamaCpp)
-          $ withLLMCancellation agent)
-    refreshCallback
+createRunnerBuilder UseQwen3Coder cfg =
+  pure $ mkAgentRunnerBuilder @(Model Qwen3Coder LlamaCpp) $
+    \uiVars -> AgentRunner $ \agent ->
+      runToIO
+        . interpretTUIEffects uiVars
+        . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) (Model Qwen3Coder LlamaCpp)
+        . withLLMCancellation $ agent
 
-createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder $ \refreshCallback -> do
+createRunnerBuilder UseOpenRouter _cfg = do
   apiKey <- getOpenRouterApiKey
   modelName <- getOpenRouterModel
-  buildModelRunner @(Model Universal OpenRouter)
-    (\uiVars -> AgentRunner $ \agent ->
-        runToIO
-          . interpretTUIEffects uiVars
-          . runSecret (pure apiKey)
-          . interpretOpenRouter universalComposableProvider (Model (Universal (pack modelName)) OpenRouter)
-          $ withLLMCancellation agent)
-    refreshCallback
+  pure $ mkAgentRunnerBuilder @(Model Universal OpenRouter) $
+    \uiVars -> AgentRunner $ \agent ->
+      runToIO
+        . interpretTUIEffects uiVars
+        . runSecret (pure apiKey)
+        . interpretOpenRouter universalComposableProvider (Model (Universal (pack modelName)) OpenRouter)
+        . withLLMCancellation $ agent
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)
