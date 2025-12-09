@@ -45,7 +45,7 @@ import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
-import Runix.HTTP.Effects (HTTP, httpIOStreaming, withRequestTimeout)
+import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..))
 import Runix.Cancellation.Effects (Cancellation(..), isCanceled)
 import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
@@ -233,6 +233,7 @@ runBaseEffects uiVars =
     . interpretStreamChunkToUI uiVars  -- Handle StreamChunk Text
     . reinterpretSSEChunks              -- Convert StreamChunk BS -> StreamChunk Text
     . httpIOStreaming (withRequestTimeout 300)  -- Emit StreamChunk BS
+    . httpIO (withRequestTimeout 300)           -- Handle non-streaming HTTP
     . cmdIO
     . bashIO
     . filesystemIO
@@ -249,7 +250,7 @@ createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder $ \refreshCallba
       hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
       error "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr -> do
-      let runAgent :: forall a. (forall r. (Member (LLM (Model ClaudeSonnet45 Anthropic)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+      let runAgent :: forall a. (forall r. (Member (LLM (Model ClaudeSonnet45 Anthropic)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
           runAgent agent =
             runBaseEffects uiVars
               . runSecret (pure tokenStr)
@@ -270,7 +271,7 @@ createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder $ \refreshCallba
 createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder $ \refreshCallback -> do
   uiVars <- newUIVars @(Message (Model GLM45Air LlamaCpp)) refreshCallback
   historyRef <- newIORef ([] :: [Message (Model GLM45Air LlamaCpp)])
-  let runAgent :: forall a. (forall r. (Member (LLM (Model GLM45Air LlamaCpp)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  let runAgent :: forall a. (forall r. (Member (LLM (Model GLM45Air LlamaCpp)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
       runAgent agent =
         runBaseEffects uiVars
           . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) (Model GLM45Air LlamaCpp)
@@ -289,7 +290,7 @@ createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder $ \refreshCallback -> d
 createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder $ \refreshCallback -> do
   uiVars <- newUIVars @(Message (Model Qwen3Coder LlamaCpp)) refreshCallback
   historyRef <- newIORef ([] :: [Message (Model Qwen3Coder LlamaCpp)])
-  let runAgent :: forall a. (forall r. (Member (LLM (Model Qwen3Coder LlamaCpp)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  let runAgent :: forall a. (forall r. (Member (LLM (Model Qwen3Coder LlamaCpp)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
       runAgent agent =
         runBaseEffects uiVars
           . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) (Model Qwen3Coder LlamaCpp)

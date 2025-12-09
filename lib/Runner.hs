@@ -25,6 +25,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Lazy as TL
 import qualified Data.Text.Lazy.Encoding as TLE
 import qualified Data.Text.Encoding as TE
+import qualified Data.ByteString as BS
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Vector as Vector
@@ -34,12 +35,12 @@ import Polysemy
 import Polysemy.Fail
 import Polysemy.Error
 
-import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, readFile, writeFile, fileExists)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
-import Runix.HTTP.Effects (HTTP)
+import Runix.HTTP.Effects (HTTP, HTTPStreaming)
 import Runix.Logging.Effects (Logging)
 import Runix.Cancellation.Effects (Cancellation, cancelNoop)
 import qualified Runix.Logging.Effects as Log
@@ -47,6 +48,7 @@ import Data.Default (Default, def)
 
 import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderRequest, ModelConfig)
 import UI.UserInput (UserInput, interpretUserInputFail)
+import Runix.Streaming.Effects (StreamChunk, ignoreChunks)
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -167,7 +169,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, Logging, Fail, Embed IO, Cancellation] r
+               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -177,6 +179,8 @@ runWithEffects action =
     . failLog
     . cancelNoop
     . interpretUserInputFail @widget
+    . ignoreChunks @BS.ByteString
+    . httpIOStreaming (withRequestTimeout 300)
     . httpIO (withRequestTimeout 300)
     . cmdIO
     . bashIO
