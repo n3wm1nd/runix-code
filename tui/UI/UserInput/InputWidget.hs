@@ -176,7 +176,7 @@ instance {-# OVERLAPPABLE #-} InputWidget a => InputWidget (Maybe a) where
   isWidgetComplete = const True -- Nothing is valid
 
 -- | List [a]: Multiple values (not implemented yet - placeholder)
-instance {-# OVERLAPPABLE #-} (Show a, InputWidget a) => InputWidget [a] where
+instance {-# OVERLAPPABLE #-} (Show a) => InputWidget [a] where
   renderWidget prompt currentList =
     vBox
       [ txt prompt

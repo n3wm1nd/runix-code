@@ -598,21 +598,6 @@ formatToolCodeWithSignature funcName funcSig functionDef = T.unlines
   , ""
   ]
 
--- Extract just the function implementation from LLM output
--- Handles cases like "echo input = input" or "echo :: String -> String\necho input = input"
-extractFunctionBody :: Text -> Text -> Text
-extractFunctionBody funcName llmOutput =
-  let outputLines = T.lines llmOutput
-      -- Find the implementation line (starts with function name but not a type signature)
-      implLines = filter isImplementation outputLines
-      isImplementation line =
-        T.isPrefixOf funcName line &&
-        not (":: " `T.isInfixOf` line) &&
-        T.length (T.strip line) > T.length funcName
-  in case implLines of
-       (impl:_) -> impl
-       [] -> funcName <> " = error \"No implementation provided\""
-
 appendToolToModule :: Text -> Text -> Text
 appendToolToModule currentContent newToolCode = currentContent <> "\n" <> newToolCode
 

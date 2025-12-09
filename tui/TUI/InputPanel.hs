@@ -11,9 +11,6 @@ import Brick
   ( EventM
   , Padding(..)
   , Widget
-  , fill
-  , hBox
-  , hLimit
   , padAll
   , padLeft
   , padRight
@@ -23,17 +20,15 @@ import Brick
   , vLimit
   , withAttr
   , withBorderStyle
-  , (<+>)
+  
   )
 import Brick.Types (BrickEvent)
-import Brick.Widgets.Border (hBorder, borderWithLabel)
+import Brick.Widgets.Border (borderWithLabel)
 import qualified Brick.Widgets.Border.Style as BS
-import Control.Monad.IO.Class (liftIO)
-import Data.Text (Text)
 import UI.Attributes (inputPanelAttr, inputPanelLabelAttr, inputPanelHelpAttr)
 import UI.State (Name)
 import UI.State (SomeInputWidget (..))
-import UI.UserInput.InputWidget (InputWidget(renderWidget, handleWidgetEvent, isWidgetComplete))
+import UI.UserInput.InputWidget (InputWidget(renderWidget, handleWidgetEvent))
 
 -- | Draw the input panel for an active input widget
 -- Returns the widget UI and its height

@@ -13,7 +13,7 @@ module UI.UserInput
 
     -- * Universal Interface
   , ImplementsWidget (..)
-  , RenderRequest (..)
+  , RenderRequest
 
     -- * Simple Interpreters
   , interpretUserInputFail

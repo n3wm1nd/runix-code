@@ -10,9 +10,9 @@ module UI.LoggingInterpreter where
 
 import Polysemy
 import qualified Data.Text as T
-import GHC.Stack (CallStack, prettyCallStack)
+import GHC.Stack (prettyCallStack)
 
-import Runix.Logging.Effects (Logging(..), Level(..))
+import Runix.Logging.Effects (Logging(..))
 import UI.Effects (UI, logMessage)
 
 -- | Reinterpret Logging effect as UI effect

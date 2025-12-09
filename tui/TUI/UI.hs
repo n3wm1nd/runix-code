@@ -25,36 +25,32 @@ import Brick.Widgets.Core
 import Brick.Widgets.Border
 import Brick.Widgets.Edit
 import Brick.Main (invalidateCacheEntry)
-import qualified Brick.AttrMap as A
 import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
 import qualified Data.Text as Text
 import Data.Text (Text)
-import qualified Data.Text.Encoding as Text
 import Data.Text.Zipper (cursorPosition, breakLine, deletePrevChar)
 import Lens.Micro
 import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
-import Control.Monad (when, void, forM_, unless)
+import Control.Monad (when, void)
 import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
-import Runix.Logging.Effects (Level(..))
 import UniversalLLM.Core.Types (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified TUI.Widgets.MessageHistory as MH
 import qualified TUI.InputPanel as IP
-import Graphics.Vty (Key(..), Event(..))
 
 -- | Custom events for the TUI
 data CustomEvent msg
   = AgentEvent (AgentEvent msg)  -- ^ Event from agent thread
   | UpdateViewport               -- ^ Update viewport state after render
-  deriving (Eq, Show)
+  deriving stock (Eq, Show)
 
 --------------------------------------------------------------------------------
 -- Types
@@ -123,12 +119,6 @@ eventChanL = lens _eventChan (\st c -> st { _eventChan = c })
 --------------------------------------------------------------------------------
 -- Display Rendering
 --------------------------------------------------------------------------------
-
--- | Render display text to lines
---
--- Display messages come pre-formatted from the effect interpreters.
-renderDisplayText :: Text -> [String]
-renderDisplayText = lines . Text.unpack
 
 --------------------------------------------------------------------------------
 -- UI Entry Point
@@ -317,7 +307,7 @@ handleInputWidgetEvent (SomeInputWidget _ _currentValue submitCallback) (T.VtyEv
   pendingInputL .= Nothing
 
 -- Enter confirms and submits the current value
-handleInputWidgetEvent widget@(SomeInputWidget _ currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEnter [])) = do
+handleInputWidgetEvent (SomeInputWidget _ currentValue submitCallback) (T.VtyEvent (V.EvKey V.KEnter [])) = do
   -- Check if value is complete
   if isWidgetComplete currentValue
     then do

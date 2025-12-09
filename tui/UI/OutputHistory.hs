@@ -61,7 +61,7 @@ import Brick.Types (Widget)
 import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
 import Runix.Logging.Effects (Level(..))
-import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
+import UniversalLLM.Core.Types (Message(..))
 
 --------------------------------------------------------------------------------
 -- New Zipper-Based Types
@@ -70,7 +70,7 @@ import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
 -- | Rendering options for OutputItems
 data RenderOptions = RenderOptions
   { useMarkdown :: Bool  -- ^ Render markdown in user/assistant text
-  } deriving (Eq, Show)
+  } deriving stock (Eq, Show)
 
 -- | Default rendering options
 defaultRenderOptions :: RenderOptions
@@ -87,7 +87,7 @@ data OutputItem msg
   | StreamingReasoningItem Text  -- ^ Streaming reasoning chunk
   | SystemEventItem Text      -- ^ System event notification
   | ToolExecutionItem Text    -- ^ Tool execution indicator
-  deriving (Eq, Show, Ord)
+  deriving stock (Eq, Show, Ord)
 
 -- | Generic zipper structure for navigable lists
 -- Structure: back (newer) <- current -> front (older)
@@ -435,16 +435,6 @@ renderOutputMessageRaw (StreamingReasoning text) =
 renderOutputMessageRaw (SystemEvent msg) = [txt "S " <+> txt msg]
 renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
--- | Check if an OutputMessage is a conversation message
-isConversationMessage :: OutputMessage -> Bool
-isConversationMessage (ConversationMessage _ _) = True
-isConversationMessage _ = False
-
--- | Extract conversation message texts from a list
-extractConvTexts :: [OutputMessage] -> [Text]
-extractConvTexts = foldr (\msg acc -> case msg of
-                            ConversationMessage _ t -> t : acc
-                            _ -> acc) []
 
 -- | Check if an OutputItem is a message item
 isMessageItem :: OutputItem msg -> Bool
@@ -452,7 +442,7 @@ isMessageItem (MessageItem _) = True
 isMessageItem _ = False
 
 -- | Extract message values from a list of OutputItems (for merge comparison)
-extractMessageItems :: Eq msg => [OutputItem msg] -> [msg]
+extractMessageItems :: [OutputItem msg] -> [msg]
 extractMessageItems = foldr (\item acc -> case item of
                                 MessageItem m -> m : acc
                                 _ -> acc) []

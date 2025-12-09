@@ -21,8 +21,6 @@ module UI.State
   , clearCancellationFlag
   ) where
 
-import Brick (Widget)
-import qualified Brick.BChan
 import Control.Concurrent.STM
 import Data.Text (Text)
 import Runix.Logging.Effects (Level(..))

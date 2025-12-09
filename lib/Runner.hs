@@ -22,8 +22,6 @@ module Runner
 import Prelude hiding (readFile, writeFile)
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Lazy as TL
-import qualified Data.Text.Lazy.Encoding as TLE
 import qualified Data.Text.Encoding as TE
 import qualified Data.ByteString as BS
 import qualified Data.Aeson as Aeson
@@ -46,9 +44,9 @@ import Runix.Cancellation.Effects (Cancellation, cancelNoop)
 import qualified Runix.Logging.Effects as Log
 import Data.Default (Default, def)
 
-import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ProviderRequest, ModelConfig)
+import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Runix.Streaming.Effects (StreamChunk, ignoreChunks)
+import Runix.Streaming.Effects (ignoreChunks)
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -63,7 +61,6 @@ loadSession :: forall model s r.
                ( Members [FileSystemRead, FileSystemWrite] r
                , Member Logging r
                , Member Fail r
-               , Monoid (ProviderRequest model)
                , Default s
                )
             => ComposableProvider model s
@@ -114,7 +111,7 @@ serializeMessages :: forall model s.
 serializeMessages composableProvider msgs =
   let -- Apply with undefined values and default state since cpSerializeMessage is type-driven
       handlers = composableProvider (undefined :: model) ([] :: [ModelConfig model]) def
-      serialized = [(i, v) | (i, Just v) <- zip [0..] (map (cpSerializeMessage handlers) msgs)]
+      serialized = [(i, v) | (i, Just v) <- zip [0::Integer ..] (map (cpSerializeMessage handlers) msgs)]
       failed = length msgs - length serialized
   in if failed > 0
      then Prelude.error $ "Failed to serialize " <> show failed <> " out of " <> show (length msgs) <> " messages"
@@ -122,8 +119,8 @@ serializeMessages composableProvider msgs =
 
 -- | Deserialize messages from JSON (internal helper)
 deserializeMessages :: forall model s.
-                       (Monoid (ProviderRequest model), Default s)
-                    => ComposableProvider model s
+                       ( Default s)
+                    =>ComposableProvider model s
                     -> Aeson.Value
                     -> Either String [Message model]
 deserializeMessages composableProvider val = case val of
@@ -132,7 +129,7 @@ deserializeMessages composableProvider val = case val of
     let -- We apply with undefined values and default state since cpDeserializeMessage is type-driven and doesn't use the runtime values
         handlers = composableProvider (undefined :: model) ([] :: [ModelConfig model]) def
         arrList = Vector.toList arr
-        results = [(i, v, cpDeserializeMessage handlers v) | (i, v) <- zip [0..] arrList]
+        results = [(i, v, cpDeserializeMessage handlers v) | (i, v) <- zip [0::Integer ..] arrList]
         messages = [msg | (_, _, Just msg) <- results]
         failed = [(i, v) | (i, v, Nothing) <- results]
     if null failed

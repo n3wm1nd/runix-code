@@ -1,11 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Main (main) where
 
 import Test.Hspec
 import Test.QuickCheck
 import Data.Text (Text)
-import qualified Data.Text as T
 import Data.List (nub, sort)
 import UI.OutputHistory
 import Runix.Logging.Effects (Level(..))

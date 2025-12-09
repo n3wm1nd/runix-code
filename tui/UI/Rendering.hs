@@ -12,7 +12,6 @@ module UI.Rendering
 import Data.Text (Text)
 import qualified Data.Text as T
 import Text.Pandoc
-import Text.Pandoc.Readers.CommonMark (readCommonMark)
 import Brick.Types (Widget, Context, getContext, availWidthL, attrL, imageL, emptyResult, ctxAttrMapL, Size(..))
 import qualified Brick.Types
 import Brick.Widgets.Core (txt, withAttr, (<+>), vBox, padLeft, hBox)

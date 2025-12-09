@@ -31,7 +31,7 @@ import UniversalLLM
 import qualified UniversalLLM.Providers.Anthropic as AnthropicProvider
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenAI(..), OpenRouter(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import UniversalLLM.Providers.XMLToolCalls (xmlResponseParser)
 import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..))
 import qualified UniversalLLM.Providers.OpenAI as Openai

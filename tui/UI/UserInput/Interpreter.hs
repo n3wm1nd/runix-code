@@ -10,12 +10,10 @@ module UI.UserInput.Interpreter
   ) where
 
 import Control.Concurrent.STM (STM, TVar, atomically, newTVarIO, readTVar, retry, writeTVar)
-import Control.Monad.IO.Class (liftIO)
 import Polysemy
-import Polysemy.Embed (Embed, embed)
 import UI.State (UIVars, sendAgentEvent, SomeInputWidget (..), AgentEvent(..))
 import UI.UserInput (UserInput (..))
-import UI.UserInput.InputWidget (InputWidget, TUIWidget, ImplementsWidget (..), RenderRequest (..))
+import UI.UserInput.InputWidget (TUIWidget, ImplementsWidget (..), RenderRequest (..))
 
 -- | Interpret UserInput effect using the TUI (Brick) widget system
 -- This interpreter:

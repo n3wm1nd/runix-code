@@ -24,7 +24,6 @@ module Config
   ) where
 
 import System.Environment (getArgs, lookupEnv)
-import Data.Text (Text)
 import qualified Data.Text as T
 import System.IO (hPutStr)
 import qualified System.IO as IO
@@ -39,14 +38,14 @@ data ModelSelection
   | UseGLM45Air
   | UseQwen3Coder
   | UseOpenRouter
-  deriving (Show, Eq)
+  deriving stock (Show, Eq)
 
 -- | Application configuration
 data Config = Config
   { cfgModelSelection :: ModelSelection
   , cfgSessionFile :: Maybe FilePath
   , cfgLlamaCppEndpoint :: String
-  } deriving (Show, Eq)
+  } deriving stock (Show, Eq)
 
 --------------------------------------------------------------------------------
 -- Configuration Loading

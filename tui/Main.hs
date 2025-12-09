@@ -11,7 +11,6 @@
 module Main (main) where
 
 import qualified Data.Text as T
-import Data.Text (Text)
 import Data.Text (pack)
 import Data.IORef
 import System.Environment (lookupEnv)
@@ -23,7 +22,6 @@ import qualified Control.Exception as Exception
 
 import Polysemy
 import Polysemy.Error (runError, Error)
-import Polysemy (interpret, embed)
 
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM (ProviderOf, Model(..))
@@ -36,9 +34,7 @@ import Config
 import Models
 import Runner (loadSystemPrompt)
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
-import qualified TUI.UI
 import TUI.UI (runUI)
-import qualified Brick.BChan
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
@@ -47,11 +43,10 @@ import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..))
-import Runix.Cancellation.Effects (Cancellation(..), isCanceled)
-import Runix.Streaming.Effects (StreamChunk(..), emitChunk, ignoreChunks)
+import Runix.Cancellation.Effects (Cancellation(..))
+import Runix.Streaming.Effects (StreamChunk(..), emitChunk)
 import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
-import UI.Effects (UI)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, requestCancelFromUI, AgentEvent(..))
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, AgentEvent(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
@@ -59,33 +54,9 @@ import UI.UserInput.Interpreter (interpretUserInput)
 import UI.UserInput.InputWidget (TUIWidget)
 import Control.Monad (forever)
 import Polysemy.Fail (Fail)
-import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
+import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified Data.ByteString as BS
-import qualified Data.Text.Encoding as TE
-
---------------------------------------------------------------------------------
--- Existential wrapper for history + runner
---------------------------------------------------------------------------------
-
--- | Existentially hides the model/provider types while providing a way to run agents
--- The runner wraps a specific effect interpreter stack for this model/provider
-data AgentRunner where
-  AgentRunner :: forall model.
-    ( HasTools model
-    , SupportsSystemPrompt (ProviderOf model)
-    , SupportsStreaming (ProviderOf model)
-    , ModelDefaults model
-    )
-    => IORef [Message model]  -- History storage
-    -> Runner model  -- Wrapped runner for this model
-    -> AgentRunner
-
--- | Type alias for a runner that can execute computations and return IO results
--- This is intentionally monomorphic - each runner works with its specific effect stack
--- Logging effect is reinterpreted as UI effect in the TUI
-newtype Runner model = Runner
-  { runWith :: forall a. (forall r. (Member (LLM model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
-  }
+import qualified UI.Effects
 
 -- | Wrapper for a function that builds everything and returns UIVars
 -- Each model has its own concrete types, wrapped existentially
@@ -132,7 +103,6 @@ updateHistory uiVars historyRef newHistory = do
 agentLoop :: forall model.
              ( HasTools model
              , SupportsSystemPrompt (ProviderOf model)
-             , SupportsStreaming (ProviderOf model)
              , ModelDefaults model
              )
           => UIVars (Message model)
@@ -222,6 +192,7 @@ interpretCancellation uiVars = interpret $ \case
 -- | Effect interpretation stack for TUI
 -- Logging effect is reinterpreted as UI effect for display
 -- HTTP emits StreamChunk BS -> reinterpret to StreamingContent -> interpret to UI
+runBaseEffects :: (Monad m,  Member    (Polysemy.Error.Error String) [Polysemy.Error.Error e, Embed m],  Member (Embed IO) '[Embed m]) => UIVars msg -> Sem      [Grep, FileSystemRead, FileSystemWrite, Bash, Cmd, HTTP,       HTTPStreaming, StreamChunk BS.ByteString, Cancellation, Fail,       Logging, UserInput TUIWidget, UI.Effects.UI,       Polysemy.Error.Error e, Embed m]      a -> m (Either e a)
 runBaseEffects uiVars =
   runM
     . runError
@@ -336,11 +307,11 @@ createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder $ \refreshCallback -
 --
 -- Pure function: takes history and user input, returns new history.
 -- For the real agent, this would call runRunixCode.
-echoAgent :: forall model r.
+_echoAgent :: forall model r.
              [Message model]
           -> String
           -> Sem r [Message model]
-echoAgent currentHistory userInput =
+_echoAgent currentHistory userInput =
   let userMsg = UserText (T.pack userInput)
       agentMsg = AssistantText (T.pack $ "Echo: " ++ userInput)
       newHistory = currentHistory ++ [userMsg, agentMsg]
