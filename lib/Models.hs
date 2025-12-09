@@ -41,8 +41,8 @@ import qualified UniversalLLM.Providers.OpenAI as Openai
 --------------------------------------------------------------------------------
 
 -- | Models can define their default configuration (streaming, reasoning, etc.)
-class ModelDefaults provider model where
-  defaultConfigs :: [ModelConfig provider model]
+class ModelDefaults model where
+  defaultConfigs :: [ModelConfig model]
 
 --------------------------------------------------------------------------------
 -- GLM-Specific Workarounds
@@ -55,11 +55,11 @@ class ModelDefaults provider model where
 --
 -- This combinator ensures a minimum max_tokens is set to reduce the chance of mid-block cutoff,
 -- but only if reasoning is enabled (checked via Reasoning config).
-glmEnsureMinTokens :: forall provider model s.
-                      (ProviderRequest provider ~ OpenAIRequest)
+glmEnsureMinTokens :: forall model s.
+                      (ProviderRequest model ~ OpenAIRequest)
                    => Int  -- Minimum max_tokens
-                   -> ComposableProvider provider model s
-glmEnsureMinTokens minTokens _p _m configs _s = 
+                   -> ComposableProvider model s
+glmEnsureMinTokens minTokens _m configs _s = 
     noopHandler
     { cpConfigHandler = \req ->
         if reasoningDisabled configs
@@ -71,7 +71,7 @@ glmEnsureMinTokens minTokens _p _m configs _s =
     }
   where
     -- Check if reasoning is explicitly disabled in config
-    reasoningDisabled :: [ModelConfig provider model] -> Bool
+    reasoningDisabled :: [ModelConfig model] -> Bool
     reasoningDisabled cfg = any isReasoningFalse cfg
       where
         isReasoningFalse (Reasoning False) = True
@@ -89,10 +89,10 @@ glmEnsureMinTokens minTokens _p _m configs _s =
 -- This combinator fixes both by replacing null/problematic content with empty strings.
 --
 -- Apply this AFTER openAIWithTools in the provider chain.
-glmFixNullContent :: forall provider model s.
-                     (ProviderRequest provider ~ OpenAIRequest)
-                  => ComposableProvider provider model s
-glmFixNullContent _provider _model _configs _s = 
+glmFixNullContent :: forall model s.
+                     (ProviderRequest model ~ OpenAIRequest)
+                  => ComposableProvider model s
+glmFixNullContent _model _configs _s = 
     noopHandler
     { cpToRequest = \_msg req -> (fixAllNullContent req)
     }
@@ -128,28 +128,28 @@ glmFixNullContent _provider _model _configs _s =
 -- | Claude Sonnet 4.5 model
 data ClaudeSonnet45 = ClaudeSonnet45 deriving stock (Show, Eq)
 
-instance ModelName Anthropic ClaudeSonnet45 where
-  modelName _ = "claude-sonnet-4-5-20250929"
+instance ModelName (Model ClaudeSonnet45 Anthropic) where
+  modelName (Model _ _) = "claude-sonnet-4-5-20250929"
 
-instance HasTools ClaudeSonnet45 Anthropic where
+instance HasTools (Model ClaudeSonnet45 Anthropic) where
   withTools = AnthropicProvider.anthropicTools
 
-instance HasReasoning ClaudeSonnet45 Anthropic where
-  type ReasoningState ClaudeSonnet45 Anthropic = AnthropicProvider.AnthropicReasoningState
+instance HasReasoning (Model ClaudeSonnet45 Anthropic) where
+  type ReasoningState (Model ClaudeSonnet45 Anthropic) = AnthropicProvider.AnthropicReasoningState
   withReasoning = AnthropicProvider.anthropicReasoning
 
 -- Composable provider for ClaudeSonnet45
-claudeSonnet45ComposableProvider :: 
-  (HasTools model Anthropic,
-  BaseComposableProvider model Anthropic ) =>
- ComposableProvider Anthropic model (ToolState model Anthropic, BaseState model Anthropic) 
+claudeSonnet45ComposableProvider ::
+  (HasTools model,
+  BaseComposableProvider model) =>
+ ComposableProvider model (ToolState model, BaseState model)
 claudeSonnet45ComposableProvider = providerTools
 
-instance BaseComposableProvider ClaudeSonnet45 Anthropic where
+instance BaseComposableProvider (Model ClaudeSonnet45 Anthropic) where
   baseProvider = AnthropicProvider.baseComposableProvider
 
-instance ModelDefaults Anthropic ClaudeSonnet45 where
-  defaultConfigs :: [ModelConfig Anthropic ClaudeSonnet45]
+instance ModelDefaults (Model ClaudeSonnet45 Anthropic) where
+  defaultConfigs :: [ModelConfig (Model ClaudeSonnet45 Anthropic)]
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable extended thinking
@@ -169,29 +169,29 @@ instance ModelDefaults Anthropic ClaudeSonnet45 where
 -- so we apply glmFixNullToolResults to work around it.
 data GLM45Air = GLM45Air deriving stock (Show, Eq)
 
-instance ModelName LlamaCpp GLM45Air where
-  modelName _ = "glm-4.5-air"
+instance ModelName (Model GLM45Air LlamaCpp) where
+  modelName (Model _ _) = "glm-4.5-air"
 
-instance HasTools GLM45Air LlamaCpp where
-  type ToolState GLM45Air LlamaCpp = ((), ())
+instance HasTools (Model GLM45Air LlamaCpp) where
+  type ToolState (Model GLM45Air LlamaCpp) = ((), ())
   withTools = xmlResponseParser `chainProviders` OpenAI.openAITools
 
-instance HasReasoning GLM45Air LlamaCpp where
+instance HasReasoning (Model GLM45Air LlamaCpp) where
   withReasoning = OpenAI.openAIReasoning
 
 -- Composable provider for GLM45Air
-glm45AirComposableProvider :: 
-  ( HasTools model provider, HasReasoning model provider,
-  BaseComposableProvider model provider ) =>
-  ComposableProvider provider model
-  (ToolState model provider, (ReasoningState model provider, BaseState model provider ))
+glm45AirComposableProvider ::
+  ( HasTools model, HasReasoning model,
+  BaseComposableProvider model ) =>
+  ComposableProvider model
+  (ToolState model, (ReasoningState model, BaseState model))
 glm45AirComposableProvider = providerReasoningTools
 
-instance BaseComposableProvider GLM45Air LlamaCpp where
-  type BaseState GLM45Air LlamaCpp = ((), ((), ()))
+instance BaseComposableProvider (Model GLM45Air LlamaCpp) where
+  type BaseState (Model GLM45Air LlamaCpp) = ((), ((), ()))
   baseProvider = glmFixNullContent `chainProviders` glmEnsureMinTokens 2048 `chainProviders` OpenAI.baseComposableProvider
 
-instance ModelDefaults LlamaCpp GLM45Air where
+instance ModelDefaults (Model GLM45Air LlamaCpp) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable reasoning extraction
@@ -204,20 +204,20 @@ instance ModelDefaults LlamaCpp GLM45Air where
 -- OpenAI-style tool calls in both streaming and non-streaming responses.
 data Qwen3Coder = Qwen3Coder deriving stock (Show, Eq)
 
-instance ModelName LlamaCpp Qwen3Coder where
-  modelName _ = "qwen3-coder"
+instance ModelName (Model Qwen3Coder LlamaCpp) where
+  modelName (Model _ _) = "qwen3-coder"
 
-instance HasTools Qwen3Coder LlamaCpp where
+instance HasTools (Model Qwen3Coder LlamaCpp) where
   withTools = OpenAI.openAITools
 
 -- Composable provider for Qwen3Coder
-qwen3CoderComposableProvider :: ComposableProvider LlamaCpp Qwen3Coder (ToolState Qwen3Coder LlamaCpp, ())
+qwen3CoderComposableProvider :: ComposableProvider (Model Qwen3Coder LlamaCpp) (ToolState (Model Qwen3Coder LlamaCpp), ())
 qwen3CoderComposableProvider = providerTools
 
-instance BaseComposableProvider Qwen3Coder LlamaCpp where
+instance BaseComposableProvider (Model Qwen3Coder LlamaCpp) where
   baseProvider = Openai.baseComposableProvider
 
-instance ModelDefaults LlamaCpp Qwen3Coder where
+instance ModelDefaults (Model Qwen3Coder LlamaCpp) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     -- No reasoning for Qwen3Coder
@@ -234,28 +234,28 @@ instance ModelDefaults LlamaCpp Qwen3Coder where
 -- environment variable.
 data Universal = Universal Text deriving stock (Show, Eq)
 
-instance ModelName OpenRouter Universal where
-  modelName (Universal name) = name
+instance ModelName (Model Universal OpenRouter) where
+  modelName (Model (Universal name) _) = name
 
-instance HasTools Universal OpenRouter where
+instance HasTools (Model Universal OpenRouter) where
   withTools = OpenAI.openAITools
 
-instance HasReasoning Universal OpenRouter where
-  type ReasoningState Universal OpenRouter = OpenAI.OpenRouterReasoningState
+instance HasReasoning (Model Universal OpenRouter) where
+  type ReasoningState (Model Universal OpenRouter) = OpenAI.OpenRouterReasoningState
   withReasoning = OpenAI.openRouterReasoning
 
 -- Composable provider for Universal
 universalComposableProvider ::
-  (HasTools model OpenRouter, HasReasoning model OpenRouter,
-  BaseComposableProvider model OpenRouter) =>
-  ComposableProvider OpenRouter model
-  (ToolState model OpenRouter, (ReasoningState model OpenRouter, BaseState model OpenRouter))
+  (HasTools model, HasReasoning model,
+  BaseComposableProvider model) =>
+  ComposableProvider model
+  (ToolState model, (ReasoningState model, BaseState model))
 universalComposableProvider = providerReasoningTools
 
-instance BaseComposableProvider Universal OpenRouter where
+instance BaseComposableProvider (Model Universal OpenRouter) where
   baseProvider = OpenAI.baseComposableProvider
 
-instance ModelDefaults OpenRouter Universal where
+instance ModelDefaults (Model Universal OpenRouter) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable reasoning/extended thinking

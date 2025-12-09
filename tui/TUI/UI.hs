@@ -140,8 +140,8 @@ renderDisplayText = lines . Text.unpack
 -- Messages are rendered directly by pattern matching on Message constructors
 --
 -- Refreshes are triggered by the effect interpreters, not by polling.
-runUI :: forall model provider. Eq (Message model provider) =>
-         ((AgentEvent (Message model provider) -> IO ()) -> IO (UIVars (Message model provider)))  -- ^ Function to create UIVars with send callback
+runUI :: forall model. Eq (Message model) =>
+         ((AgentEvent (Message model) -> IO ()) -> IO (UIVars (Message model)))  -- ^ Function to create UIVars with send callback
       -> IO ()
 runUI mkUIVars = do
   -- Create event channel - agent events and UI events use same channel
@@ -178,7 +178,7 @@ runUI mkUIVars = do
 -- Brick App Definition
 --------------------------------------------------------------------------------
 
-app :: forall model provider. Eq (Message model provider) => M.App (AppState (Message model provider)) (CustomEvent (Message model provider)) Name
+app :: forall model. Eq (Message model) => M.App (AppState (Message model)) (CustomEvent (Message model)) Name
 app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
@@ -192,7 +192,7 @@ app = M.App
 --------------------------------------------------------------------------------
 
 -- Draw UI is specific to Message types since renderItem requires it
-drawUI :: forall model provider. AppState (Message model provider) -> [T.Widget Name]
+drawUI :: forall model. AppState (Message model) -> [T.Widget Name]
 drawUI st = [indicatorLayer, baseLayer]
   where
     -- Read state directly from AppState
@@ -281,7 +281,7 @@ drawUI st = [indicatorLayer, baseLayer]
 
 -- | Re-render the widget zipper from the output zipper
 -- Call this after: (1) output zipper changes, (2) markdown mode changes
-reRenderWidgetZipper :: T.EventM Name (AppState (Message model provider)) ()
+reRenderWidgetZipper :: T.EventM Name (AppState (Message model)) ()
 reRenderWidgetZipper = do
   mode <- use markdownModeL
   ozipper <- use outputZipperL
@@ -297,7 +297,7 @@ reRenderWidgetZipper = do
           }
   widgetZipperL .= renderZipper ozipper
 
-handleEvent :: forall model provider. Eq (Message model provider) => T.BrickEvent Name (CustomEvent (Message model provider)) -> T.EventM Name (AppState (Message model provider)) ()
+handleEvent :: forall model. Eq (Message model) => T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
 -- Check if input widget is active first
 handleEvent ev = do
   -- Read pending input widget from AppState
@@ -338,7 +338,7 @@ handleInputWidgetEvent widget ev = do
     Nothing -> return ()
 
 -- Normal event handling (when no input widget active)
-handleNormalEvent :: forall model provider. Eq (Message model provider) => T.BrickEvent Name (CustomEvent (Message model provider)) -> T.EventM Name (AppState (Message model provider)) ()
+handleNormalEvent :: forall model. Eq (Message model) => T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
 -- ESC: Request cancellation of current operation
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL

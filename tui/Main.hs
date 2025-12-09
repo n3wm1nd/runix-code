@@ -26,6 +26,7 @@ import Polysemy.Error (runError, Error)
 import Polysemy (interpret, embed)
 
 import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM (ProviderOf, Model(..))
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, withLLMCancellation)
@@ -69,28 +70,28 @@ import qualified Data.Text.Encoding as TE
 -- | Existentially hides the model/provider types while providing a way to run agents
 -- The runner wraps a specific effect interpreter stack for this model/provider
 data AgentRunner where
-  AgentRunner :: forall model provider.
-    ( HasTools model provider
-    , SupportsSystemPrompt provider
-    , SupportsStreaming provider
-    , ModelDefaults provider model
+  AgentRunner :: forall model.
+    ( HasTools model
+    , SupportsSystemPrompt (ProviderOf model)
+    , SupportsStreaming (ProviderOf model)
+    , ModelDefaults model
     )
-    => IORef [Message model provider]  -- History storage
-    -> Runner model provider  -- Wrapped runner for this model/provider
+    => IORef [Message model]  -- History storage
+    -> Runner model  -- Wrapped runner for this model
     -> AgentRunner
 
 -- | Type alias for a runner that can execute computations and return IO results
 -- This is intentionally monomorphic - each runner works with its specific effect stack
 -- Logging effect is reinterpreted as UI effect in the TUI
-newtype Runner model provider = Runner
-  { runWith :: forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+newtype Runner model = Runner
+  { runWith :: forall a. (forall r. (Member (LLM model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
   }
 
 -- | Wrapper for a function that builds everything and returns UIVars
 -- Each model has its own concrete types, wrapped existentially
 data AgentRunnerBuilder where
-  AgentRunnerBuilder :: forall model provider. Eq (Message model provider) =>
-    ((AgentEvent (Message model provider) -> IO ()) -> IO (UIVars (Message model provider))) -> AgentRunnerBuilder
+  AgentRunnerBuilder :: forall model. Eq (Message model) =>
+    ((AgentEvent (Message model) -> IO ()) -> IO (UIVars (Message model))) -> AgentRunnerBuilder
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -117,10 +118,10 @@ main = do
 
 -- | Agent loop that processes user input from the UI
 -- | Update history by sending AgentCompleteEvent
-updateHistory :: forall model provider.
-                 UIVars (Message model provider)
-              -> IORef [Message model provider]
-              -> [Message model provider]
+updateHistory :: forall model.
+                 UIVars (Message model)
+              -> IORef [Message model]
+              -> [Message model]
               -> IO ()
 updateHistory uiVars historyRef newHistory = do
   -- Update historyRef (source of truth)
@@ -128,16 +129,16 @@ updateHistory uiVars historyRef newHistory = do
   -- Send event with new messages
   sendAgentEvent uiVars (AgentCompleteEvent newHistory)
 
-agentLoop :: forall model provider.
-             ( HasTools model provider
-             , SupportsSystemPrompt provider
-             , SupportsStreaming provider
-             , ModelDefaults provider model
+agentLoop :: forall model.
+             ( HasTools model
+             , SupportsSystemPrompt (ProviderOf model)
+             , SupportsStreaming (ProviderOf model)
+             , ModelDefaults model
              )
-          => UIVars (Message model provider)
-          -> IORef [Message model provider]
+          => UIVars (Message model)
+          -> IORef [Message model]
           -> SystemPrompt
-          -> (forall a. (forall r. (Member (LLM provider model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a))
+          -> (forall a. (forall r. (Member (LLM model) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a))
           -> IO ()
 agentLoop uiVars historyRef sysPrompt runner = forever $
   Exception.catch runOneIteration handleException
@@ -156,8 +157,8 @@ agentLoop uiVars historyRef sysPrompt runner = forever $
       sendAgentEvent uiVars (UserMessageEvent (UserText userInput))
 
       -- Run the agent with model-specific default configs
-      let configs = defaultConfigs @provider @model
-      result <- runner $ runRunixCode @provider @model @TUIWidget
+      let configs = defaultConfigs @model
+      result <- runner $ runRunixCode @model @TUIWidget
                            sysPrompt
                            configs
                            currentHistory
@@ -240,19 +241,19 @@ runBaseEffects uiVars =
 -- | Create an AgentRunner builder based on the selected model
 createRunnerBuilder :: ModelSelection -> Config -> AgentRunnerBuilder
 createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder $ \refreshCallback -> do
-  uiVars <- newUIVars @(Message ClaudeSonnet45 Anthropic) refreshCallback
-  historyRef <- newIORef ([] :: [Message ClaudeSonnet45 Anthropic])
+  uiVars <- newUIVars @(Message (Model ClaudeSonnet45 Anthropic)) refreshCallback
+  historyRef <- newIORef ([] :: [Message (Model ClaudeSonnet45 Anthropic)])
   maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
   case maybeToken of
     Nothing -> do
       hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
       error "Missing ANTHROPIC_OAUTH_TOKEN"
     Just tokenStr -> do
-      let runAgent :: forall a. (forall r. (Member (LLM Anthropic ClaudeSonnet45) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+      let runAgent :: forall a. (forall r. (Member (LLM (Model ClaudeSonnet45 Anthropic)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
           runAgent agent =
             runBaseEffects uiVars
               . runSecret (pure tokenStr)
-              . interpretAnthropicOAuth claudeSonnet45ComposableProvider Anthropic ClaudeSonnet45
+              . interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic)
               $ withLLMCancellation agent
       -- Load system prompt (once at startup)
       sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
@@ -267,12 +268,12 @@ createRunnerBuilder UseClaudeSonnet45 _cfg = AgentRunnerBuilder $ \refreshCallba
       return uiVars
 
 createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder $ \refreshCallback -> do
-  uiVars <- newUIVars @(Message GLM45Air LlamaCpp) refreshCallback
-  historyRef <- newIORef ([] :: [Message GLM45Air LlamaCpp])
-  let runAgent :: forall a. (forall r. (Member (LLM LlamaCpp GLM45Air) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  uiVars <- newUIVars @(Message (Model GLM45Air LlamaCpp)) refreshCallback
+  historyRef <- newIORef ([] :: [Message (Model GLM45Air LlamaCpp)])
+  let runAgent :: forall a. (forall r. (Member (LLM (Model GLM45Air LlamaCpp)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
       runAgent agent =
         runBaseEffects uiVars
-          . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air
+          . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) (Model GLM45Air LlamaCpp)
           $ withLLMCancellation agent
   -- Load system prompt
   sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
@@ -286,12 +287,12 @@ createRunnerBuilder UseGLM45Air cfg = AgentRunnerBuilder $ \refreshCallback -> d
   return uiVars
 
 createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder $ \refreshCallback -> do
-  uiVars <- newUIVars @(Message Qwen3Coder LlamaCpp) refreshCallback
-  historyRef <- newIORef ([] :: [Message Qwen3Coder LlamaCpp])
-  let runAgent :: forall a. (forall r. (Member (LLM LlamaCpp Qwen3Coder) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  uiVars <- newUIVars @(Message (Model Qwen3Coder LlamaCpp)) refreshCallback
+  historyRef <- newIORef ([] :: [Message (Model Qwen3Coder LlamaCpp)])
+  let runAgent :: forall a. (forall r. (Member (LLM (Model Qwen3Coder LlamaCpp)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
       runAgent agent =
         runBaseEffects uiVars
-          . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder
+          . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) (Model Qwen3Coder LlamaCpp)
           $ withLLMCancellation agent
   -- Load system prompt
   sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
@@ -305,15 +306,15 @@ createRunnerBuilder UseQwen3Coder cfg = AgentRunnerBuilder $ \refreshCallback ->
   return uiVars
 
 createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder $ \refreshCallback -> do
-  uiVars <- newUIVars @(Message Universal OpenRouter) refreshCallback
+  uiVars <- newUIVars @(Message (Model Universal OpenRouter)) refreshCallback
   apiKey <- getOpenRouterApiKey
   modelName <- getOpenRouterModel
-  historyRef <- newIORef ([] :: [Message Universal OpenRouter])
-  let runAgent :: forall a. (forall r. (Member (LLM OpenRouter Universal) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
+  historyRef <- newIORef ([] :: [Message (Model Universal OpenRouter)])
+  let runAgent :: forall a. (forall r. (Member (LLM (Model Universal OpenRouter)) r, Members '[FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, UserInput TUIWidget, Logging, Fail] r) => Sem r a) -> IO (Either String a)
       runAgent agent =
         runBaseEffects uiVars
           . runSecret (pure apiKey)
-          . interpretOpenRouter universalComposableProvider OpenRouter (Universal (pack modelName))
+          . interpretOpenRouter universalComposableProvider (Model (Universal (pack modelName)) OpenRouter)
           $ withLLMCancellation agent
   -- Load system prompt
   sysPromptText <- runAgent $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
@@ -334,10 +335,10 @@ createRunnerBuilder UseOpenRouter _cfg = AgentRunnerBuilder $ \refreshCallback -
 --
 -- Pure function: takes history and user input, returns new history.
 -- For the real agent, this would call runRunixCode.
-echoAgent :: forall model provider r.
-             [Message model provider]
+echoAgent :: forall model r.
+             [Message model]
           -> String
-          -> Sem r [Message model provider]
+          -> Sem r [Message model]
 echoAgent currentHistory userInput =
   let userMsg = UserText (T.pack userInput)
       agentMsg = AssistantText (T.pack $ "Echo: " ++ userInput)

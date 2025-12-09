@@ -49,7 +49,7 @@ promptUser :: Member UI r => Text -> Sem r Text
 promptUser prompt = send (PromptUser prompt)
 
 -- | Helper: Convert a Message to display text
-messageToDisplay :: forall model provider. Message model provider -> Text
+messageToDisplay :: forall model. Message model -> Text
 messageToDisplay (UserText t) = T.pack "You:\n  " <> T.replace "\n" "\n  " t
 messageToDisplay (AssistantText t) = T.pack "Agent:\n  " <> T.replace "\n" "\n  " t
 messageToDisplay (AssistantTool tc) = T.pack $ "Agent (tool call):\n  " ++ show tc

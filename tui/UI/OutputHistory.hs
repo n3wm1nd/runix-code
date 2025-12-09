@@ -194,7 +194,7 @@ extractMessages zipper =
 -- | Render an OutputItem with optional markdown formatting
 -- Pattern matches directly on Message constructors to determine rendering
 -- Only UserText, AssistantText, AssistantReasoning, and streaming items use markdown when enabled
-renderItem :: forall model provider n. RenderOptions -> OutputItem (Message model provider) -> Widget n
+renderItem :: forall model n. RenderOptions -> OutputItem (Message model) -> Widget n
 renderItem opts item = vBox $ case item of
   -- User messages
   MessageItem (UserText text) ->

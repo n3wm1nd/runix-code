@@ -17,6 +17,7 @@ import Polysemy.Fail
 
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter hiding (SystemPrompt)
+import UniversalLLM (ProviderOf, Model(..))
 import UniversalLLM.Providers.OpenAI (OpenRouter(..))
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
@@ -104,22 +105,22 @@ runWithClaudeSonnet45 cfg userInput = do
     Just tokenStr ->
       runWithEffects @CLIWidget $
         runSecret (pure tokenStr) $
-          interpretAnthropicOAuth claudeSonnet45ComposableProvider Anthropic ClaudeSonnet45 $
-            runAgent @Anthropic @ClaudeSonnet45 claudeSonnet45ComposableProvider cfg userInput
+          interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic) $
+            runAgent @(Model ClaudeSonnet45 Anthropic) claudeSonnet45ComposableProvider cfg userInput
 
 -- | Run with GLM4.5-air
 runWithGLM45Air :: Config -> Text -> IO (Either String Text)
 runWithGLM45Air cfg userInput =
   runWithEffects @CLIWidget $
-    interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp GLM45Air $
-      runAgent @LlamaCpp @GLM45Air glm45AirComposableProvider cfg userInput
+    interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) (Model GLM45Air LlamaCpp) $
+      runAgent @(Model GLM45Air LlamaCpp) glm45AirComposableProvider cfg userInput
 
 -- | Run with Qwen3-Coder
 runWithQwen3Coder :: Config -> Text -> IO (Either String Text)
 runWithQwen3Coder cfg userInput =
   runWithEffects @CLIWidget $
-    interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) LlamaCpp Qwen3Coder $
-      runAgent @LlamaCpp @Qwen3Coder qwen3CoderComposableProvider cfg userInput
+    interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) (Model Qwen3Coder LlamaCpp) $
+      runAgent @(Model Qwen3Coder LlamaCpp) qwen3CoderComposableProvider cfg userInput
 
 -- | Run with OpenRouter
 runWithOpenRouter :: Config -> Text -> IO (Either String Text)
@@ -128,8 +129,8 @@ runWithOpenRouter cfg userInput = do
   modelName <- getOpenRouterModel
   runWithEffects @CLIWidget $
     runSecret (pure apiKey) $
-      interpretOpenRouter universalComposableProvider OpenRouter (Universal (pack modelName)) $
-        runAgent @OpenRouter @Universal universalComposableProvider cfg userInput
+      interpretOpenRouter universalComposableProvider (Model (Universal (pack modelName)) OpenRouter) $
+        runAgent @(Model Universal OpenRouter) universalComposableProvider cfg userInput
 
 --------------------------------------------------------------------------------
 -- Generic Agent Runner (Model-Agnostic)
@@ -139,8 +140,8 @@ runWithOpenRouter cfg userInput = do
 --
 -- This is completely generic - no model-specific code here.
 -- It just loads config, runs the agent, and saves the session.
-runAgent :: forall provider model s r.
-            ( Member (LLM provider model) r
+runAgent :: forall model s r.
+            ( Member (LLM model) r
             , Members [FileSystemRead, FileSystemWrite] r
             , Member Grep r
             , Member Bash r
@@ -148,14 +149,14 @@ runAgent :: forall provider model s r.
             , Member Cmd r
             , Member Fail r
             , Member (UserInput CLIWidget) r
-            , HasTools model provider
-            , SupportsSystemPrompt provider
-            , SupportsStreaming provider
-            , ModelDefaults provider model
-            , Monoid (ProviderRequest provider)
+            , HasTools model
+            , SupportsSystemPrompt (ProviderOf model)
+            , SupportsStreaming (ProviderOf model)
+            , ModelDefaults model
+            , Monoid (ProviderRequest model)
             , Default s
             )
-         => ComposableProvider provider model s
+         => ComposableProvider model s
          -> Config
          -> Text
          -> Sem r Text
@@ -167,7 +168,7 @@ runAgent composableProvider cfg userInput = do
 
   let sysPrompt = SystemPrompt sysPromptText
       userPrompt = UserPrompt userInput
-      configs =  Streaming False : defaultConfigs @provider @model
+      configs =  Streaming False : defaultConfigs @model
 
   -- Load session (if specified)
   initialHistory <- case cfgSessionFile cfg of
@@ -175,7 +176,7 @@ runAgent composableProvider cfg userInput = do
     Just sessionFile -> loadSession composableProvider sessionFile
 
   -- Run the agent
-  (result, finalHistory) <- runRunixCode @provider @model @CLIWidget sysPrompt configs initialHistory userPrompt
+  (result, finalHistory) <- runRunixCode @model @CLIWidget sysPrompt configs initialHistory userPrompt
 
   -- Save session (if specified)
   case cfgSessionFile cfg of

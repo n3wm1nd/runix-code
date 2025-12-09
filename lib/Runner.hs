@@ -55,18 +55,18 @@ import UI.UserInput (UserInput, interpretUserInputFail)
 -- | Load session from file
 --
 -- Sessions are model-agnostic - Message type parameters are phantom types.
--- We deserialize with a specific model/provider type for type safety, but
+-- We deserialize with a specific model type for type safety, but
 -- the messages can be used with any compatible model.
-loadSession :: forall provider model s r.
+loadSession :: forall model s r.
                ( Members [FileSystemRead, FileSystemWrite] r
                , Member Logging r
                , Member Fail r
-               , Monoid (ProviderRequest provider)
+               , Monoid (ProviderRequest model)
                , Default s
                )
-            => ComposableProvider provider model s
+            => ComposableProvider model s
             -> FilePath
-            -> Sem r [Message model provider]
+            -> Sem r [Message model]
 loadSession composableProvider path = do
   exists <- fileExists path
   if not exists
@@ -88,14 +88,14 @@ loadSession composableProvider path = do
             return msgs
 
 -- | Save session to file
-saveSession :: forall provider model s r.
+saveSession :: forall model s r.
                ( Members [FileSystemRead, FileSystemWrite, Fail] r
                , Member Logging r
                , Default s
                )
-            => ComposableProvider provider model s
+            => ComposableProvider model s
             -> FilePath
-            -> [Message model provider]
+            -> [Message model]
             -> Sem r ()
 saveSession composableProvider path msgs = do
   let json = serializeMessages composableProvider msgs
@@ -104,14 +104,14 @@ saveSession composableProvider path msgs = do
   Log.info $ T.pack $ "Saved " <> show (length msgs) <> " messages to session"
 
 -- | Serialize messages to JSON (internal helper)
-serializeMessages :: forall provider model s.
+serializeMessages :: forall model s.
                      (Default s)
-                  => ComposableProvider provider model s
-                  -> [Message model provider]
+                  => ComposableProvider model s
+                  -> [Message model]
                   -> Aeson.Value
 serializeMessages composableProvider msgs =
   let -- Apply with undefined values and default state since cpSerializeMessage is type-driven
-      handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model]) def
+      handlers = composableProvider (undefined :: model) ([] :: [ModelConfig model]) def
       serialized = [(i, v) | (i, Just v) <- zip [0..] (map (cpSerializeMessage handlers) msgs)]
       failed = length msgs - length serialized
   in if failed > 0
@@ -119,16 +119,16 @@ serializeMessages composableProvider msgs =
      else Aeson.toJSON (map snd serialized)
 
 -- | Deserialize messages from JSON (internal helper)
-deserializeMessages :: forall provider model s.
-                       (Monoid (ProviderRequest provider), Default s)
-                    => ComposableProvider provider model s
+deserializeMessages :: forall model s.
+                       (Monoid (ProviderRequest model), Default s)
+                    => ComposableProvider model s
                     -> Aeson.Value
-                    -> Either String [Message model provider]
+                    -> Either String [Message model]
 deserializeMessages composableProvider val = case val of
   Aeson.Array arr -> do
-    -- Get handlers using undefined for provider/model/configs and default state since deserialization doesn't depend on them
+    -- Get handlers using undefined for model/configs and default state since deserialization doesn't depend on them
     let -- We apply with undefined values and default state since cpDeserializeMessage is type-driven and doesn't use the runtime values
-        handlers = composableProvider (undefined :: provider) (undefined :: model) ([] :: [ModelConfig provider model]) def
+        handlers = composableProvider (undefined :: model) ([] :: [ModelConfig model]) def
         arrList = Vector.toList arr
         results = [(i, v, cpDeserializeMessage handlers v) | (i, v) <- zip [0..] arrList]
         messages = [msg | (_, _, Just msg) <- results]
