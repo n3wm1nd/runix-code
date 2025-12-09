@@ -8,14 +8,11 @@
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE NamedFieldPuns #-}
 module Main (main) where
 
 import qualified Data.Text as T
-import Data.Text (pack)
 import Data.IORef
-import System.Environment (lookupEnv)
-import System.IO (hPutStr)
-import qualified System.IO as IO
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import qualified Control.Exception as Exception
@@ -24,19 +21,16 @@ import Polysemy
 import Polysemy.Error (runError, Error)
 
 import UniversalLLM.Core.Types (Message(..))
-import UniversalLLM (ProviderOf, Model(..))
-import UniversalLLM.Providers.Anthropic (Anthropic(..))
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
-import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, withLLMCancellation)
-import Runix.Secret.Effects (runSecret)
+import UniversalLLM (ProviderOf)
 
 import Config
 import Models
-import Runner (loadSystemPrompt)
+import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..))
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
 import TUI.UI (runUI)
 import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
+import Runix.LLM.Interpreter (withLLMCancellation)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
@@ -58,54 +52,6 @@ import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified Data.ByteString as BS
 import qualified UI.Effects
 
--- | Wrapper for a function that builds everything and returns UIVars
--- Each model has its own concrete types, wrapped existentially
-data AgentRunnerBuilder where
-  AgentRunnerBuilder :: forall model.
-    ( Eq (Message model)
-    , HasTools model
-    , SupportsSystemPrompt (ProviderOf model)
-    , ModelDefaults model
-    ) =>
-    (UIVars (Message model) -> AgentRunner model) -> AgentRunnerBuilder
-
--- | Smart constructor for AgentRunnerBuilder
--- The Eq constraint is implied by the GADT and will be available when pattern matching
-mkAgentRunnerBuilder :: forall model.
-                        ( HasTools model
-                        , SupportsSystemPrompt (ProviderOf model)
-                        , ModelDefaults model
-                        , Eq (Message model)  -- Required by buildModelRunner -> newUIVars
-                        )
-                     => (UIVars (Message model) -> AgentRunner model)
-                     -> AgentRunnerBuilder
-mkAgentRunnerBuilder mkRunner = AgentRunnerBuilder mkRunner
-
---------------------------------------------------------------------------------
--- Type Aliases
---------------------------------------------------------------------------------
-
--- | Common effects used by all agents
-type AgentEffects model =
-  '[ LLM model
-   , FileSystemRead
-   , FileSystemWrite
-   , Grep
-   , Bash
-   , Cmd
-   , HTTP
-   , HTTPStreaming
-   , UserInput TUIWidget
-   , Logging
-   , Fail
-   ]
-
--- | Runner type: interprets agent effects to IO with possible error
--- Newtype wrapper to properly handle rank-2 polymorphism
-newtype AgentRunner model = AgentRunner
-  { runAgent :: forall a. (forall r. Members (AgentEffects model) r => Sem r a)
-              -> IO (Either String a)
-  }
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -117,31 +63,12 @@ main = do
   -- Load configuration
   cfg <- loadConfig
 
-  -- Create runner builder (returns a function that takes UIVars)
-  runnerBuilder <- createRunnerBuilder (cfgModelSelection cfg) cfg
+  -- Create model interpreter
+  ModelInterpreter{interpretModel} <- createModelInterpreter (cfgModelSelection cfg)
 
-  -- Apply the builder: it contains the mkRunner function
-  case runnerBuilder of
-    AgentRunnerBuilder mkRunner -> do
-      -- The builder hides the model/provider types
-      -- runUI will provide the refresh callback and call buildModelRunner internally
-      runUI (buildModelRunner mkRunner)
-
---------------------------------------------------------------------------------
--- System Prompt Loading
---------------------------------------------------------------------------------
-
--- | Load system prompt with fallback to default
-loadSystemPromptWithFallback :: AgentRunner model -> IO SystemPrompt
-loadSystemPromptWithFallback (AgentRunner runner) = do
-  result <- runner $ loadSystemPrompt
-              "prompt/runix-code.md"
-              "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
-  case result of
-    Right promptText -> return $ SystemPrompt promptText
-    Left err -> do
-      hPutStr IO.stderr $ "Warning: Failed to load system prompt: " ++ err ++ "\n"
-      return $ SystemPrompt "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
+  -- Run UI with the interpreter
+  -- The interpreter is now just a function we can pass around
+  runUI (\refreshCallback -> buildUIRunner interpretModel refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -168,9 +95,9 @@ agentLoop :: forall model.
           => UIVars (Message model)
           -> IORef [Message model]
           -> SystemPrompt
-          -> AgentRunner model
+          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
           -> IO ()
-agentLoop uiVars historyRef sysPrompt (AgentRunner runner) = forever $
+agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
   Exception.catch runOneIteration handleException
   where
     runOneIteration = do
@@ -188,7 +115,10 @@ agentLoop uiVars historyRef sysPrompt (AgentRunner runner) = forever $
 
       -- Run the agent with model-specific default configs
       let configs = defaultConfigs @model
-      result <- runner $ runRunixCode @model @TUIWidget
+          runToIO' :: Sem (LLM model : Grep : FileSystemRead : FileSystemWrite : Bash : Cmd : HTTP : HTTPStreaming : StreamChunk BS.ByteString : Cancellation : Fail : Logging : UserInput TUIWidget : UI.Effects.UI : Error String : Embed IO : '[]) a -> IO (Either String a)
+          runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
+
+      result <- runToIO' $ withLLMCancellation $ runRunixCode @model @TUIWidget
                            sysPrompt
                            configs
                            currentHistory
@@ -214,33 +144,37 @@ agentLoop uiVars historyRef sysPrompt (AgentRunner runner) = forever $
       sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Uncaught exception: " ++ Exception.displayException e))
 
 --------------------------------------------------------------------------------
--- Generic Runner Builder
+-- UI Runner Builder
 --------------------------------------------------------------------------------
 
--- | Generic runner builder that handles the common pattern for all models
+-- | Build a UI runner by composing model interpreter with UI effects
 --
--- This function captures the repetitive structure:
--- 1. Create UIVars and history
--- 2. Build the effect interpreter stack
--- 3. Load system prompt
--- 4. Fork the agent loop
--- 5. Return UIVars
-buildModelRunner :: forall model.
-                    ( HasTools model
-                    , SupportsSystemPrompt (ProviderOf model)
-                    , ModelDefaults model
-                    )
-                 => (UIVars (Message model) -> AgentRunner model)
-                 -- ^ Function that creates the model-specific runner given UIVars
-                 -> (AgentEvent (Message model) -> IO ())
-                 -- ^ Refresh callback from UI
-                 -> IO (UIVars (Message model))
-buildModelRunner mkRunner refreshCallback = do
+-- This combines:
+-- 1. Model interpreter (LLM effect -> base effects)
+-- 2. UI effects interpreter (base effects -> IO)
+-- 3. Agent loop
+buildUIRunner :: forall model.
+                 ( HasTools model
+                 , SupportsSystemPrompt (ProviderOf model)
+                 , ModelDefaults model
+                 )
+              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+              -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
+              -> IO (UIVars (Message model))
+buildUIRunner modelInterpreter refreshCallback = do
   uiVars <- newUIVars @(Message model) refreshCallback
   historyRef <- newIORef ([] :: [Message model])
-  let runner = mkRunner uiVars
-  sysPrompt <- loadSystemPromptWithFallback runner
-  _ <- forkIO $ agentLoop uiVars historyRef sysPrompt runner
+
+  -- Load system prompt using the composed interpreter stack
+  let runToIO' :: Sem (LLM model : Grep : FileSystemRead : FileSystemWrite : Bash : Cmd : HTTP : HTTPStreaming : StreamChunk BS.ByteString : Cancellation : Fail : Logging : UserInput TUIWidget : UI.Effects.UI : Error String : Embed IO : '[]) a -> IO (Either String a)
+      runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
+
+  result <- runToIO' $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant."
+  let sysPrompt = case result of
+        Right txt -> SystemPrompt txt
+        Left _ -> SystemPrompt "You are a helpful AI coding assistant."
+
+  _ <- forkIO $ agentLoop uiVars historyRef sysPrompt modelInterpreter
   return uiVars
 
 --------------------------------------------------------------------------------
@@ -288,8 +222,8 @@ interpretCancellation uiVars = interpret $ \case
 -- - Cancellation, logging, user input
 -- - UI effects and error handling
 
-interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
-                    => UIVars msg
+interpretTUIEffects :: forall msg a.
+                       UIVars msg
                     -> Sem (Grep
                          : FileSystemRead
                          : FileSystemWrite
@@ -303,8 +237,8 @@ interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
                          : Logging
                          : UserInput TUIWidget
                          : UI.Effects.UI
-                         : r) a
-                    -> Sem r a
+                         : '[Error String, Embed IO]) a
+                    -> Sem '[Error String, Embed IO] a
 interpretTUIEffects uiVars =
   interpretUI uiVars
     . interpretUserInput uiVars        -- UserInput effect
@@ -320,53 +254,6 @@ interpretTUIEffects uiVars =
     . filesystemIO
     . grepIO
 
--- | Run the final effect stack to IO
-runToIO :: Sem '[Error String, Embed IO] a -> IO (Either String a)
-runToIO = runM . runError
-
--- | Create an AgentRunner builder based on the selected model
-createRunnerBuilder :: ModelSelection -> Config -> IO AgentRunnerBuilder
-createRunnerBuilder UseClaudeSonnet45 _cfg = do
-  maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
-  case maybeToken of
-    Nothing -> do
-      hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
-      error "Missing ANTHROPIC_OAUTH_TOKEN"
-    Just tokenStr ->
-      pure $ mkAgentRunnerBuilder @(Model ClaudeSonnet45 Anthropic) $
-        \uiVars -> AgentRunner $ \agent ->
-          runToIO
-            . interpretTUIEffects uiVars
-            . runSecret (pure tokenStr)
-            . interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic)
-            . withLLMCancellation $ agent
-
-createRunnerBuilder UseGLM45Air cfg =
-  pure $ mkAgentRunnerBuilder @(Model GLM45Air LlamaCpp) $
-    \uiVars -> AgentRunner $ \agent ->
-      runToIO
-        . interpretTUIEffects uiVars
-        . interpretLlamaCpp glm45AirComposableProvider (cfgLlamaCppEndpoint cfg) (Model GLM45Air LlamaCpp)
-        . withLLMCancellation $ agent
-
-createRunnerBuilder UseQwen3Coder cfg =
-  pure $ mkAgentRunnerBuilder @(Model Qwen3Coder LlamaCpp) $
-    \uiVars -> AgentRunner $ \agent ->
-      runToIO
-        . interpretTUIEffects uiVars
-        . interpretLlamaCpp qwen3CoderComposableProvider (cfgLlamaCppEndpoint cfg) (Model Qwen3Coder LlamaCpp)
-        . withLLMCancellation $ agent
-
-createRunnerBuilder UseOpenRouter _cfg = do
-  apiKey <- getOpenRouterApiKey
-  modelName <- getOpenRouterModel
-  pure $ mkAgentRunnerBuilder @(Model Universal OpenRouter) $
-    \uiVars -> AgentRunner $ \agent ->
-      runToIO
-        . interpretTUIEffects uiVars
-        . runSecret (pure apiKey)
-        . interpretOpenRouter universalComposableProvider (Model (Universal (pack modelName)) OpenRouter)
-        . withLLMCancellation $ agent
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)

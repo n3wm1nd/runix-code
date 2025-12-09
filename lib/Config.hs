@@ -44,7 +44,6 @@ data ModelSelection
 data Config = Config
   { cfgModelSelection :: ModelSelection
   , cfgSessionFile :: Maybe FilePath
-  , cfgLlamaCppEndpoint :: String
   } deriving stock (Show, Eq)
 
 --------------------------------------------------------------------------------
@@ -55,7 +54,6 @@ data Config = Config
 --
 -- Environment variables:
 -- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder")
--- - LLAMACPP_ENDPOINT: LlamaCpp server endpoint (default: http://localhost:8080/v1)
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional)
@@ -70,13 +68,9 @@ loadConfig = do
   -- Get model selection from environment
   modelSelection <- getModelSelection
 
-  -- Get LlamaCpp endpoint from environment
-  llamacppEndpoint <- getLlamaCppEndpoint
-
   return Config
     { cfgModelSelection = modelSelection
     , cfgSessionFile = maybeSessionFile
-    , cfgLlamaCppEndpoint = llamacppEndpoint
     }
 
 -- | Get model selection from RUNIX_MODEL environment variable

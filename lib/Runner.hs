@@ -1,5 +1,8 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE InstanceSigs #-}
 
 -- | Runtime execution helpers for runix-code
 --
@@ -7,6 +10,7 @@
 -- - Loading/saving sessions (using FileSystem effect)
 -- - Loading system prompts (using FileSystem effect)
 -- - Running interpreter stacks
+-- - Model-specific runner builders
 --
 -- Everything is generic over model/provider and the actual action to run.
 module Runner
@@ -17,6 +21,9 @@ module Runner
   , loadSystemPrompt
     -- * Interpreter Stack Helpers
   , runWithEffects
+    -- * Model Interpreter
+  , createModelInterpreter
+  , ModelInterpreter(..)
   ) where
 
 import Prelude hiding (readFile, writeFile)
@@ -28,6 +35,9 @@ import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Vector as Vector
 import GHC.Stack
+import System.Environment (lookupEnv)
+import System.IO (hPutStr)
+import qualified System.IO as IO
 
 import Polysemy
 import Polysemy.Fail
@@ -45,8 +55,16 @@ import qualified Runix.Logging.Effects as Log
 import Data.Default (Default, def)
 
 import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
-import UI.UserInput (UserInput, interpretUserInputFail)
+import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt)
+import UniversalLLM.Providers.Anthropic (Anthropic(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
+import Runix.LLM.Effects (LLM)
+import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter)
+import Runix.Secret.Effects (runSecret)
 import Runix.Streaming.Effects (ignoreChunks)
+import UI.UserInput (UserInput, interpretUserInputFail)
+import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), ModelDefaults, claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider)
+import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel)
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -184,3 +202,67 @@ runWithEffects action =
     . filesystemIO
     . grepIO
     $ action
+
+--------------------------------------------------------------------------------
+-- Model Interpreter
+--------------------------------------------------------------------------------
+
+-- | Wrapper for model-specific interpreter
+-- Interprets LLM effect and provides session serialization
+data ModelInterpreter where
+  ModelInterpreter :: forall model.
+    ( Eq (Message model)
+    , HasTools model
+    , SupportsSystemPrompt (ProviderOf model)
+    , ModelDefaults model
+    ) =>
+    { interpretModel :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a
+    , miLoadSession :: forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
+    , miSaveSession :: forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
+    } -> ModelInterpreter
+
+-- | Create a model-specific interpreter based on configuration
+createModelInterpreter :: ModelSelection -> IO ModelInterpreter
+createModelInterpreter UseClaudeSonnet45 = do
+  maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
+  case maybeToken of
+    Nothing -> do
+      hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
+      error "Missing ANTHROPIC_OAUTH_TOKEN"
+    Just tokenStr ->
+      return $ ModelInterpreter
+        { interpretModel =
+            runSecret (pure tokenStr)
+              . interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic) . raiseUnder
+        , miLoadSession = loadSession claudeSonnet45ComposableProvider
+        , miSaveSession = saveSession claudeSonnet45ComposableProvider
+        }
+
+createModelInterpreter UseGLM45Air = do
+  endpoint <- getLlamaCppEndpoint
+  return $ ModelInterpreter
+    { interpretModel =
+        interpretLlamaCpp glm45AirComposableProvider endpoint (Model GLM45Air LlamaCpp)
+    , miLoadSession = loadSession glm45AirComposableProvider
+    , miSaveSession = saveSession glm45AirComposableProvider
+    }
+
+createModelInterpreter UseQwen3Coder = do
+  endpoint <- getLlamaCppEndpoint
+  return $ ModelInterpreter
+    { interpretModel =
+        interpretLlamaCpp qwen3CoderComposableProvider endpoint (Model Qwen3Coder LlamaCpp)
+    , miLoadSession = loadSession qwen3CoderComposableProvider
+    , miSaveSession = saveSession qwen3CoderComposableProvider
+    }
+
+createModelInterpreter UseOpenRouter = do
+  apiKey <- getOpenRouterApiKey
+  modelName <- getOpenRouterModel
+  return $ ModelInterpreter
+    { interpretModel =
+        runSecret (pure apiKey)
+          . interpretOpenRouter universalComposableProvider (Model (Universal (T.pack modelName)) OpenRouter) . raiseUnder
+    , miLoadSession = loadSession universalComposableProvider
+    , miSaveSession = saveSession universalComposableProvider
+    }
