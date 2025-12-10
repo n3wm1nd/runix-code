@@ -167,7 +167,7 @@ deserializeMessages composableProvider val = case val of
 --------------------------------------------------------------------------------
 
 -- | Load system prompt from file or use default
-loadSystemPrompt :: (Members [FileSystemRead, FileSystemWrite, Fail] r, Member Logging r)
+loadSystemPrompt :: (Members [FileSystemRead, Fail] r, Member Logging r)
                  => FilePath  -- ^ Path to system prompt file
                  -> Text      -- ^ Default prompt if file doesn't exist
                  -> Sem r Text

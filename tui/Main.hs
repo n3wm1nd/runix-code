@@ -26,7 +26,7 @@ import UniversalLLM (ProviderOf)
 import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
-import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
+import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog, filesystemReadIO, loggingIO)
 import TUI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
@@ -115,11 +115,10 @@ agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
 
       -- Run the agent with model-specific default configs
       let configs = defaultConfigs @model
-          runToIO' :: Sem (LLM model : Grep : FileSystemRead : FileSystemWrite : Bash : Cmd : HTTP : HTTPStreaming : StreamChunk BS.ByteString : Cancellation : Fail : Logging : UserInput TUIWidget : UI.Effects.UI : Error String : Embed IO : '[]) a -> IO (Either String a)
           runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
 
       result <- runToIO' . withLLMCancellation . runConfig configs . runHistory currentHistory $
-          (runixCode @model @TUIWidget sysPrompt (UserPrompt userInput))
+          runixCode @model @TUIWidget sysPrompt (UserPrompt userInput)
 
       -- Always clear cancellation flag after request completes (whether success or error)
       clearCancellationFlag uiVars
@@ -163,8 +162,7 @@ buildUIRunner modelInterpreter refreshCallback = do
   historyRef <- newIORef ([] :: [Message model])
 
   -- Load system prompt using the composed interpreter stack
-  let runToIO' :: Sem (LLM model : Grep : FileSystemRead : FileSystemWrite : Bash : Cmd : HTTP : HTTPStreaming : StreamChunk BS.ByteString : Cancellation : Fail : Logging : UserInput TUIWidget : UI.Effects.UI : Error String : Embed IO : '[]) a -> IO (Either String a)
-      runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
+  let runToIO' = runM . runError @String . loggingIO . failLog . filesystemReadIO
 
   result <- runToIO' $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant."
   let sysPrompt = case result of
