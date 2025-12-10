@@ -1,5 +1,6 @@
 {-# LANGUAGE AllowAmbiguousTypes #-}
 {-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE TypeAbstractions #-}
 
 module Main (main) where
 
@@ -20,9 +21,9 @@ import Runix.Cancellation.Effects (cancelNoop)
 import Runix.Streaming.Effects (ignoreChunks)
 import qualified Data.ByteString as BS
 
-import Agent (SystemPrompt(..), UserPrompt(..), runRunixCode, responseText)
+import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
 import Config
-import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..))
+import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 
 --------------------------------------------------------------------------------
@@ -87,7 +88,7 @@ main = do
 --
 -- This composes the model interpreter with CLI effects (no streaming, simple I/O)
 runAgent :: ModelInterpreter -> Config -> Text -> IO (Either String Text)
-runAgent (ModelInterpreter interpretModel miLoadSess miSaveSess) cfg userInput = do
+runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg userInput = do
   -- Compose: model interpreter + CLI base effects + run to IO
   let runToIO' = runM
                . runError
@@ -119,7 +120,8 @@ runAgent (ModelInterpreter interpretModel miLoadSess miSaveSess) cfg userInput =
       Just sessionFile -> miLoadSess sessionFile
 
     -- Run the agent (configs are inferred from model's defaultConfigs with streaming disabled)
-    (result, finalHistory) <- withLLMCancellation $ runRunixCode @_ @CLIWidget sysPrompt [] initialHistory userPrompt
+    (result, finalHistory) <- withLLMCancellation . runConfigHistory ([]) initialHistory $ 
+      runixCode @model @CLIWidget sysPrompt userPrompt
 
     -- Save session (if specified)
     case cfgSessionFile cfg of

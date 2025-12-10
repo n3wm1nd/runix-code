@@ -11,6 +11,7 @@
 -- - Loading system prompts (using FileSystem effect)
 -- - Running interpreter stacks
 -- - Model-specific runner builders
+-- - Generic agent runner for stateful agents
 --
 -- Everything is generic over model/provider and the actual action to run.
 module Runner
@@ -24,6 +25,10 @@ module Runner
     -- * Model Interpreter
   , createModelInterpreter
   , ModelInterpreter(..)
+    -- * Generic Agent Runner
+  , runConfigHistory
+  , runConfig
+  , runHistory
   ) where
 
 import Prelude hiding (readFile, writeFile)
@@ -42,6 +47,8 @@ import qualified System.IO as IO
 import Polysemy
 import Polysemy.Fail
 import Polysemy.Error
+import Polysemy.State (State, runState)
+import Polysemy.Reader (Reader, runReader)
 
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, readFile, writeFile, fileExists)
@@ -266,3 +273,40 @@ createModelInterpreter UseOpenRouter = do
     , miLoadSession = loadSession universalComposableProvider
     , miSaveSession = saveSession universalComposableProvider
     }
+
+--------------------------------------------------------------------------------
+-- Generic Agent Runner
+--------------------------------------------------------------------------------
+
+-- | Run an agent-like function with State and Reader effects
+--
+-- This is a generalized version of what runRunixCode does:
+-- - Provides State for message history
+-- - Provides Reader for model configs
+-- - Runs the agent action and returns both the result and final history
+runConfigHistory
+  :: forall model result r.
+     [ModelConfig model]                                 -- ^ Model configuration
+  -> [Message model]                                -- ^ Initial message history
+  -> Sem (State [Message model] : Reader [ModelConfig model] : r) result  -- ^ Agent action
+  -> Sem r (result, [Message model])
+runConfigHistory configs initialHistory agentAction = 
+  runConfig configs . runHistory initialHistory  $ agentAction
+
+runHistory
+  :: forall model result r.
+    [Message model]                                -- ^ Initial message history
+  -> Sem (State [Message model] : r) result  -- ^ Agent action
+  -> Sem r (result, [Message model])
+runHistory initialHistory agentAction = do
+  (finalHistory, result) <- runState initialHistory $ agentAction
+  return (result, finalHistory)
+
+runConfig
+  :: forall model result r.
+    [ModelConfig model]                                -- ^ Model configuration
+  -> Sem (Reader [ModelConfig model] : r) result  -- ^ Agent action
+  -> Sem r result
+runConfig configs agentAction = do
+  runReader configs $ agentAction
+

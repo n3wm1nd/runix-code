@@ -25,10 +25,10 @@ import UniversalLLM (ProviderOf)
 
 import Config
 import Models
-import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..))
+import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog)
 import TUI.UI (runUI)
-import Agent (runRunixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
+import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
@@ -118,11 +118,8 @@ agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
           runToIO' :: Sem (LLM model : Grep : FileSystemRead : FileSystemWrite : Bash : Cmd : HTTP : HTTPStreaming : StreamChunk BS.ByteString : Cancellation : Fail : Logging : UserInput TUIWidget : UI.Effects.UI : Error String : Embed IO : '[]) a -> IO (Either String a)
           runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
 
-      result <- runToIO' $ withLLMCancellation $ runRunixCode @model @TUIWidget
-                           sysPrompt
-                           configs
-                           currentHistory
-                           (UserPrompt userInput)
+      result <- runToIO' . withLLMCancellation . runConfig configs . runHistory currentHistory $
+          (runixCode @model @TUIWidget sysPrompt (UserPrompt userInput))
 
       -- Always clear cancellation flag after request completes (whether success or error)
       clearCancellationFlag uiVars

@@ -11,7 +11,6 @@
 module Agent
   ( -- * Core Functions
     runixCode       -- Stateful version (for composition)
-  , runRunixCode    -- Pure version (for standalone use)
   , runixCodeAgentLoop
 
     -- * Types
@@ -27,7 +26,7 @@ module Agent
 import Data.Text (Text)
 import Polysemy (Member, Members, Sem)
 import Polysemy.State (State, runState, get, put)
-import Polysemy.Reader (Reader, runReader, ask)
+import Polysemy.Reader (Reader, ask, runReader)
 import Polysemy.Fail (Fail)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
@@ -102,7 +101,7 @@ instance ToolFunction (RunixCodeResult model) where
 --------------------------------------------------------------------------------
 
 -- | Runix Code - AI coding assistant (stateful version for composition)
--- Uses State for message history and Reader for system prompt and configs
+-- Uses State for message history and Reader for configs
 runixCode
   :: forall model widget r.
      ( Member (LLM model) r
@@ -113,15 +112,14 @@ runixCode
      , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
-     , Member (Reader SystemPrompt) r
      , Member (Reader [ULL.ModelConfig model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
      )
-  => UserPrompt
+  => SystemPrompt
+  -> UserPrompt
   -> Sem r (RunixCodeResult model)
-runixCode (UserPrompt userPrompt) = do
-  SystemPrompt sysPrompt <- ask @SystemPrompt
+runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   baseConfigs <- ask @[ULL.ModelConfig model]
   currentHistory <- get @[Message model]
 
@@ -140,32 +138,6 @@ runixCode (UserPrompt userPrompt) = do
   where
     isSystemPrompt (ULL.SystemPrompt _) = True
     isSystemPrompt _ = False
-
--- | Pure wrapper for runixCode (for standalone use)
--- Interprets State and Reader effects, returns explicit values
-runRunixCode
-  :: forall model widget r.
-     ( Member (LLM model) r
-     , Member Grep r
-     , Member Logging r
-     , Member (UserInput widget) r
-     , Member Cmd r
-     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
-     , ImplementsWidget widget Text
-     , HasTools model
-     , SupportsSystemPrompt (ProviderOf model)
-     )
-  => SystemPrompt
-  -> [ULL.ModelConfig model]  -- ^ Model configuration (streaming, reasoning, etc.)
-  -> [Message model]
-  -> UserPrompt
-  -> Sem r (RunixCodeResult model, [Message model])
-runRunixCode sysPrompt configs initialHistory userPrompt = do
-  (finalHistory, result) <- runReader sysPrompt $
-                              runReader configs $
-                                runState initialHistory $
-                                  runixCode @model @widget userPrompt
-  return (result, finalHistory)
 
 -- | Update config with new tool list
 setTools :: HasTools model => [LLMTool (Sem r)] -> [ULL.ModelConfig model] -> [ULL.ModelConfig model]
@@ -188,7 +160,6 @@ runixCodeAgentLoop
      , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig model]) r
-     , Member (Reader SystemPrompt) r
      , Member (State [Message model]) r
      , Member (State [Tools.Todo]) r
      , HasTools model
