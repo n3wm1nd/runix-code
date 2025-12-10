@@ -62,7 +62,7 @@ import qualified Runix.Logging.Effects as Log
 import Data.Default (Default, def)
 
 import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
-import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt)
+import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt, SupportsStreaming)
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import Runix.LLM.Effects (LLM)
@@ -222,6 +222,7 @@ data ModelInterpreter where
     , HasTools model
     , SupportsSystemPrompt (ProviderOf model)
     , ModelDefaults model
+    , SupportsStreaming (ProviderOf model)
     ) =>
     { interpretModel :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a
     , miLoadSession :: forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]

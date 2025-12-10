@@ -12,7 +12,7 @@ import Polysemy.Embed (embed)
 import Control.Concurrent.STM
 
 import UI.Effects
-import UI.State (UIVars, userInputQueue, waitForUserInput, sendAgentEvent)
+import UI.State (UIVars, userInputQueue, waitForUserInput, sendAgentEvent, UserRequest(..))
 import UI.State (AgentEvent(..))
 import Runix.Logging.Effects (Level(..))
 
@@ -34,5 +34,6 @@ interpretUI uiVars = interpret $ \case
   PromptUser prompt -> do
     -- First, send status update to show we're waiting for input
     embed $ sendAgentEvent uiVars (LogEvent Info prompt)
-    -- Then block until user provides input
-    embed $ atomically $ waitForUserInput (userInputQueue uiVars)
+    -- Then block until user provides input (extract just the text)
+    request <- embed $ atomically $ waitForUserInput (userInputQueue uiVars)
+    return $ userText request

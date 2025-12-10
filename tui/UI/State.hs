@@ -12,6 +12,8 @@ module UI.State
   , Name(..)
   , AgentEvent(..)
   , SomeInputWidget(..)
+  , LLMSettings(..)
+  , UserRequest(..)
   , newUIVars
   , sendAgentEvent
   , waitForUserInput
@@ -83,11 +85,22 @@ instance Show msg => Show (AgentEvent msg) where
   show (ShowInputWidgetEvent _) = "ShowInputWidgetEvent <widget>"
   show ClearInputWidgetEvent = "ClearInputWidgetEvent"
 
+-- | Runtime LLM configuration settings
+data LLMSettings = LLMSettings
+  { llmStreaming :: Bool
+  } deriving stock (Eq, Show)
+
+-- | User request containing input text and LLM settings
+data UserRequest = UserRequest
+  { userText :: Text
+  , requestSettings :: LLMSettings
+  } deriving stock (Eq, Show)
+
 -- | Shared state variables for UI communication
 -- Parametrized over message type to work with typed events
 data UIVars msg = UIVars
   { agentEventChan :: AgentEvent msg -> IO ()  -- ^ Callback to send events to UI
-  , userInputQueue :: TQueue Text         -- ^ User input queue (UI writes, agent reads)
+  , userInputQueue :: TQueue UserRequest  -- ^ User input queue (UI writes, agent reads)
   , cancellationFlag :: TVar Bool         -- ^ Cancellation flag (UI writes, agent reads)
   }
 
@@ -112,11 +125,11 @@ sendAgentEvent vars event =
   agentEventChan vars event
 
 -- | Block until user provides input
-waitForUserInput :: TQueue Text -> STM Text
+waitForUserInput :: TQueue UserRequest -> STM UserRequest
 waitForUserInput = readTQueue
 
 -- | Provide user input (from UI thread)
-provideUserInput :: TQueue Text -> Text -> STM ()
+provideUserInput :: TQueue UserRequest -> UserRequest -> STM ()
 provideUserInput = writeTQueue
 
 -- | Request cancellation from the UI thread (sets flag)

@@ -38,7 +38,7 @@ import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..))
+import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
 import UniversalLLM.Core.Types (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
@@ -80,6 +80,7 @@ data AppState msg = AppState
   , _markdownMode :: MarkdownMode          -- Whether to render markdown or show raw
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
   , _eventChan :: Brick.BChan.BChan (CustomEvent msg)  -- Event channel for sending custom events
+  , _llmSettings :: LLMSettings            -- Current LLM settings for display
   }
 
 --------------------------------------------------------------------------------
@@ -115,6 +116,9 @@ lastViewportL = lens _lastViewport (\st v -> st { _lastViewport = v })
 
 eventChanL :: Lens' (AppState msg) (Brick.BChan.BChan (CustomEvent msg))
 eventChanL = lens _eventChan (\st c -> st { _eventChan = c })
+
+llmSettingsL :: Lens' (AppState msg) LLMSettings
+llmSettingsL = lens _llmSettings (\st s -> st { _llmSettings = s })
 
 --------------------------------------------------------------------------------
 -- Display Rendering
@@ -153,6 +157,7 @@ runUI mkUIVars = do
         , _markdownMode = RenderMarkdown
         , _lastViewport = Nothing
         , _eventChan = eventChan
+        , _llmSettings = LLMSettings { llmStreaming = True }  -- Default settings
         }
 
   -- Create vty with bracketed paste enabled
@@ -189,6 +194,7 @@ drawUI st = [indicatorLayer, baseLayer]
     status = _status st
     mPendingInput = _pendingInput st
     wzipper = _widgetZipper st
+    vars = _uiVars st
 
     -- Extract pre-rendered widgets from the widget zipper
     -- Zipper structure: front is reversed (newest at head), back is natural order (oldest at head)
@@ -219,6 +225,8 @@ drawUI st = [indicatorLayer, baseLayer]
     markdownStr = case _markdownMode st of
                     RenderMarkdown -> "Markdown: rendered"
                     ShowRaw -> "Markdown: raw"
+
+    llmSettingsStr = "Streaming: " ++ (if llmStreaming (_llmSettings st) then "on" else "off")
 
     -- Combine widgets: front (oldest) ++ current ++ back (newest at bottom)
     historyWidgets = frontWidgets ++ currentWidgets ++ backWidgets
@@ -253,7 +261,7 @@ drawUI st = [indicatorLayer, baseLayer]
                     , hBorder
                     , vLimit inputHeight $
                         renderEditor (vBox . map renderLine) True (_inputEditor st)
-                    , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: toggle input | Ctrl-R: toggle markdown | Ctrl-C: quit"
+                    , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | " ++ llmSettingsStr ++ " | \\<Enter>: newline | Ctrl-T: input | Ctrl-R: markdown | Ctrl-S: streaming | Ctrl-C: quit"
                     ]
       T.render ui
 
@@ -529,6 +537,11 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
   chan <- use eventChanL
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 
+-- Ctrl-S toggles streaming on/off
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 's') [V.MCtrl])) = do
+  settings <- use llmSettingsL
+  llmSettingsL .= settings { llmStreaming = not (llmStreaming settings) }
+
 -- Ctrl-D sends message (useful in EnterNewline mode)
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
 
@@ -584,14 +597,16 @@ sendMessage = do
   if null (filter (/= ' ') content)
     then return ()  -- Don't send empty messages
     else do
-      -- Get the UI vars
+      -- Get the UI vars and current settings
       vars <- use uiVarsL
+      settings <- use llmSettingsL
 
       -- Set status to Processing immediately
       statusL .= Text.pack "Processing..."
 
-      -- Send user input to the agent via TMVar
-      liftIO $ atomically $ provideUserInput (userInputQueue vars) (Text.pack content)
+      -- Send user request (text + settings) to the agent
+      let request = UserRequest { userText = Text.pack content, requestSettings = settings }
+      liftIO $ atomically $ provideUserInput (userInputQueue vars) request
 
       -- Clear input
       inputEditorL .= editor InputEditor Nothing ""

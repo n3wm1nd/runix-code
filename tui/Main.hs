@@ -20,7 +20,7 @@ import qualified Control.Exception as Exception
 import Polysemy
 import Polysemy.Error (runError, Error)
 
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM.Core.Types (Message(..), ModelConfig(Streaming))
 import UniversalLLM (ProviderOf)
 
 import Config
@@ -40,7 +40,7 @@ import Runix.Logging.Effects (Logging(..))
 import Runix.Cancellation.Effects (Cancellation(..))
 import Runix.Streaming.Effects (StreamChunk(..), emitChunk)
 import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, AgentEvent(..))
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
@@ -48,7 +48,7 @@ import UI.UserInput.Interpreter (interpretUserInput)
 import UI.UserInput.InputWidget (TUIWidget)
 import Control.Monad (forever)
 import Polysemy.Fail (Fail)
-import UniversalLLM (HasTools, SupportsSystemPrompt)
+import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified UI.Effects
 
@@ -91,6 +91,7 @@ agentLoop :: forall model.
              ( HasTools model
              , SupportsSystemPrompt (ProviderOf model)
              , ModelDefaults model
+             , SupportsStreaming (ProviderOf model)
              )
           => UIVars (Message model)
           -> IORef [Message model]
@@ -101,8 +102,8 @@ agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
   Exception.catch runOneIteration handleException
   where
     runOneIteration = do
-      -- Wait for user input
-      userInput <- atomically $ waitForUserInput (userInputQueue uiVars)
+      -- Wait for user request (includes text + settings)
+      UserRequest{userText, requestSettings} <- atomically $ waitForUserInput (userInputQueue uiVars)
 
       -- Clear any previous cancellation flag before starting new request
       clearCancellationFlag uiVars
@@ -111,14 +112,20 @@ agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
       currentHistory <- readIORef historyRef
 
       -- Send user message to UI immediately
-      sendAgentEvent uiVars (UserMessageEvent (UserText userInput))
+      sendAgentEvent uiVars (UserMessageEvent (UserText userText))
 
-      -- Run the agent with model-specific default configs
-      let configs = defaultConfigs @model
+      -- Build configs using settings from the request
+      let isStreaming (Streaming _) = True
+          isStreaming _ = False
+
+          baseConfigs = defaultConfigs @model
+          -- Filter out Streaming from defaults, replace with request setting
+          configsWithoutStreaming = filter (not . isStreaming) baseConfigs
+          runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming requestSettings)]
           runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
 
-      result <- runToIO' . withLLMCancellation . runConfig configs . runHistory currentHistory $
-          runixCode @model @TUIWidget sysPrompt (UserPrompt userInput)
+      result <- runToIO' . withLLMCancellation . runConfig runtimeConfigs . runHistory currentHistory $
+          runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
 
       -- Always clear cancellation flag after request completes (whether success or error)
       clearCancellationFlag uiVars
@@ -153,6 +160,7 @@ buildUIRunner :: forall model.
                  ( HasTools model
                  , SupportsSystemPrompt (ProviderOf model)
                  , ModelDefaults model
+                 , SupportsStreaming (ProviderOf model)
                  )
               => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
