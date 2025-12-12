@@ -24,10 +24,14 @@ module Agent
   ) where
 
 import Data.Text (Text)
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import Data.ByteString (ByteString)
+import Control.Monad (forM)
 import Polysemy (Member, Members, Sem)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, ask, runReader)
-import Polysemy.Fail (Fail)
+import Polysemy.Fail (Fail, runFail)
 import UniversalLLM.Core.Types (Message(..))
 import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
 import UniversalLLM (HasTools, SupportsSystemPrompt)
@@ -42,6 +46,7 @@ import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging)
 import qualified Runix.FileSystem.Effects
+import Runix.FileSystem.Effects (FileWatcher)
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
@@ -94,6 +99,35 @@ instance ToolFunction (RunixCodeResult model) where
   toolFunctionDescription _ = "AI coding assistant that can read/write files, run shell commands, and help with code"
 
 --------------------------------------------------------------------------------
+-- Helper Functions
+--------------------------------------------------------------------------------
+
+-- | Format file changes with diffs as a system message
+-- Creates temporary .olddiff files to diff against
+formatFileChanges :: Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite, Cmd, Fail] r
+                  => [(String, ByteString, ByteString)]
+                  -> Sem r Text
+formatFileChanges changes = do
+  let header = T.pack $ "SYSTEM NOTIFICATION: " ++ show (length changes) ++ " file(s) changed externally:\n\n"
+
+  -- Process each changed file
+  diffs <- forM changes $ \(path, oldContent, _newContent) -> do
+    -- Write old content to temporary file
+    let tempPath = path ++ ".olddiff"
+    Runix.FileSystem.Effects.writeFile tempPath oldContent
+
+    -- Run diff using Tools.diff
+    Tools.DiffResult diffOutput <- Tools.diff (Tools.FilePath $ T.pack tempPath) (Tools.FilePath $ T.pack path)
+
+    -- Clean up temp file
+    -- Note: We don't have a delete operation, so we could write empty or leave it
+    -- For now, just leave the cleanup implicit (file will be overwritten next time)
+
+    return diffOutput
+
+  return $ header <> T.intercalate "\n---\n\n" diffs
+
+--------------------------------------------------------------------------------
 -- (State effect for todo tracking is run locally in agent loop)
 --------------------------------------------------------------------------------
 
@@ -110,6 +144,7 @@ runixCode
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
+     , Member FileWatcher r
      , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
@@ -159,6 +194,7 @@ runixCodeAgentLoop
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
+     , Member FileWatcher r
      , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig model]) r
@@ -199,10 +235,24 @@ runixCodeAgentLoop = do
   let tools = baseTools ++ subagentTools ++ skillTools
       configs = setTools tools baseConfigs
 
+  -- Check for file changes and inject as system messages
   currentHistory <- get @[Message model]
-  responseMsgs <- queryLLM configs currentHistory
+  changedFiles <- Runix.FileSystem.Effects.getChangedFiles
+  historyWithChanges <- if null changedFiles
+        then return currentHistory
+        else do
+          -- Run formatFileChanges with runFail - if it fails, just skip the notification
+          diffResult <- runFail $ formatFileChanges changedFiles
+          case diffResult of
+            Right diffText -> return $ currentHistory ++ [SystemText diffText]
+            Left _err -> return currentHistory  -- Skip notification if diff fails
 
-  let historyWithResponse = currentHistory ++ responseMsgs
+  -- Update history with change notifications before querying LLM
+  put @[Message model] historyWithChanges
+
+  responseMsgs <- queryLLM configs historyWithChanges
+
+  let historyWithResponse = historyWithChanges ++ responseMsgs
       toolCalls = [tc | AssistantTool tc <- responseMsgs]
 
   -- Update history state

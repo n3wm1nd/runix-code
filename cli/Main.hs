@@ -17,6 +17,7 @@ import Polysemy.Error (runError)
 
 import Runix.LLM.Interpreter hiding (SystemPrompt)
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.FileSystem.Effects (fileWatcherNoop)
 import Runix.Cancellation.Effects (cancelNoop)
 import Runix.Streaming.Effects (ignoreChunks)
 import qualified Data.ByteString as BS
@@ -101,6 +102,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . httpIO (withRequestTimeout 300)
                . cmdIO
                . bashIO
+               . fileWatcherNoop         -- No-op file watcher for CLI
                . filesystemIO
                . grepIO
                . interpretModel

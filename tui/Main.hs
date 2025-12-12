@@ -31,7 +31,7 @@ import TUI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, FileWatcher, fileWatcherIO, interceptFileAccessRead, interceptFileAccessWrite)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
@@ -225,38 +225,42 @@ interpretCancellation uiVars = interpret $ \case
 -- - Cancellation, logging, user input
 -- - UI effects and error handling
 
-interpretTUIEffects :: forall msg a.
-                       UIVars msg
+
+interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
+                    => UIVars msg
                     -> Sem (Grep
-                         : FileSystemRead
-                         : FileSystemWrite
                          : Bash
                          : Cmd
+                         : FileWatcher
                          : HTTP
                          : HTTPStreaming
                          : StreamChunk BS.ByteString
                          : Cancellation
+                         : FileSystemRead
+                         : FileSystemWrite
                          : Fail
                          : Logging
                          : UserInput TUIWidget
                          : UI.Effects.UI
-                         : '[Error String, Embed IO]) a
-                    -> Sem '[Error String, Embed IO] a
+                         : r) a
+                    -> Sem r a
 interpretTUIEffects uiVars =
   interpretUI uiVars
     . interpretUserInput uiVars        -- UserInput effect
     . interpretLoggingToUI
     . failLog
+    . filesystemIO                      -- Interpret filesystem effects
     . interpretCancellation uiVars     -- Handle Cancellation effect
     . interpretStreamChunkToUI uiVars  -- Handle StreamChunk Text
     . reinterpretSSEChunks              -- Convert StreamChunk BS -> StreamChunk Text
     . httpIOStreaming (withRequestTimeout 300)  -- Emit StreamChunk BS
     . httpIO (withRequestTimeout 300)           -- Handle non-streaming HTTP
+    . fileWatcherIO                     -- Interpret FileWatcher effect
+    . interceptFileAccessWrite          -- Auto-watch written files (intercepts WriteFile calls)
+    . interceptFileAccessRead           -- Auto-watch read files (intercepts ReadFile calls)
     . cmdIO
     . bashIO
-    . filesystemIO
-    . grepIO
-
+    . grepIO                            -- Interpret grep effect
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)

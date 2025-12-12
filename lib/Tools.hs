@@ -17,6 +17,7 @@ module Tools
   , editFile
   , glob
   , grep
+  , diff
 
     -- * Shell
   , bash
@@ -43,6 +44,7 @@ module Tools
   , EditFileResult (..)
   , GlobResult (..)
   , GrepResult (..)
+  , DiffResult (..)
   , BashResult (..)
   , CabalBuildResult (..)
   , GenerateToolResult (..)
@@ -74,6 +76,7 @@ import qualified Data.Text.Encoding as T
 import Polysemy (Sem, Member, Members)
 import Polysemy.State (State, modify, get, put)
 import Polysemy.Fail (Fail)
+import qualified Polysemy.Fail
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
@@ -243,6 +246,10 @@ newtype GrepResult = GrepResult Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
 
+newtype DiffResult = DiffResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
 newtype BashResult = BashResult Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
@@ -324,6 +331,10 @@ instance ToolParameter GrepResult where
   paramName _ _ = "grep_result"
   paramDescription _ = "search results"
 
+instance ToolParameter DiffResult where
+  paramName _ _ = "diff_result"
+  paramDescription _ = "unified diff output showing differences between files"
+
 instance ToolParameter BashResult where
   paramName _ _ = "bash_result"
   paramDescription _ = "command output"
@@ -376,6 +387,10 @@ instance ToolFunction GlobResult where
 instance ToolFunction GrepResult where
   toolFunctionName _ = "grep"
   toolFunctionDescription _ = "Search file contents using regex pattern"
+
+instance ToolFunction DiffResult where
+  toolFunctionName _ = "diff"
+  toolFunctionDescription _ = "Show differences between two files using unified diff format"
 
 instance ToolFunction BashResult where
   toolFunctionName _ = "bash"
@@ -497,6 +512,31 @@ grep (Pattern pattern) = do
                    T.pack (show $ Runix.Grep.Effects.matchLine m) <> ":" <>
                    Runix.Grep.Effects.matchText m) matches
   return $ GrepResult formatted
+
+-- | Run unified diff between two files
+-- Fails if either file doesn't exist (uses Fail effect)
+diff
+  :: Members '[FileSystemRead, Cmd, Fail] r
+  => FilePath
+  -> FilePath
+  -> Sem r DiffResult
+diff (FilePath file1) (FilePath file2) = do
+  -- Verify files exist (for safety)
+  exists1 <- Runix.FileSystem.Effects.fileExists (T.unpack file1)
+  exists2 <- Runix.FileSystem.Effects.fileExists (T.unpack file2)
+
+  if not exists1
+    then fail $ "File does not exist: " ++ T.unpack file1
+    else if not exists2
+    then fail $ "File does not exist: " ++ T.unpack file2
+    else do
+      -- Run diff command with unified format (-u)
+      -- diff returns exit code 0 if files are same, 1 if different, 2 on error
+      output <- Runix.Cmd.Effects.cmdExec "diff" ["-u", T.unpack file1, T.unpack file2]
+      -- Check if diff failed (exit code 2 means error)
+      if Runix.Cmd.Effects.exitCode output == 2
+        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.Effects.stderr output)
+        else return $ DiffResult $ Runix.Cmd.Effects.stdout output
 
 --------------------------------------------------------------------------------
 -- Shell Operations
