@@ -76,7 +76,6 @@ import qualified Data.Text.Encoding as T
 import Polysemy (Sem, Member, Members)
 import Polysemy.State (State, modify, get, put)
 import Polysemy.Fail (Fail)
-import qualified Polysemy.Fail
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))

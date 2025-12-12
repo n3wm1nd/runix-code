@@ -25,7 +25,6 @@ module Agent
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as T
 import Data.ByteString (ByteString)
 import Control.Monad (forM)
 import Polysemy (Member, Members, Sem)
