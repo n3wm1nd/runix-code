@@ -55,6 +55,7 @@ library
     import:           warnings, extensions
     exposed-modules:  Agent
                     , Tools
+                    , Tools.Claude
                     , GeneratedTools
                     , Models
                     , Config
@@ -71,6 +72,7 @@ library
                     , bytestring
                     , vector
                     , directory
+                    , filepath
                     , data-default
 
     hs-source-dirs:   lib

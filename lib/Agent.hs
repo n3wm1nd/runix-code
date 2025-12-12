@@ -37,6 +37,7 @@ import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
+import qualified Tools.Claude
 import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging)
@@ -169,8 +170,12 @@ runixCodeAgentLoop
 runixCodeAgentLoop = do
   baseConfigs <- ask @[ULL.ModelConfig model]
 
-  let tools :: [LLMTool (Sem (Fail ': r))]
-      tools =
+  -- Load Claude Code integrations (subagents and skills)
+  subagents <- Tools.Claude.loadSubagents
+  skills <- Tools.Claude.loadSkills
+
+  let baseTools :: [LLMTool (Sem (Fail ': r))]
+      baseTools =
         [ LLMTool Tools.grep
         , LLMTool Tools.glob
         , LLMTool Tools.readFile
@@ -179,11 +184,18 @@ runixCodeAgentLoop = do
         , LLMTool Tools.todoRead
         , LLMTool Tools.todoCheck
         , LLMTool Tools.todoDelete
-        -- Recursive agent starts with fresh history, shares SystemPrompt Reader
-        -- , LLMTool (\prompt -> fmap snd $ runState @[Message model provider] [] $ runixCode @provider @model @widget prompt)
         , LLMTool Tools.cabalBuild
         , LLMTool Tools.generateTool
         ]
+
+  -- Convert subagents to tools
+  subagentTools :: [LLMTool (Sem (Fail ': r))] <- return $ map (Tools.Claude.claudeSubagentToTool @model baseTools) subagents
+
+  -- Convert skills to tools
+  skillTools :: [LLMTool (Sem (Fail ': r))] <- mapM (Tools.Claude.claudeSkillToTool @model) skills
+
+  -- Combine all tools
+  let tools = baseTools ++ subagentTools ++ skillTools
       configs = setTools tools baseConfigs
 
   currentHistory <- get @[Message model]
