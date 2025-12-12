@@ -43,7 +43,7 @@ import qualified Tools
 import qualified Tools.Claude
 import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
-import Runix.Logging.Effects (Logging)
+import Runix.Logging.Effects (Logging, info)
 import qualified Runix.FileSystem.Effects
 import Runix.FileSystem.Effects (FileWatcher, interceptFileAccessRead, interceptFileAccessWrite)
 import UI.UserInput (UserInput, ImplementsWidget)
@@ -92,6 +92,7 @@ instance HasCodec (RunixCodeResult model) where
 instance ToolParameter (RunixCodeResult model) where
   paramName _ _ = "result"
   paramDescription _ = "result from the runix code agent"
+
 
 instance ToolFunction (RunixCodeResult model) where
   toolFunctionName _ = "runix_code"
@@ -236,10 +237,16 @@ runixCodeAgentLoop = do
 
   -- Check for file changes and inject as system messages
   currentHistory <- get @[Message model]
+
   changedFiles <- Runix.FileSystem.Effects.getChangedFiles
+
   historyWithChanges <- if null changedFiles
         then return currentHistory
         else do
+          -- Log detected changes
+          info $ T.pack $ "Detected " ++ show (length changedFiles) ++ " file change(s): " ++
+                          show (map (\(path, _, _) -> path) changedFiles)
+
           -- Run formatFileChanges with runFail - if it fails, just skip the notification
           diffResult <- runFail $ formatFileChanges changedFiles
           case diffResult of

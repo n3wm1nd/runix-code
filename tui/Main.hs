@@ -15,10 +15,9 @@ import qualified Data.Text as T
 import Data.IORef
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
-import qualified Control.Exception as Exception
 
 import Polysemy
-import Polysemy.Error (runError, Error)
+import Polysemy.Error (runError, Error, catch)
 
 import UniversalLLM.Core.Types (Message(..), ModelConfig(Streaming))
 import UniversalLLM (ProviderOf)
@@ -31,7 +30,7 @@ import TUI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, FileWatcher, fileWatcherIO, interceptFileAccessRead, interceptFileAccessWrite)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, FileWatcher, fileWatcherIO)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
@@ -98,21 +97,32 @@ agentLoop :: forall model.
           -> SystemPrompt
           -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
           -> IO ()
-agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
-  Exception.catch runOneIteration handleException
+agentLoop uiVars historyRef sysPrompt modelInterpreter = do
+  -- Run the entire agent loop inside Sem so FileWatcher state persists
+  let runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
+
+  result <- runToIO' $ forever $ runOneIteration
+
+  -- Handle top-level errors (though forever should never return)
+  case result of
+    Left err -> do
+      clearCancellationFlag uiVars
+      sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Fatal error: " ++ err))
+    Right _ -> return ()
+
   where
     runOneIteration = do
       -- Wait for user request (includes text + settings)
-      UserRequest{userText, requestSettings} <- atomically $ waitForUserInput (userInputQueue uiVars)
+      UserRequest{userText, requestSettings} <- embed $ atomically $ waitForUserInput (userInputQueue uiVars)
 
       -- Clear any previous cancellation flag before starting new request
-      clearCancellationFlag uiVars
+      embed $ clearCancellationFlag uiVars
 
       -- Get current history
-      currentHistory <- readIORef historyRef
+      currentHistory <- embed $ readIORef historyRef
 
       -- Send user message to UI immediately
-      sendAgentEvent uiVars (UserMessageEvent (UserText userText))
+      embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
 
       -- Build configs using settings from the request
       let isStreaming (Streaming _) = True
@@ -122,29 +132,18 @@ agentLoop uiVars historyRef sysPrompt modelInterpreter = forever $
           -- Filter out Streaming from defaults, replace with request setting
           configsWithoutStreaming = filter (not . isStreaming) baseConfigs
           runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming requestSettings)]
-          runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
 
-      result <- runToIO' . withLLMCancellation . runConfig runtimeConfigs . runHistory currentHistory $
-          runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+      -- Run agent with error catching
+      catch
+        (do (_result, newHistory) <- withLLMCancellation . runConfig runtimeConfigs . runHistory currentHistory $
+                runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+            embed $ updateHistory uiVars historyRef newHistory)
+        (\err -> do
+          -- Show error in UI
+          embed $ sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Agent error: " ++ err)))
 
       -- Always clear cancellation flag after request completes (whether success or error)
-      clearCancellationFlag uiVars
-
-      case result of
-        Left err -> do
-          -- Show error in UI
-          sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Agent error: " ++ err))
-          -- History already has user message from above, nothing more to do
-
-        Right (_result, newHistory) -> do
-          -- Update history with agent's response
-          updateHistory uiVars historyRef newHistory
-
-    handleException :: Exception.SomeException -> IO ()
-    handleException e = do
-      -- Catch any IO exception in this iteration and show in UI
-      clearCancellationFlag uiVars
-      sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Uncaught exception: " ++ Exception.displayException e))
+      embed $ clearCancellationFlag uiVars
 
 --------------------------------------------------------------------------------
 -- UI Runner Builder
