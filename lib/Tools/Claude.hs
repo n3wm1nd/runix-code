@@ -14,6 +14,9 @@ module Tools.Claude
   -- * Skills
   , loadSkills
   , claudeSkillToTool
+  -- * CLAUDE.md
+  , loadClaudeMdConfigs
+  , ClaudeInstructions (..)
   ) where
 
 import Data.Text (Text)
@@ -51,6 +54,10 @@ instance HasCodec UserPrompt where
 instance ToolParameter UserPrompt where
   paramName _ _ = "prompt"
   paramDescription _ = "the user's request or question"
+
+-- | CLAUDE.md instructions
+newtype ClaudeInstructions = ClaudeInstructions Text
+  deriving stock (Show, Eq)
 
 -- | Result from a subagent/skill call
 data SubagentResult model = SubagentResult
@@ -323,3 +330,28 @@ claudeSkillToTool skill = do
   let toolFunction = raise . claudeSkill @model scriptTools skill
       wrapped = mkTool (skillName skill) (skillDescription skill) toolFunction
   return $ LLMTool wrapped
+
+--------------------------------------------------------------------------------
+-- CLAUDE.md Loading
+--------------------------------------------------------------------------------
+
+-- | Load CLAUDE.md files from current directory and .claude/ directory
+-- Silently ignores files that can't be read
+loadClaudeMdConfigs
+  :: Member Runix.FileSystem.Effects.FileSystemRead r
+  => Sem r [ClaudeInstructions]
+loadClaudeMdConfigs = do
+  rootClaudeMd <- tryReadFile "CLAUDE.md"
+  dotClaudeMd <- tryReadFile ".claude/CLAUDE.md"
+
+  return $ catMaybes
+    [ fmap (\content -> ClaudeInstructions $ "# Project Instructions (CLAUDE.md)\n\n" <> content) rootClaudeMd
+    , fmap (\content -> ClaudeInstructions $ "# Additional Instructions (.claude/CLAUDE.md)\n\n" <> content) dotClaudeMd
+    ]
+  where
+    tryReadFile :: Member Runix.FileSystem.Effects.FileSystemRead r => FilePath -> Sem r (Maybe Text)
+    tryReadFile path = do
+      result <- runFail $ Runix.FileSystem.Effects.readFile path
+      return $ case result of
+        Right contents -> Just (TE.decodeUtf8 contents)
+        Left _ -> Nothing

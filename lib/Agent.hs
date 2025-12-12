@@ -124,7 +124,11 @@ runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   baseConfigs <- ask @[ULL.ModelConfig model]
   currentHistory <- get @[Message model]
 
-  let configsWithSystem = ULL.SystemPrompt sysPrompt : filter (not . isSystemPrompt) baseConfigs
+  -- Load CLAUDE.md files and add as system prompts if they exist
+  claudeInstructions <- Tools.Claude.loadClaudeMdConfigs
+
+  let claudeMdConfigs = map (\(Tools.Claude.ClaudeInstructions txt) -> ULL.SystemPrompt txt) claudeInstructions
+      configsWithSystem = ULL.SystemPrompt sysPrompt : claudeMdConfigs ++ baseConfigs
       newHistory = currentHistory ++ [UserText userPrompt]
 
   -- Add user prompt to history
@@ -136,9 +140,6 @@ runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
       runReader configsWithSystem $
         runixCodeAgentLoop @model @widget
   return result
-  where
-    isSystemPrompt (ULL.SystemPrompt _) = True
-    isSystemPrompt _ = False
 
 -- | Update config with new tool list
 setTools :: HasTools model => [LLMTool (Sem r)] -> [ULL.ModelConfig model] -> [ULL.ModelConfig model]
