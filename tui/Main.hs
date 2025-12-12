@@ -256,8 +256,6 @@ interpretTUIEffects uiVars =
     . httpIOStreaming (withRequestTimeout 300)  -- Emit StreamChunk BS
     . httpIO (withRequestTimeout 300)           -- Handle non-streaming HTTP
     . fileWatcherIO                     -- Interpret FileWatcher effect
-    . interceptFileAccessWrite          -- Auto-watch written files (intercepts WriteFile calls)
-    . interceptFileAccessRead           -- Auto-watch read files (intercepts ReadFile calls)
     . cmdIO
     . bashIO
     . grepIO                            -- Interpret grep effect

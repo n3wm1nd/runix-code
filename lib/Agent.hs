@@ -46,7 +46,7 @@ import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging)
 import qualified Runix.FileSystem.Effects
-import Runix.FileSystem.Effects (FileWatcher)
+import Runix.FileSystem.Effects (FileWatcher, interceptFileAccessRead, interceptFileAccessWrite)
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
@@ -267,7 +267,7 @@ runixCodeAgentLoop = do
 
     calls -> do
       -- Execute all tool calls with logging - tools mutate State [Todo] directly
-      results <- mapM (executeTool tools) calls
+      results <- mapM (interceptFileAccessRead . interceptFileAccessWrite . executeTool tools) calls
       let historyWithResults = historyWithResponse ++ map ToolResultMsg results
 
       -- Update history again with tool results
