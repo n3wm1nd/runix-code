@@ -103,8 +103,8 @@ instance ToolFunction (RunixCodeResult model) where
 --------------------------------------------------------------------------------
 
 -- | Format file changes with diffs as a system message
--- Creates temporary .olddiff files to diff against
-formatFileChanges :: Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite, Cmd, Fail] r
+-- Diffs old content (via stdin) against current file
+formatFileChanges :: Members '[Runix.FileSystem.Effects.FileSystemRead, Cmd, Fail] r
                   => [(String, ByteString, ByteString)]
                   -> Sem r Text
 formatFileChanges changes = do
@@ -112,17 +112,8 @@ formatFileChanges changes = do
 
   -- Process each changed file
   diffs <- forM changes $ \(path, oldContent, _newContent) -> do
-    -- Write old content to temporary file
-    let tempPath = path ++ ".olddiff"
-    Runix.FileSystem.Effects.writeFile tempPath oldContent
-
-    -- Run diff using Tools.diff
-    Tools.DiffResult diffOutput <- Tools.diff (Tools.FilePath $ T.pack tempPath) (Tools.FilePath $ T.pack path)
-
-    -- Clean up temp file
-    -- Note: We don't have a delete operation, so we could write empty or leave it
-    -- For now, just leave the cleanup implicit (file will be overwritten next time)
-
+    -- Run diff with old content via stdin, label it as path.old
+    Tools.DiffResult diffOutput <- Tools.diffContentVsFile (path ++ ".old") oldContent (Tools.FilePath $ T.pack path)
     return diffOutput
 
   return $ header <> T.intercalate "\n---\n\n" diffs

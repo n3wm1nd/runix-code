@@ -18,6 +18,7 @@ module Tools
   , glob
   , grep
   , diff
+  , diffContentVsFile
 
     -- * Shell
   , bash
@@ -73,6 +74,7 @@ import Prelude hiding (readFile, writeFile, FilePath)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
+import Data.ByteString (ByteString)
 import Polysemy (Sem, Member, Members)
 import Polysemy.State (State, modify, get, put)
 import Polysemy.Fail (Fail)
@@ -532,6 +534,30 @@ diff (FilePath file1) (FilePath file2) = do
       -- Run diff command with unified format (-u)
       -- diff returns exit code 0 if files are same, 1 if different, 2 on error
       output <- Runix.Cmd.Effects.cmdExec "diff" ["-u", T.unpack file1, T.unpack file2]
+      -- Check if diff failed (exit code 2 means error)
+      if Runix.Cmd.Effects.exitCode output == 2
+        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.Effects.stderr output)
+        else return $ DiffResult $ Runix.Cmd.Effects.stdout output
+
+-- | Run unified diff between old content (via stdin) and a file
+-- The label is used for the "old" file name in the diff output
+diffContentVsFile
+  :: Members '[FileSystemRead, Cmd, Fail] r
+  => String           -- ^ Label for old content (e.g., "path/to/file.old")
+  -> ByteString       -- ^ Old content
+  -> FilePath         -- ^ Path to current file
+  -> Sem r DiffResult
+diffContentVsFile label oldContent (FilePath file) = do
+  -- Verify file exists
+  exists <- Runix.FileSystem.Effects.fileExists (T.unpack file)
+  if not exists
+    then fail $ "File does not exist: " ++ T.unpack file
+    else do
+      -- Run diff with old content via stdin
+      -- Use --label to set the filename for stdin content, and - to read from stdin
+      output <- Runix.Cmd.Effects.cmdExecStdin "diff"
+                  ["-u", "--label", label, "-", T.unpack file]
+                  oldContent
       -- Check if diff failed (exit code 2 means error)
       if Runix.Cmd.Effects.exitCode output == 2
         then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.Effects.stderr output)
