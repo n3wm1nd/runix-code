@@ -26,6 +26,7 @@ import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
 import Config
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
+import Paths_runix_code (getDataFileName)
 
 --------------------------------------------------------------------------------
 -- CLI Widget Type
@@ -90,6 +91,9 @@ main = do
 -- This composes the model interpreter with CLI effects (no streaming, simple I/O)
 runAgent :: ModelInterpreter -> Config -> Text -> IO (Either String Text)
 runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg userInput = do
+  -- Get data file path for the system prompt
+  promptPath <- getDataFileName "prompt/runix-code.md"
+
   -- Compose: model interpreter + CLI base effects + run to IO
   let runToIO' = runM
                . runError
@@ -110,7 +114,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
   runToIO' $ do
     -- Load system prompt
     sysPromptText <- loadSystemPrompt
-      "prompt/runix-code.md"
+      promptPath
       "You are a helpful AI coding assistant. You can answer the user's queries, or use tools."
 
     let sysPrompt = SystemPrompt sysPromptText
@@ -122,7 +126,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
       Just sessionFile -> miLoadSess sessionFile
 
     -- Run the agent (configs are inferred from model's defaultConfigs with streaming disabled)
-    (result, finalHistory) <- withLLMCancellation . runConfigHistory ([]) initialHistory $ 
+    (result, finalHistory) <- withLLMCancellation . runConfigHistory ([]) initialHistory $
       runixCode @model @CLIWidget sysPrompt userPrompt
 
     -- Save session (if specified)

@@ -51,6 +51,7 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified UI.Effects
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
+import Paths_runix_code (getDataFileName)
 
 
 --------------------------------------------------------------------------------
@@ -173,10 +174,13 @@ buildUIRunner modelInterpreter refreshCallback = do
   uiVars <- newUIVars @(Message model) refreshCallback
   historyRef <- newIORef ([] :: [Message model])
 
+  -- Get data file path for the system prompt
+  promptPath <- getDataFileName "prompt/runix-code.md"
+
   -- Load system prompt using the composed interpreter stack
   let runToIO' = runM . runError @String . loggingIO . failLog . filesystemReadIO
 
-  result <- runToIO' $ loadSystemPrompt "prompt/runix-code.md" "You are a helpful AI coding assistant."
+  result <- runToIO' $ loadSystemPrompt promptPath "You are a helpful AI coding assistant."
   let sysPrompt = case result of
         Right txt -> SystemPrompt txt
         Left _ -> SystemPrompt "You are a helpful AI coding assistant."

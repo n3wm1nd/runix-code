@@ -20,6 +20,7 @@ copyright:          2025 Runix Contributors
 category:           Development
 build-type:         Simple
 extra-doc-files:    DESIGN.md, SECRETS.md
+data-files:         prompt/*.md
 
 common warnings
     ghc-options: -Wall
