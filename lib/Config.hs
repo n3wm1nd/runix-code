@@ -21,6 +21,8 @@ module Config
   , getLlamaCppEndpoint
   , getOpenRouterApiKey
   , getOpenRouterModel
+  , getZAIApiKey
+  , getZAIEndpoint
   ) where
 
 import System.Environment (getArgs, lookupEnv)
@@ -38,6 +40,8 @@ data ModelSelection
   | UseGLM45Air
   | UseQwen3Coder
   | UseOpenRouter
+  | UseGLM45AirZAI
+  | UseGLM46ZAI
   deriving stock (Show, Eq)
 
 -- | Application configuration
@@ -53,7 +57,7 @@ data Config = Config
 -- | Load configuration from CLI args and environment variables
 --
 -- Environment variables:
--- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder")
+-- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai")
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional)
@@ -96,6 +100,15 @@ getModelSelection = do
       "qwen" -> return UseQwen3Coder
       "openrouter" -> return UseOpenRouter
       "openrouter-universal" -> return UseOpenRouter
+      "glm-45-air-zai" -> return UseGLM45AirZAI
+      "glm-4.5-air-zai" -> return UseGLM45AirZAI
+      "glm45airzai" -> return UseGLM45AirZAI
+      "zai-glm45" -> return UseGLM45AirZAI
+      "glm-46-zai" -> return UseGLM46ZAI
+      "glm-4.6-zai" -> return UseGLM46ZAI
+      "glm46zai" -> return UseGLM46ZAI
+      "zai-glm46" -> return UseGLM46ZAI
+      "zai" -> return UseGLM46ZAI  -- Default to latest GLM
       unknown -> do
         hPutStr IO.stderr $ "warn: Unknown model '" <> T.unpack unknown <> "', using claude-sonnet-45\n"
         return UseClaudeSonnet45
@@ -135,3 +148,26 @@ getOpenRouterModel = do
       hPutStr IO.stderr "error: OPENROUTER_MODEL environment variable not set\n"
       error "OPENROUTER_MODEL is required when using OpenRouter"
     Just model -> return model
+
+-- | Get ZAI API key from environment
+--
+-- Required when using ZAI models. Returns the ZAI_API_KEY value
+-- or throws an error if not set.
+getZAIApiKey :: IO String
+getZAIApiKey = do
+  maybeKey <- lookupEnv "ZAI_API_KEY"
+  case maybeKey of
+    Nothing -> do
+      hPutStr IO.stderr "error: ZAI_API_KEY environment variable not set\n"
+      error "ZAI_API_KEY is required for ZAI models"
+    Just key -> return key
+
+-- | Get ZAI endpoint from environment
+--
+-- Defaults to https://api.z.ai/api/coding/paas/v4 if not set
+getZAIEndpoint :: IO String
+getZAIEndpoint = do
+  maybeEndpoint <- lookupEnv "ZAI_ENDPOINT"
+  case maybeEndpoint of
+    Nothing -> return "https://api.z.ai/api/coding/paas/v4"
+    Just endpoint -> return endpoint

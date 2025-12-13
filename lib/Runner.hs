@@ -66,12 +66,12 @@ import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt, Supp
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import Runix.LLM.Effects (LLM)
-import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter)
+import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, interpretZAI)
 import Runix.Secret.Effects (runSecret)
 import Runix.Streaming.Effects (ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), ModelDefaults, claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider)
-import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel)
+import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), GLM45Air_ZAI(..), GLM46(..), ZAI(..), ModelDefaults, claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider, glm45AirZAIComposableProvider, glm46ComposableProvider)
+import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -273,6 +273,26 @@ createModelInterpreter UseOpenRouter = do
           . interpretOpenRouter universalComposableProvider (Model (Universal (T.pack modelName)) OpenRouter) . raiseUnder
     , miLoadSession = loadSession universalComposableProvider
     , miSaveSession = saveSession universalComposableProvider
+    }
+
+createModelInterpreter UseGLM45AirZAI = do
+  apiKey <- getZAIApiKey
+  return $ ModelInterpreter
+    { interpretModel =
+        runSecret (pure apiKey)
+          . interpretZAI glm45AirZAIComposableProvider (Model GLM45Air_ZAI ZAI) . raiseUnder
+    , miLoadSession = loadSession glm45AirZAIComposableProvider
+    , miSaveSession = saveSession glm45AirZAIComposableProvider
+    }
+
+createModelInterpreter UseGLM46ZAI = do
+  apiKey <- getZAIApiKey
+  return $ ModelInterpreter
+    { interpretModel =
+        runSecret (pure apiKey)
+          . interpretZAI glm46ComposableProvider (Model GLM46 ZAI) . raiseUnder
+    , miLoadSession = loadSession glm46ComposableProvider
+    , miSaveSession = saveSession glm46ComposableProvider
     }
 
 --------------------------------------------------------------------------------

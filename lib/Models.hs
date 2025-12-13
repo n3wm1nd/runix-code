@@ -16,6 +16,10 @@ module Models
   , Qwen3Coder(..)
     -- * OpenRouter Models
   , Universal(..)
+    -- * ZAI Models
+  , ZAI(..)
+  , GLM45Air_ZAI(..)
+  , GLM46(..)
     -- * Default Configurations
   , ModelDefaults(..)
     -- * Composable Providers
@@ -23,6 +27,8 @@ module Models
   , glm45AirComposableProvider
   , qwen3CoderComposableProvider
   , universalComposableProvider
+  , glm45AirZAIComposableProvider
+  , glm46ComposableProvider
   ) where
 
 import Data.Text (Text)
@@ -33,7 +39,7 @@ import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import UniversalLLM.Providers.XMLToolCalls (xmlResponseParser)
-import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..))
+import UniversalLLM.Protocols.OpenAI (OpenAIRequest(..), OpenAIMessage(..), OpenAIResponse)
 import qualified UniversalLLM.Providers.OpenAI as Openai
 
 --------------------------------------------------------------------------------
@@ -259,4 +265,93 @@ instance ModelDefaults (Model Universal OpenRouter) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable reasoning/extended thinking
+    ]
+
+--------------------------------------------------------------------------------
+-- ZAI Models
+--------------------------------------------------------------------------------
+
+-- | ZAI provider for GLM models (https://api.z.ai)
+-- Uses OpenAI-compatible protocol
+data ZAI = ZAI deriving stock (Show, Eq)
+
+-- Supporting capability instances for ZAI
+instance SupportsTemperature ZAI
+instance SupportsMaxTokens ZAI
+instance SupportsSeed ZAI
+instance SupportsSystemPrompt ZAI
+instance SupportsStop ZAI
+instance SupportsStreaming ZAI
+
+-- | GLM-4.5-Air model via ZAI
+data GLM45Air_ZAI = GLM45Air_ZAI deriving stock (Show, Eq)
+
+instance Provider (Model GLM45Air_ZAI ZAI) where
+  type ProviderRequest (Model GLM45Air_ZAI ZAI) = OpenAIRequest
+  type ProviderResponse (Model GLM45Air_ZAI ZAI) = OpenAIResponse
+
+instance ModelName (Model GLM45Air_ZAI ZAI) where
+  modelName (Model _ _) = "glm-4.5-air"
+
+instance HasTools (Model GLM45Air_ZAI ZAI) where
+  withTools = OpenAI.openAITools
+
+instance HasReasoning (Model GLM45Air_ZAI ZAI) where
+  withReasoning = OpenAI.openAIReasoning
+
+instance HasJSON (Model GLM45Air_ZAI ZAI) where
+  type JSONState (Model GLM45Air_ZAI ZAI) = ()
+  withJSON = OpenAI.openAIJSON
+
+-- Composable provider for GLM45Air_ZAI
+glm45AirZAIComposableProvider ::
+  ( HasTools model, HasReasoning model, HasJSON model,
+  BaseComposableProvider model ) =>
+  ComposableProvider model
+  (JSONState model, (ReasoningState model, (ToolState model, BaseState model)))
+glm45AirZAIComposableProvider = withJSON `chainProviders` withReasoning `chainProviders` withTools `chainProviders` baseProvider
+
+instance BaseComposableProvider (Model GLM45Air_ZAI ZAI) where
+  baseProvider = OpenAI.baseComposableProvider
+
+instance ModelDefaults (Model GLM45Air_ZAI ZAI) where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
+    ]
+
+-- | GLM-4.6 model via ZAI
+data GLM46 = GLM46 deriving stock (Show, Eq)
+
+instance Provider (Model GLM46 ZAI) where
+  type ProviderRequest (Model GLM46 ZAI) = OpenAIRequest
+  type ProviderResponse (Model GLM46 ZAI) = OpenAIResponse
+
+instance ModelName (Model GLM46 ZAI) where
+  modelName (Model _ _) = "glm-4.6"
+
+instance HasTools (Model GLM46 ZAI) where
+  withTools = OpenAI.openAITools
+
+instance HasReasoning (Model GLM46 ZAI) where
+  withReasoning = OpenAI.openAIReasoning
+
+instance HasJSON (Model GLM46 ZAI) where
+  withJSON = OpenAI.openAIJSON
+
+-- Composable provider for GLM46
+glm46ComposableProvider ::
+  ( HasTools model, HasReasoning model, HasJSON model,
+  BaseComposableProvider model ) =>
+  ComposableProvider model
+  (JSONState model, (ReasoningState model, (ToolState model, BaseState model)))
+glm46ComposableProvider = withJSON `chainProviders` withReasoning `chainProviders` withTools `chainProviders` baseProvider
+
+instance BaseComposableProvider (Model GLM46 ZAI) where
+  baseProvider = OpenAI.baseComposableProvider
+
+instance ModelDefaults (Model GLM46 ZAI) where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
     ]
