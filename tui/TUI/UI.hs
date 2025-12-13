@@ -35,8 +35,9 @@ import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (when, void)
 import Control.Concurrent.STM
+import Control.Concurrent.STM.TBQueue (tryReadTBQueue)
 import qualified Brick.BChan
-import Brick.BChan (newBChan, writeBChan)
+import Brick.BChan (newBChan, writeBChan, readBChan2)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
@@ -139,10 +140,11 @@ runUI :: forall model. Eq (Message model) =>
       -> IO ()
 runUI mkUIVars = do
   -- Create event channel - agent events and UI events use same channel
-  -- This ensures proper ordering and eliminates the separate refresh signal
-  eventChan <- newBChan 10  -- Reasonable buffer size
+  -- Small buffer since batching happens in interpretStreamChunkToUI
+  eventChan <- newBChan 8
 
   -- Create UI vars with callback that writes AgentEvents wrapped in CustomEvent
+  -- Brick will automatically batch renders when events come in fast
   let sendAgentEventCallback agentEvent = Brick.BChan.writeBChan eventChan (AgentEvent agentEvent)
   uiVars <- mkUIVars sendAgentEventCallback
 
@@ -335,6 +337,10 @@ handleInputWidgetEvent widget ev = do
     Just newWidget -> pendingInputL .= Just newWidget
     Nothing -> return ()
 
+--------------------------------------------------------------------------------
+-- Event Handling
+--------------------------------------------------------------------------------
+
 -- Normal event handling (when no input widget active)
 handleNormalEvent :: forall model. Eq (Message model) => T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
 -- ESC: Request cancellation of current operation
@@ -349,9 +355,8 @@ handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
 -- Ctrl+C: Actually exit the application
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 
--- Handle agent events directly from the event channel
+-- Handle agent events - process state updates, render is triggered by separate channel
 handleNormalEvent (T.AppEvent (AgentEvent event)) = do
-  -- Process the agent event
   case event of
       StreamChunkEvent text -> do
         -- Accumulate streaming text: if current is StreamingChunkItem, append to it
@@ -462,9 +467,8 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
       ClearInputWidgetEvent ->
         pendingInputL .= Nothing
 
-  -- Scroll viewport to bottom to show new content
+  -- After processing the event, scroll viewport and request viewport update
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
-  -- Send event to update viewport indicators after render (non-blocking)
   chan <- use eventChanL
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
 

@@ -107,6 +107,7 @@ executable runix-code-tui
                     , UI.OutputHistory
                     , UI.Rendering
                     , UI.Attributes
+                    , UI.Streaming
                     , UI.UserInput.InputWidget
                     , UI.UserInput.Interpreter
     ghc-options:      -threaded

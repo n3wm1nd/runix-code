@@ -15,6 +15,7 @@ import qualified Data.Text as T
 import Data.IORef
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
+import Control.Monad (forever)
 
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
@@ -37,19 +38,18 @@ import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..))
 import Runix.Cancellation.Effects (Cancellation(..))
-import Runix.Streaming.Effects (StreamChunk(..), emitChunk)
-import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, sendAgentEvent, readCancellationFlag, clearCancellationFlag, AgentEvent(..), UserRequest(..), LLMSettings(..))
+import Runix.Streaming.Effects (StreamChunk)
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, readCancellationFlag, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
 import UI.UserInput.Interpreter (interpretUserInput)
 import UI.UserInput.InputWidget (TUIWidget)
-import Control.Monad (forever)
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified UI.Effects
+import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
 
 
 --------------------------------------------------------------------------------
@@ -182,38 +182,6 @@ buildUIRunner modelInterpreter refreshCallback = do
 --------------------------------------------------------------------------------
 -- Runner Creation
 --------------------------------------------------------------------------------
-
--- | Reinterpret StreamChunk BS.ByteString to StreamChunk StreamingContent by extracting SSE content
-reinterpretSSEChunks :: Sem (StreamChunk BS.ByteString : r) a
-                     -> Sem (StreamChunk StreamingContent : r) a
-reinterpretSSEChunks = reinterpret $ \case
-  EmitChunk chunk ->
-    case extractContentFromChunk chunk of
-      Just content -> emitChunk content
-      Nothing -> return ()  -- Ignore non-content chunks (like message_start events)
-
--- | Interpret StreamChunk StreamingContent by sending to UI
-interpretStreamChunkToUI :: Member (Embed IO) r
-                         => UIVars msg
-                         -> Sem (StreamChunk StreamingContent : r) a
-                         -> Sem r a
-interpretStreamChunkToUI uiVars = interpret $ \case
-  EmitChunk (StreamingText text) ->
-    embed $ sendAgentEvent uiVars (StreamChunkEvent text)
-  EmitChunk (StreamingReasoning reasoning) ->
-    embed $ sendAgentEvent uiVars (StreamReasoningEvent reasoning)
-
--- | Interpret Cancellation effect for TUI
--- Reads the cancellation flag from UIVars (set by UI when user presses ESC)
--- The flag is checked at strategic points: before QueryLLM, between HTTP chunks
-interpretCancellation :: Member (Embed IO) r
-                      => UIVars msg
-                      -> Sem (Cancellation : r) a
-                      -> Sem r a
-interpretCancellation uiVars = interpret $ \case
-  IsCanceled -> do
-    -- Check the STM flag atomically
-    embed $ atomically $ readCancellationFlag uiVars
 
 -- | Interpret all base effects for TUI agents
 --
