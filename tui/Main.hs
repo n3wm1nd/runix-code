@@ -16,6 +16,7 @@ import Data.IORef
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad (forever)
+import qualified System.Directory as Dir
 
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
@@ -31,7 +32,7 @@ import TUI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, FileWatcher, fileWatcherIO)
+import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, FileWatcher, fileWatcherIO, limitSubpathRead, limitSubpathWrite, filesystemReadIO, filesystemWriteIO)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
@@ -92,14 +93,15 @@ agentLoop :: forall model.
              , ModelDefaults model
              , SupportsStreaming (ProviderOf model)
              )
-          => UIVars (Message model)
+          => FilePath  -- CWD for security restrictions
+          -> UIVars (Message model)
           -> IORef [Message model]
           -> SystemPrompt
           -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
           -> IO ()
-agentLoop uiVars historyRef sysPrompt modelInterpreter = do
+agentLoop cwd uiVars historyRef sysPrompt modelInterpreter = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
-  let runToIO' = runM . runError . interpretTUIEffects uiVars . modelInterpreter
+  let runToIO' = runM . runError . interpretTUIEffects cwd uiVars . modelInterpreter
 
   result <- runToIO' $ forever $ runOneIteration
 
@@ -165,6 +167,9 @@ buildUIRunner :: forall model.
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
 buildUIRunner modelInterpreter refreshCallback = do
+  -- Get current working directory for security restrictions
+  cwd <- Dir.getCurrentDirectory
+
   uiVars <- newUIVars @(Message model) refreshCallback
   historyRef <- newIORef ([] :: [Message model])
 
@@ -176,7 +181,7 @@ buildUIRunner modelInterpreter refreshCallback = do
         Right txt -> SystemPrompt txt
         Left _ -> SystemPrompt "You are a helpful AI coding assistant."
 
-  _ <- forkIO $ agentLoop uiVars historyRef sysPrompt modelInterpreter
+  _ <- forkIO $ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter
   return uiVars
 
 --------------------------------------------------------------------------------
@@ -187,6 +192,7 @@ buildUIRunner modelInterpreter refreshCallback = do
 --
 -- This builds the effect interpretation stack from the bottom up:
 -- - File system, bash, cmd, grep (basic IO effects)
+-- - Security restrictions (limit to CWD)
 -- - HTTP (both streaming and non-streaming)
 -- - SSE chunk extraction and streaming to UI
 -- - Cancellation, logging, user input
@@ -194,7 +200,8 @@ buildUIRunner modelInterpreter refreshCallback = do
 
 
 interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
-                    => UIVars msg
+                    => FilePath  -- CWD for security restrictions
+                    -> UIVars msg
                     -> Sem (Grep
                          : Bash
                          : Cmd
@@ -203,20 +210,23 @@ interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
                          : HTTPStreaming
                          : StreamChunk BS.ByteString
                          : Cancellation
-                         : FileSystemRead
                          : FileSystemWrite
+                         : FileSystemRead
                          : Fail
                          : Logging
                          : UserInput TUIWidget
                          : UI.Effects.UI
                          : r) a
                     -> Sem r a
-interpretTUIEffects uiVars =
+interpretTUIEffects cwd uiVars =
   interpretUI uiVars
     . interpretUserInput uiVars        -- UserInput effect
     . interpretLoggingToUI
     . failLog
-    . filesystemIO                      -- Interpret filesystem effects
+    . filesystemReadIO                  -- Interpret read operations to IO (removes FileSystemRead)
+    . limitSubpathRead cwd             -- SECURITY: Restrict reads to CWD (intercepts FileSystemRead)
+    . filesystemWriteIO                 -- Interpret write operations to IO (removes FileSystemWrite)
+    . limitSubpathWrite cwd            -- SECURITY: Restrict writes to CWD (intercepts FileSystemWrite)
     . interpretCancellation uiVars     -- Handle Cancellation effect
     . interpretStreamChunkToUI uiVars  -- Handle StreamChunk Text
     . reinterpretSSEChunks              -- Convert StreamChunk BS -> StreamChunk Text

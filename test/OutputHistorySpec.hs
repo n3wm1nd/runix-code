@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Main (main) where
+module OutputHistorySpec (spec) where
 
 import Test.Hspec
 import Test.QuickCheck
@@ -313,10 +313,10 @@ properties = describe "mergeOutputMessages (properties)" $ do
       in length result >= 0  -- Always true, but forces evaluation
 
 --------------------------------------------------------------------------------
--- Main
+-- Spec
 --------------------------------------------------------------------------------
 
-main :: IO ()
-main = hspec $ do
+spec :: Spec
+spec = do
   unitTests
   properties
