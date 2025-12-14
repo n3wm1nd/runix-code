@@ -34,6 +34,7 @@ module UI.OutputHistory
   , renderItem
     -- * Merge logic
   , mergeOutputMessages
+  , addCompletedToolItems
     -- * Legacy compatibility (to be removed)
   , OutputMessage(..)
   , RenderedMessage(..)
@@ -61,7 +62,7 @@ import Brick.Types (Widget)
 import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
 import Runix.Logging.Effects (Level(..))
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
 
 --------------------------------------------------------------------------------
 -- New Zipper-Based Types
@@ -87,6 +88,7 @@ data OutputItem msg
   | StreamingReasoningItem Text  -- ^ Streaming reasoning chunk
   | SystemEventItem Text      -- ^ System event notification
   | ToolExecutionItem Text    -- ^ Tool execution indicator
+  | CompletedToolItem msg msg -- ^ Completed tool call: tool call + result (for display)
   deriving stock (Eq, Show, Ord)
 
 -- | Generic zipper structure for navigable lists
@@ -208,15 +210,13 @@ renderItem opts item = vBox $ case item of
   MessageItem (AssistantReasoning text) ->
     [txt " ", txt "?" <+> renderContent text, txt " "]
 
-  -- Tool calls: ALWAYS plain text (ignore markdown flag)
-  MessageItem (AssistantTool toolCall) ->
-    let toolText = T.pack (show toolCall)
-    in [txt " ", txt "T" <+> padLeft (Pad 1) (txt toolText), txt " "]
+  -- Tool calls: Don't render - they're shown via CompletedToolItem
+  MessageItem (AssistantTool _toolCall) ->
+    []
 
-  -- Tool results: ALWAYS plain text (ignore markdown flag)
-  MessageItem (ToolResultMsg toolResult) ->
-    let resultText = T.pack (show toolResult)
-    in [txt " ", txt "R" <+> padLeft (Pad 1) (txt resultText), txt " "]
+  -- Tool results: Don't render - they're shown via CompletedToolItem
+  MessageItem (ToolResultMsg _toolResult) ->
+    []
 
   -- User images: simple text representation
   MessageItem (UserImage desc _imageData) ->
@@ -258,6 +258,15 @@ renderItem opts item = vBox $ case item of
   -- Tool execution indicators: always same rendering
   ToolExecutionItem name ->
     [txt "T " <+> txt name]
+
+  -- Completed tool: Merged display of tool call + result
+  CompletedToolItem (AssistantTool toolCall) (ToolResultMsg toolResult) ->
+    renderCompletedTool toolCall toolResult
+
+  -- Fallback for other message types in CompletedToolItem (shouldn't happen)
+  CompletedToolItem _ _ ->
+    [txt "T [Invalid tool item]"]
+
   where
     useMd = useMarkdown opts
 
@@ -267,6 +276,34 @@ renderItem opts item = vBox $ case item of
       if useMd
       then vBox (markdownToWidgetsWithIndent 0 text)
       else txtWrap text
+
+    -- Render a completed tool call with nice formatting
+    renderCompletedTool :: ToolCall -> ToolResult -> [Widget n]
+    renderCompletedTool call result =
+      let callLine = renderToolCallLine call
+          resultLine = renderToolResultLine result
+      in [txt " ", vBox [callLine, resultLine], txt " "]
+
+    -- Render tool call as single line
+    renderToolCallLine :: ToolCall -> Widget n
+    renderToolCallLine (ToolCall _id name args) =
+      txt "T " <+> txt name <+> txt " " <+> txt (truncate 60 $ T.pack $ show args)
+    renderToolCallLine (InvalidToolCall _id name _raw err) =
+      txt "T " <+> txt name <+> txt " [invalid: " <+> txt err <+> txt "]"
+
+    -- Render tool result as single line
+    renderToolResultLine :: ToolResult -> Widget n
+    renderToolResultLine (ToolResult _call (Left errMsg)) =
+      txt "  → Error: " <+> txt (truncate 60 errMsg)
+    renderToolResultLine (ToolResult _call (Right value)) =
+      txt "  → " <+> txt (truncate 60 $ T.pack $ show value)
+
+    -- Truncate text to max length with ellipsis
+    truncate :: Int -> Text -> Text
+    truncate maxLen t =
+      if T.length t > maxLen
+      then T.take (maxLen - 3) t <> "..."
+      else t
 
 --------------------------------------------------------------------------------
 -- Legacy Types (for backward compatibility during migration)
@@ -463,6 +500,25 @@ extractMessageItems = foldr (\item acc -> case item of
 --   - All new conversation messages appear in result
 --   - All old non-conversation messages are preserved
 --   - Relative order of non-conversation messages is maintained
+
+-- | Add CompletedToolItem entries for tool call/result pairs
+-- Scans through OutputItems and inserts CompletedToolItem after each pair
+-- Input/output are in newest-first order, so we see result BEFORE call
+addCompletedToolItems :: [OutputItem (Message m)] -> [OutputItem (Message m)]
+addCompletedToolItems = go Nothing
+  where
+    go :: Maybe (Message m) -> [OutputItem (Message m)] -> [OutputItem (Message m)]
+    go _ [] = []
+    -- Result comes first (newest-first order), remember it
+    go Nothing (MessageItem resultMsg@(ToolResultMsg _) : rest) =
+      MessageItem resultMsg : go (Just resultMsg) rest
+    -- Now we find the matching call, insert CompletedToolItem
+    go (Just resultMsg) (MessageItem callMsg@(AssistantTool _) : rest) =
+      MessageItem callMsg : CompletedToolItem callMsg resultMsg : go Nothing rest
+    go _ (item : rest) =
+      -- Other items, keep and reset remembered result
+      item : go Nothing rest
+
 mergeOutputMessages :: Eq msg => [OutputItem msg] -> [OutputItem msg] -> [OutputItem msg]
 mergeOutputMessages [] oldItems =
   -- No new items: keep all non-message items, discard old messages

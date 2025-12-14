@@ -39,7 +39,7 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
-import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
+import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, addCompletedToolItems)
 import UniversalLLM.Core.Types (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
@@ -422,8 +422,11 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
             -- Merge using the tested merge logic
             mergedItems = mergeOutputMessages newItems withoutStreaming
 
+            -- Add CompletedToolItem entries for tool pairs
+            withToolItems = addCompletedToolItems mergedItems
+
         -- Convert back to zipper (full rebuild)
-        outputZipperL .= listToZipper mergedItems
+        outputZipperL .= listToZipper withToolItems
         reRenderWidgetZipper
         -- Agent is done, update status
         statusL .= Text.pack "Ready"
