@@ -115,6 +115,7 @@ library runix-code-tui-lib
                     , containers
                     , bytestring
                     , directory
+                    , aeson
 
     hs-source-dirs:   tui/lib
     default-language: Haskell2010

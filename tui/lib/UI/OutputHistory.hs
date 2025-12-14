@@ -63,6 +63,8 @@ import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
 import Runix.Logging.Effects (Level(..))
 import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.KeyMap as KM
 
 --------------------------------------------------------------------------------
 -- New Zipper-Based Types
@@ -287,20 +289,51 @@ renderItem opts item = vBox $ case item of
     -- Render tool call as single line
     renderToolCallLine :: ToolCall -> Widget n
     renderToolCallLine (ToolCall _id name args) =
-      txt "T " <+> txt name <+> txt " " <+> txt (truncate 60 $ T.pack $ show args)
+      txt "T " <+> txt name <+> renderArgs args
     renderToolCallLine (InvalidToolCall _id name _raw err) =
       txt "T " <+> txt name <+> txt " [invalid: " <+> txt err <+> txt "]"
 
-    -- Render tool result as single line
+    -- Render arguments: if single param, show inline like func(value)
+    renderArgs :: Aeson.Value -> Widget n
+    renderArgs (Aeson.Object obj) =
+      case KM.toList obj of
+        [(key, val)] ->
+          -- Single parameter: show as func("value") or func(123)
+          txt "(" <+> renderSimpleValue val <+> txt ")"
+        _ ->
+          -- Multiple parameters: show truncated JSON
+          txt " " <+> txt (truncateText 50 $ T.pack $ show $ Aeson.Object obj)
+    renderArgs val = txt " " <+> txt (truncateText 50 $ T.pack $ show val)
+
+    -- Render simple values without quotes where appropriate
+    renderSimpleValue :: Aeson.Value -> Widget n
+    renderSimpleValue (Aeson.String s) = txt "\"" <+> txt (truncateText 40 s) <+> txt "\""
+    renderSimpleValue (Aeson.Number n) = txt (T.pack $ show n)
+    renderSimpleValue (Aeson.Bool b) = txt (T.pack $ show b)
+    renderSimpleValue Aeson.Null = txt "null"
+    renderSimpleValue val = txt (truncateText 40 $ T.pack $ show val)
+
+    -- Render tool result with formatting
     renderToolResultLine :: ToolResult -> Widget n
     renderToolResultLine (ToolResult _call (Left errMsg)) =
-      txt "  → Error: " <+> txt (truncate 60 errMsg)
+      txt "  → Error: " <+> txtWrap (truncateText 60 errMsg)
     renderToolResultLine (ToolResult _call (Right value)) =
-      txt "  → " <+> txt (truncate 60 $ T.pack $ show value)
+      txt "  → " <+> renderResultValue value
+
+    -- Render result value: try to show it nicely
+    renderResultValue :: Aeson.Value -> Widget n
+    renderResultValue (Aeson.String s) =
+      -- For string results, show first few lines
+      let lines = T.lines s
+          preview = T.unlines (take 3 lines)
+          hasMore = length lines > 3
+      in vBox $ map txt (T.lines preview) ++ if hasMore then [txt "  ..."] else []
+    renderResultValue val =
+      txt (truncateText 60 $ T.pack $ show val)
 
     -- Truncate text to max length with ellipsis
-    truncate :: Int -> Text -> Text
-    truncate maxLen t =
+    truncateText :: Int -> Text -> Text
+    truncateText maxLen t =
       if T.length t > maxLen
       then T.take (maxLen - 3) t <> "..."
       else t
