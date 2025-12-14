@@ -539,21 +539,47 @@ extractMessageItems = foldr (\item acc -> case item of
 
 -- | Add CompletedToolItem entries for tool call/result pairs
 -- Scans through OutputItems and inserts CompletedToolItem after each pair
--- Input/output are in newest-first order, so we see result BEFORE call
+-- Matches by tool call ID to handle multiple concurrent tool calls
+-- Input/output are in newest-first order, so we see results before calls
 addCompletedToolItems :: [OutputItem (Message m)] -> [OutputItem (Message m)]
-addCompletedToolItems = go Nothing
+addCompletedToolItems items = go [] items
   where
-    go :: Maybe (Message m) -> [OutputItem (Message m)] -> [OutputItem (Message m)]
+    -- processed holds items we've already seen (in reverse order)
+    go :: [OutputItem (Message m)] -> [OutputItem (Message m)] -> [OutputItem (Message m)]
     go _ [] = []
-    -- Result comes first (newest-first order), remember it
-    go Nothing (MessageItem resultMsg@(ToolResultMsg _) : rest) =
-      MessageItem resultMsg : go (Just resultMsg) rest
-    -- Now we find the matching call, insert CompletedToolItem
-    go (Just resultMsg) (MessageItem callMsg@(AssistantTool _) : rest) =
-      MessageItem callMsg : CompletedToolItem callMsg resultMsg : go Nothing rest
-    go _ (item : rest) =
-      -- Other items, keep and reset remembered result
-      item : go Nothing rest
+
+    -- Found a tool result - just emit it and remember we saw it
+    go processed (item@(MessageItem (ToolResultMsg _)) : rest) =
+      item : go (item : processed) rest
+
+    -- Found a tool call - look back in processed items for its result
+    go processed (MessageItem callMsg@(AssistantTool toolCall) : rest) =
+      let callId = case toolCall of
+            ToolCall tid _ _ -> tid
+            InvalidToolCall tid _ _ _ -> tid
+          matchingResult = findMatchingResult callId processed
+      in case matchingResult of
+           Just resultMsg ->
+             -- Found the result: emit call + CompletedToolItem
+             MessageItem callMsg : CompletedToolItem callMsg resultMsg : go (MessageItem callMsg : processed) rest
+           Nothing ->
+             -- No result yet (call still executing), just emit call
+             MessageItem callMsg : go (MessageItem callMsg : processed) rest
+
+    -- Other items: pass through
+    go processed (item : rest) = item : go (item : processed) rest
+
+    -- Find matching result in already-processed items
+    findMatchingResult :: Text -> [OutputItem (Message m)] -> Maybe (Message m)
+    findMatchingResult _ [] = Nothing
+    findMatchingResult targetId (MessageItem msg@(ToolResultMsg (ToolResult resultCall _)) : rest) =
+      let resultCallId = case resultCall of
+            ToolCall tid _ _ -> tid
+            InvalidToolCall tid _ _ _ -> tid
+      in if resultCallId == targetId
+         then Just msg
+         else findMatchingResult targetId rest
+    findMatchingResult targetId (_ : rest) = findMatchingResult targetId rest
 
 mergeOutputMessages :: Eq msg => [OutputItem msg] -> [OutputItem msg] -> [OutputItem msg]
 mergeOutputMessages [] oldItems =
