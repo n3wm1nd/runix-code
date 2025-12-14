@@ -95,17 +95,16 @@ main = do
 --------------------------------------------------------------------------------
 
 -- | Agent loop that processes user input from the UI
--- | Update history by sending AgentCompleteEvent
+-- | Update history ref (completion event is sent by runOneIteration)
 updateHistory :: forall model.
                  UIVars (Message model)
               -> IORef [Message model]
               -> [Message model]
               -> IO ()
-updateHistory uiVars historyRef newHistory = do
+updateHistory _uiVars historyRef newHistory = do
   -- Update historyRef (source of truth)
+  -- Note: AgentCompleteEvent is sent by runOneIteration after command completes
   writeIORef historyRef newHistory
-  -- Send event with new messages
-  sendAgentEvent uiVars (AgentCompleteEvent newHistory)
 
 agentLoop :: forall model.
              ( HasTools model
@@ -140,17 +139,19 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter = do
       -- Clear any previous cancellation flag before starting new request
       embed $ clearCancellationFlag uiVars
 
-      -- Send user message to UI immediately
-      embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
-
       -- Build command set with current settings
       let cmdSet = CommandSet
             { slashCommands = [echoCommand]
             , defaultCommand = runDefaultAgentCommand requestSettings
             }
 
-      -- Dispatch to appropriate command
+      -- Dispatch to appropriate command (commands are responsible for adding to history)
       dispatchCommand cmdSet userText
+
+      -- After any command completes, send completion event with current history
+      -- (This clears "processing" status in the UI)
+      currentHistory <- embed $ readIORef historyRef
+      embed $ sendAgentEvent uiVars (AgentCompleteEvent currentHistory)
 
       -- Always clear cancellation flag after request completes (whether success or error)
       embed $ clearCancellationFlag uiVars
@@ -172,12 +173,20 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter = do
 
     -- | Wrapper that converts a history-manipulating function into a command
     -- | Takes a function that receives current history and returns new history,
-    -- | and handles reading/updating the history ref with error handling
+    -- | and handles:
+    -- | - Sending user message to UI/history
+    -- | - Reading current history
+    -- | - Running the function
+    -- | - Updating history with the result
+    -- | - Error handling
     withHistoryUpdate :: Members '[Error String, Embed IO] r
                       => ([Message model] -> T.Text -> Sem r [Message model])
                       -> T.Text
                       -> Sem r ()
     withHistoryUpdate fn userText = do
+      -- Send user message to UI immediately (adds to history)
+      embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
+
       currentHistory <- embed $ readIORef historyRef
       catch
         (do newHistory <- fn currentHistory userText
