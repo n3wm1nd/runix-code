@@ -24,13 +24,14 @@ import System.Posix.Files (getFileStatus, modificationTime)
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
 
-import UniversalLLM.Core.Types (Message(..), ModelConfig(Streaming))
+import UniversalLLM.Core.Types (Message(..), ModelConfig(Streaming), ToolCall(..), ToolResult(..))
 import UniversalLLM (ProviderOf)
 
 import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
 import Runix.Runner (grepIO, bashIO, cmdIO, failLog, loggingIO)
+import qualified UI.Commands.View as ViewCmd
 import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
@@ -49,6 +50,8 @@ import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
 import UI.UserInput.Interpreter (interpretUserInput)
 import UI.UserInput.InputWidget (TUIWidget)
+import qualified UI.ForegroundCmd
+import UI.ForegroundCmdInterpreter (interpretForegroundCmd)
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
@@ -147,7 +150,7 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath
 
       -- Build command set with current settings
       let cmdSet = CommandSet
-            { slashCommands = [echoCommand]
+            { slashCommands = [echoCommand, viewCommand]
             , defaultCommand = runDefaultAgentCommand requestSettings
             }
 
@@ -199,9 +202,9 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath
       case T.stripPrefix "/" userText of
         Nothing -> defaultCommand userText  -- No slash prefix, use default
         Just rest ->
-          -- Extract command name (first word after /)
-          let cmdName = T.takeWhile (/= ' ') rest
-              cmdArg = T.stripStart $ T.dropWhile (/= ' ') rest
+          -- Extract command name (everything before first space, or entire rest if no space)
+          let (cmdName, remainder) = T.break (== ' ') rest
+              cmdArg = T.stripStart remainder
           in case lookup cmdName [(commandName cmd, commandFn cmd) | cmd <- slashCommands] of
                Just cmd -> cmd cmdArg  -- Found matching slash command
                Nothing -> defaultCommand userText  -- No match, use default
@@ -234,6 +237,12 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath
       { commandName = "echo"
       , commandFn = \text -> info $ "Echo: " <> text
       }
+
+    -- | View command: open conversation history in $PAGER
+    viewCommand :: Members '[Embed IO, Logging] r => SlashCommand r
+    viewCommand =
+      let (name, fn) = ViewCmd.viewCommand historyRef uiVars
+      in SlashCommand { commandName = name, commandFn = fn }
 
     -- | The default agent command: run runixCode with the user's input
     runDefaultAgentCommand settings userText =
@@ -354,11 +363,13 @@ interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
                          : Fail
                          : Logging
                          : UserInput TUIWidget
+                         : UI.ForegroundCmd.ForegroundCmd
                          : UI.Effects.UI
                          : r) a
                     -> Sem r a
 interpretTUIEffects cwd uiVars =
   interpretUI uiVars
+    . interpretForegroundCmd uiVars    -- ForegroundCmd effect
     . interpretUserInput uiVars        -- UserInput effect
     . interpretLoggingToUI
     . failLog

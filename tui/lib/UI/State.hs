@@ -58,6 +58,7 @@ data AgentEvent msg
   | ToolExecutionEvent Text       -- ^ Tool execution started
   | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
   | ClearInputWidgetEvent         -- ^ Clear the current input widget
+  | RunExternalCommandEvent (IO ())  -- ^ Run external command (suspends/resumes Vty)
 
 -- Manual Eq instance (SomeInputWidget can't derive Eq due to callback function)
 instance Eq msg => Eq (AgentEvent msg) where
@@ -70,6 +71,7 @@ instance Eq msg => Eq (AgentEvent msg) where
   ToolExecutionEvent t1 == ToolExecutionEvent t2 = t1 == t2
   ShowInputWidgetEvent _ == ShowInputWidgetEvent _ = False  -- Can't compare functions
   ClearInputWidgetEvent == ClearInputWidgetEvent = True
+  RunExternalCommandEvent _ == RunExternalCommandEvent _ = False  -- Can't compare IO actions
   _ == _ = False
 
 -- Manual Show instance
@@ -83,6 +85,7 @@ instance Show msg => Show (AgentEvent msg) where
   show (ToolExecutionEvent t) = "ToolExecutionEvent " ++ show t
   show (ShowInputWidgetEvent _) = "ShowInputWidgetEvent <widget>"
   show ClearInputWidgetEvent = "ClearInputWidgetEvent"
+  show (RunExternalCommandEvent _) = "RunExternalCommandEvent <action>"
 
 -- | Runtime LLM configuration settings
 data LLMSettings = LLMSettings

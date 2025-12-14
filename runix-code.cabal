@@ -94,6 +94,9 @@ library runix-code-tui-lib
                     , UI.Streaming
                     , UI.UserInput.InputWidget
                     , UI.UserInput.Interpreter
+                    , UI.ForegroundCmd
+                    , UI.ForegroundCmdInterpreter
+                    , UI.Commands.View
 
     build-depends:    base >=4.17 && <5
                     , runix-code
@@ -116,6 +119,8 @@ library runix-code-tui-lib
                     , bytestring
                     , directory
                     , aeson
+                    , process
+                    , temporary
 
     hs-source-dirs:   tui/lib
     default-language: Haskell2010
@@ -156,6 +161,8 @@ executable runix-code-tui
                     , directory
                     , bytestring
                     , unix
+                    , temporary
+                    , process
 
     hs-source-dirs:   tui
     default-language: Haskell2010

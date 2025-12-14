@@ -35,6 +35,7 @@ import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (when, void)
 import Control.Concurrent.STM
+import Data.List (intersperse)
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
@@ -469,6 +470,13 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
       ClearInputWidgetEvent ->
         pendingInputL .= Nothing
 
+      RunExternalCommandEvent action -> do
+        -- Suspend Vty, run the external command, then resume
+        currentState <- T.get
+        M.suspendAndResume $ do
+          action
+          return currentState  -- Return current state unchanged
+
   -- After processing the event, scroll viewport and request viewport update
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
   chan <- use eventChanL
@@ -601,7 +609,7 @@ sendMessage :: T.EventM Name (AppState msg) ()
 sendMessage = do
   ed <- use inputEditorL
   let contentLines = getEditContents ed
-      content = unlines contentLines
+      content = concat $ intersperse "\n" contentLines  -- Don't add trailing newline
   if null (filter (/= ' ') content)
     then return ()  -- Don't send empty messages
     else do
