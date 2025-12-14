@@ -122,6 +122,8 @@ library runix-code-tui-lib
 executable runix-code
     import:           warnings, extensions
     main-is:          Main.hs
+    other-modules:    Paths_runix_code
+    autogen-modules:  Paths_runix_code
 
     build-depends:    base >=4.17 && <5
                     , runix-code
@@ -138,6 +140,8 @@ executable runix-code
 executable runix-code-tui
     import:           warnings, extensions
     main-is:          Main.hs
+    other-modules:    Paths_runix_code
+    autogen-modules:  Paths_runix_code
     ghc-options:      -threaded
 
     build-depends:    base >=4.17 && <5
@@ -180,7 +184,7 @@ test-suite runix-code-test
                     , filepath
                     , polysemy >=1.9
 
-    other-modules:    OutputHistorySpec
+    other-modules:    OutputHistorySpec, FileSystemSecuritySpec
 
 -- Vty version removed - brick provides better abstraction for our use case
 -- The raw vty exploration showed it doesn't offer advantages over brick:
