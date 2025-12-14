@@ -489,7 +489,7 @@ mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
           -- Neither exists later: new message is addition
           newItem : mergeOutputMessages restNew (oldItem:restOld)
 
-    (MessageItem newMsg, _) ->
+    (MessageItem _newMsg, _) ->
       -- Old item is not a message (log, etc)
       -- Collect all non-message items until next message
       let (nonMsgItems, rest) = span (not . isMessageItem) (oldItem:restOld)
@@ -513,6 +513,10 @@ mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
               | otherwise ->
                   -- Neither exists later: new is insertion, keep logs with old
                   newItem : nonMsgItems ++ nextMsg : mergeOutputMessages restNew restAfter
+            _ ->
+                  -- This shouldn't happen: nextMsg should be a MessageItem after span
+                  -- But if it's not, treat it as a non-message item and continue
+                  newItem : mergeOutputMessages restNew (nonMsgItems ++ [nextMsg] ++ restAfter)
 
     _ ->
       -- New item is not a message (shouldn't happen)

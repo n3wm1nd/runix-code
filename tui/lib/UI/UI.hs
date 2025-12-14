@@ -35,9 +35,8 @@ import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (when, void)
 import Control.Concurrent.STM
-import Control.Concurrent.STM.TBQueue (tryReadTBQueue)
 import qualified Brick.BChan
-import Brick.BChan (newBChan, writeBChan, readBChan2)
+import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages)
@@ -196,7 +195,7 @@ drawUI st = [indicatorLayer, baseLayer]
     status = _status st
     mPendingInput = _pendingInput st
     wzipper = _widgetZipper st
-    vars = _uiVars st
+    _vars = _uiVars st
 
     -- Extract pre-rendered widgets from the widget zipper
     -- Zipper structure: front is reversed (newest at head), back is natural order (oldest at head)

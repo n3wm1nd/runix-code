@@ -8,7 +8,6 @@
 module UI.Interpreter where
 
 import Polysemy
-import Polysemy.Embed (embed)
 import Control.Concurrent.STM
 
 import UI.Effects
