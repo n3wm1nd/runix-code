@@ -31,7 +31,6 @@ import UI.UserInput.InputWidget (InputWidget(..))
 -- | Resource names for widgets (defined here to avoid circular dependency)
 data Name = InputEditor
           | HistoryViewport
-          | CompletedHistory  -- Legacy, kept for compatibility
           | CachedFront       -- Cache for front (older) messages in zipper
           | CachedCurrent     -- Cache for current (focused) message in zipper
           | CachedBack        -- Cache for back (newer) messages in zipper
