@@ -190,9 +190,11 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath
             -- Failed to save session - log error but don't reload
             sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Failed to save session for reload: " ++ err))
           Right () -> do
-            -- Successfully saved - exec new binary
-            executeFile exePath False ["--resume-session", sessionFile] Nothing
-            -- Never returns
+            -- Successfully saved - exec new binary via UI event (so Brick can suspend first)
+            sendAgentEvent uiVars (RunExternalCommandEvent $ do
+              executeFile exePath False ["--resume-session", sessionFile] Nothing
+              -- Never returns!
+              )
 
     -- | Dispatch user input to the appropriate command
     -- | Checks if input starts with "/" and matches a slash command,
