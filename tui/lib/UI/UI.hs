@@ -10,7 +10,7 @@
 -- - Scrollable history
 -- - Dynamic input sizing
 -- - STM-based state for concurrent updates from effect interpreters
-module TUI.UI
+module UI.UI
   ( -- * UI Entry Point
     runUI
     -- * Types (re-export from UI.State)
@@ -44,8 +44,8 @@ import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZ
 import UniversalLLM.Core.Types (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
-import qualified TUI.Widgets.MessageHistory as MH
-import qualified TUI.InputPanel as IP
+import qualified UI.Widgets.MessageHistory as MH
+import qualified UI.InputPanel as IP
 
 -- | Custom events for the TUI
 data CustomEvent msg

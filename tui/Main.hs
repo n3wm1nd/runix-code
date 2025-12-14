@@ -28,7 +28,7 @@ import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
 import Runix.Runner (grepIO, bashIO, cmdIO, failLog, loggingIO)
-import TUI.UI (runUI)
+import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)

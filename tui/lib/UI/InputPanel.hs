@@ -2,7 +2,7 @@
 {-# LANGUAGE RankNTypes #-}
 
 -- | Bottom panel for input widgets
-module TUI.InputPanel
+module UI.InputPanel
   ( drawInputPanel
   , handleInputPanelEvent
   ) where

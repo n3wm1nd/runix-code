@@ -7,7 +7,7 @@
 -- - Overlay scroll indicators showing rows above/below
 -- - Auto-scroll to bottom on content updates
 -- - Stay-at-bottom behavior on resize
-module TUI.Widgets.MessageHistory
+module UI.Widgets.MessageHistory
   ( -- * Widget
     messageHistory
     -- * Viewport Operations
