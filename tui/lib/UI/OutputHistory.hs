@@ -202,15 +202,15 @@ renderItem :: forall model n. RenderOptions -> OutputItem (Message model) -> Wid
 renderItem opts item = vBox $ case item of
   -- User messages
   MessageItem (UserText text) ->
-    [txt " ", txt "<" <+> renderContent text, txt " "]
+    [txt " ", renderContentWithMarker "<" text, txt " "]
 
   -- Assistant text
   MessageItem (AssistantText text) ->
-    [txt " ", txt ">" <+> renderContent text, txt " "]
+    [txt " ", renderContentWithMarker ">" text, txt " "]
 
   -- Assistant reasoning
   MessageItem (AssistantReasoning text) ->
-    [txt " ", txt "?" <+> renderContent text, txt " "]
+    [txt " ", renderContentWithMarker "?" text, txt " "]
 
   -- Tool calls: Don't render - they're shown via CompletedToolItem
   MessageItem (AssistantTool _toolCall) ->
@@ -247,11 +247,11 @@ renderItem opts item = vBox $ case item of
 
   -- Streaming chunks
   StreamingChunkItem text ->
-    [txt "}" <+> renderContent text]
+    [renderContentWithMarker "}" text]
 
   -- Streaming reasoning
   StreamingReasoningItem text ->
-    [txt "~" <+> renderContent text]
+    [renderContentWithMarker "~" text]
 
   -- System events: always same rendering
   SystemEventItem msg ->
@@ -272,12 +272,15 @@ renderItem opts item = vBox $ case item of
   where
     useMd = useMarkdown opts
 
-    -- Render text content with optional markdown
-    renderContent :: Text -> Widget n
-    renderContent text = padLeft (Pad 1) $
-      if useMd
-      then vBox (markdownToWidgetsWithIndent 0 text)
-      else txtWrap text
+    -- Render content with a marker on the first line
+    renderContentWithMarker :: Text -> Text -> Widget n
+    renderContentWithMarker marker text =
+      let content = if useMd
+                    then markdownToWidgetsWithIndent 0 text
+                    else [txtWrap text]
+      in case content of
+           [] -> txt marker <+> txt " "
+           (firstLine:rest) -> vBox $ (txt marker <+> txt " " <+> firstLine) : map (padLeft (Pad 2)) rest
 
     -- Render a completed tool call with nice formatting
     renderCompletedTool :: ToolCall -> ToolResult -> [Widget n]
