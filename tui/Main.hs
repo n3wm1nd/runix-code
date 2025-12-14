@@ -27,7 +27,7 @@ import UniversalLLM (ProviderOf)
 import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
-import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, failLog, filesystemReadIO, loggingIO)
+import Runix.Runner (grepIO, bashIO, cmdIO, failLog, loggingIO)
 import TUI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
@@ -37,10 +37,10 @@ import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
-import Runix.Logging.Effects (Logging(..))
+import Runix.Logging.Effects (Logging(..), info)
 import Runix.Cancellation.Effects (Cancellation(..))
 import Runix.Streaming.Effects (StreamChunk)
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, readCancellationFlag, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
@@ -53,6 +53,25 @@ import qualified UI.Effects
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
 import Paths_runix_code (getDataFileName)
 
+
+--------------------------------------------------------------------------------
+-- Command Infrastructure
+--------------------------------------------------------------------------------
+
+-- | A command is simply a function that takes user input text
+type Command r = T.Text -> Sem r ()
+
+-- | A named slash command (e.g., "/help", "/clear")
+data SlashCommand r = SlashCommand
+  { commandName :: T.Text       -- ^ Name without the slash (e.g., "help")
+  , commandFn   :: Command r    -- ^ The command implementation
+  }
+
+-- | A complete command set with slash commands and a default fallback
+data CommandSet r = CommandSet
+  { slashCommands :: [SlashCommand r]  -- ^ Named slash commands
+  , defaultCommand :: Command r         -- ^ Command to run when no slash prefix matches
+  }
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -121,32 +140,74 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter = do
       -- Clear any previous cancellation flag before starting new request
       embed $ clearCancellationFlag uiVars
 
-      -- Get current history
-      currentHistory <- embed $ readIORef historyRef
-
       -- Send user message to UI immediately
       embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
 
-      -- Build configs using settings from the request
-      let isStreaming (Streaming _) = True
-          isStreaming _ = False
+      -- Build command set with current settings
+      let cmdSet = CommandSet
+            { slashCommands = [echoCommand]
+            , defaultCommand = runDefaultAgentCommand requestSettings
+            }
 
-          baseConfigs = defaultConfigs @model
-          -- Filter out Streaming from defaults, replace with request setting
-          configsWithoutStreaming = filter (not . isStreaming) baseConfigs
-          runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming requestSettings)]
-
-      -- Run agent with error catching
-      catch
-        (do (_result, newHistory) <- withLLMCancellation . runConfig runtimeConfigs . runHistory currentHistory $
-                runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
-            embed $ updateHistory uiVars historyRef newHistory)
-        (\err -> do
-          -- Show error in UI
-          embed $ sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Agent error: " ++ err)))
+      -- Dispatch to appropriate command
+      dispatchCommand cmdSet userText
 
       -- Always clear cancellation flag after request completes (whether success or error)
       embed $ clearCancellationFlag uiVars
+
+    -- | Dispatch user input to the appropriate command
+    -- | Checks if input starts with "/" and matches a slash command,
+    -- | otherwise falls back to the default command
+    dispatchCommand :: CommandSet r -> T.Text -> Sem r ()
+    dispatchCommand CommandSet{slashCommands, defaultCommand} userText =
+      case T.stripPrefix "/" userText of
+        Nothing -> defaultCommand userText  -- No slash prefix, use default
+        Just rest ->
+          -- Extract command name (first word after /)
+          let cmdName = T.takeWhile (/= ' ') rest
+              cmdArg = T.stripStart $ T.dropWhile (/= ' ') rest
+          in case lookup cmdName [(commandName cmd, commandFn cmd) | cmd <- slashCommands] of
+               Just cmd -> cmd cmdArg  -- Found matching slash command
+               Nothing -> defaultCommand userText  -- No match, use default
+
+    -- | Wrapper that converts a history-manipulating function into a command
+    -- | Takes a function that receives current history and returns new history,
+    -- | and handles reading/updating the history ref with error handling
+    withHistoryUpdate :: Members '[Error String, Embed IO] r
+                      => ([Message model] -> T.Text -> Sem r [Message model])
+                      -> T.Text
+                      -> Sem r ()
+    withHistoryUpdate fn userText = do
+      currentHistory <- embed $ readIORef historyRef
+      catch
+        (do newHistory <- fn currentHistory userText
+            embed $ updateHistory uiVars historyRef newHistory)
+        (\err -> embed $ sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Command error: " ++ err)))
+
+    -- | Echo command: logs the input text
+    echoCommand :: Member Logging r => SlashCommand r
+    echoCommand = SlashCommand
+      { commandName = "echo"
+      , commandFn = \text -> info $ "Echo: " <> text
+      }
+
+    -- | The default agent command: run runixCode with the user's input
+    runDefaultAgentCommand settings userText =
+      withHistoryUpdate (\currentHistory userTxt -> do
+        -- Build configs using settings from the request
+        let isStreaming (Streaming _) = True
+            isStreaming _ = False
+            baseConfigs = defaultConfigs @model
+            configsWithoutStreaming = filter (not . isStreaming) baseConfigs
+            runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming settings)]
+
+        -- Run agent and return new history
+        (_result, newHistory) <- withLLMCancellation
+                               . runConfig runtimeConfigs
+                               . runHistory currentHistory
+                               $ runixCode @model @TUIWidget sysPrompt (UserPrompt userTxt)
+        return newHistory
+      ) userText
 
 --------------------------------------------------------------------------------
 -- UI Runner Builder
