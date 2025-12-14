@@ -154,6 +154,7 @@ executable runix-code-tui
                     , stm
                     , directory
                     , bytestring
+                    , unix
 
     hs-source-dirs:   tui
     default-language: Haskell2010

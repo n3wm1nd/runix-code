@@ -15,8 +15,11 @@ import qualified Data.Text as T
 import Data.IORef
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
-import Control.Monad (forever)
+import Control.Monad (forever, when)
 import qualified System.Directory as Dir
+import System.Environment (getExecutablePath)
+import System.Posix.Process (executeFile)
+import System.Posix.Files (getFileStatus, modificationTime)
 
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
@@ -37,7 +40,7 @@ import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
-import Runix.Logging.Effects (Logging(..), info)
+import Runix.Logging.Effects (Logging(..), info, Level(..))
 import Runix.Cancellation.Effects (Cancellation(..))
 import Runix.Streaming.Effects (StreamChunk)
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
@@ -84,11 +87,11 @@ main = do
   cfg <- loadConfig
 
   -- Create model interpreter
-  ModelInterpreter{interpretModel} <- createModelInterpreter (cfgModelSelection cfg)
+  ModelInterpreter{interpretModel, miLoadSession, miSaveSession} <- createModelInterpreter (cfgModelSelection cfg)
 
   -- Run UI with the interpreter
   -- The interpreter is now just a function we can pass around
-  runUI (\refreshCallback -> buildUIRunner interpretModel refreshCallback)
+  runUI (\refreshCallback -> buildUIRunner interpretModel miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -117,8 +120,11 @@ agentLoop :: forall model.
           -> IORef [Message model]
           -> SystemPrompt
           -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+          -> (forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
+          -> FilePath  -- Executable path
+          -> Integer  -- Initial executable mtime
           -> IO ()
-agentLoop cwd uiVars historyRef sysPrompt modelInterpreter = do
+agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
   let runToIO' = runM . runError . interpretTUIEffects cwd uiVars . modelInterpreter
 
@@ -155,6 +161,35 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter = do
 
       -- Always clear cancellation flag after request completes (whether success or error)
       embed $ clearCancellationFlag uiVars
+
+      -- Check if executable has been modified and reload if necessary
+      embed $ checkAndReloadOnChange
+
+    -- | Check if executable has changed and reload if so
+    checkAndReloadOnChange :: IO ()
+    checkAndReloadOnChange = do
+      -- Get current mtime of executable
+      stat <- getFileStatus exePath
+      let currentMTime = fromIntegral $ fromEnum $ modificationTime stat
+
+      -- Check if executable has been modified (compare to initial mtime from startup)
+      when (currentMTime /= initialMTime) $ do
+        -- Save current session
+        currentHistory <- readIORef historyRef
+        let sessionFile = "/tmp/runix-code-session.json"
+
+        -- Use the effect stack to save session
+        let runSave = runM . runError @String . loggingIO . failLog . filesystemWriteIO . filesystemReadIO
+        result <- runSave $ miSaveSession sessionFile currentHistory
+
+        case result of
+          Left err -> do
+            -- Failed to save session - log error but don't reload
+            sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Failed to save session for reload: " ++ err))
+          Right () -> do
+            -- Successfully saved - exec new binary
+            executeFile exePath False ["--resume-session", sessionFile] Nothing
+            -- Never returns
 
     -- | Dispatch user input to the appropriate command
     -- | Checks if input starts with "/" and matches a slash command,
@@ -235,14 +270,39 @@ buildUIRunner :: forall model.
                  , SupportsStreaming (ProviderOf model)
                  )
               => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+              -> (forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
+              -> (forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
+              -> Maybe FilePath  -- Resume session path
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
-buildUIRunner modelInterpreter refreshCallback = do
+buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refreshCallback = do
   -- Get current working directory for security restrictions
   cwd <- Dir.getCurrentDirectory
 
   uiVars <- newUIVars @(Message model) refreshCallback
   historyRef <- newIORef ([] :: [Message model])
+
+  -- Load session if resuming
+  initialHistory <- case maybeSessionPath of
+    Just path -> do
+      let runToIO' = runM . runError @String . loggingIO . failLog . filesystemWriteIO . filesystemReadIO
+      result <- runToIO' $ miLoadSession path
+      case result of
+        Right msgs -> do
+          -- Log successful reload
+          sendAgentEvent uiVars (LogEvent Info (T.pack $ "Code reloaded - session restored with " ++ show (length msgs) ++ " messages"))
+          return msgs
+        Left err -> do
+          sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Failed to load session: " ++ err))
+          return []
+    Nothing -> return []
+
+  -- Initialize historyRef with loaded or empty history
+  writeIORef historyRef initialHistory
+
+  -- Send loaded history to UI so it displays the messages
+  when (not $ null initialHistory) $
+    sendAgentEvent uiVars (AgentCompleteEvent initialHistory)
 
   -- Get data file path for the system prompt
   promptPath <- getDataFileName "prompt/runix-code.md"
@@ -255,7 +315,12 @@ buildUIRunner modelInterpreter refreshCallback = do
         Right txt -> SystemPrompt txt
         Left _ -> SystemPrompt "You are a helpful AI coding assistant."
 
-  _ <- forkIO $ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter
+  -- Get executable path and initial modification time for code reloading
+  exePath <- getExecutablePath
+  stat <- getFileStatus exePath
+  let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
+
+  _ <- forkIO $ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime
   return uiVars
 
 --------------------------------------------------------------------------------

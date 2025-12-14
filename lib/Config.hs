@@ -48,6 +48,7 @@ data ModelSelection
 data Config = Config
   { cfgModelSelection :: ModelSelection
   , cfgSessionFile :: Maybe FilePath
+  , cfgResumeSession :: Maybe FilePath
   } deriving stock (Show, Eq)
 
 --------------------------------------------------------------------------------
@@ -60,14 +61,13 @@ data Config = Config
 -- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai")
 --
 -- CLI arguments:
--- - First positional argument: session file path (optional)
+-- - First positional argument: session file path (optional, legacy)
+-- - --resume-session <path>: resume from saved session (for code reloading)
 loadConfig :: IO Config
 loadConfig = do
   -- Get CLI arguments
   args <- getArgs
-  let maybeSessionFile = case args of
-        (file:_) -> Just file
-        [] -> Nothing
+  let (maybeSessionFile, maybeResumeSession) = parseArgs args
 
   -- Get model selection from environment
   modelSelection <- getModelSelection
@@ -75,7 +75,14 @@ loadConfig = do
   return Config
     { cfgModelSelection = modelSelection
     , cfgSessionFile = maybeSessionFile
+    , cfgResumeSession = maybeResumeSession
     }
+
+-- | Parse command-line arguments
+parseArgs :: [String] -> (Maybe FilePath, Maybe FilePath)
+parseArgs ("--resume-session":path:_) = (Nothing, Just path)
+parseArgs (file:_) = (Just file, Nothing)  -- Backward compatibility
+parseArgs [] = (Nothing, Nothing)
 
 -- | Get model selection from RUNIX_MODEL environment variable
 --
