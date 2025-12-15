@@ -43,7 +43,7 @@ viewHistoryInPager messages = do
   let content = T.concat $ map formatMessage messages
 
   -- Write to temp file and run pager inside withSystemTempFile (blocks until done)
-  withSystemTempFile "runix-code-history.txt" $ \path handle -> do
+  withSystemTempFile "runix-code-history.md" $ \path handle -> do
     TIO.hPutStr handle content
     hClose handle
     -- Run pager and wait for it to complete
