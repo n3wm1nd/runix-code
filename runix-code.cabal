@@ -195,7 +195,7 @@ test-suite runix-code-test
                     , filepath
                     , polysemy >=1.9
 
-    other-modules:    OutputHistorySpec, FileSystemSecuritySpec
+    other-modules:    OutputHistorySpec
 
 -- Vty version removed - brick provides better abstraction for our use case
 -- The raw vty exploration showed it doesn't offer advantages over brick:
