@@ -32,6 +32,7 @@ import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
 import Runix.Runner (grepIO, bashIO, cmdIO, failLog, loggingIO)
 import qualified UI.Commands.View as ViewCmd
+import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
@@ -150,7 +151,7 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath
 
       -- Build command set with current settings
       let cmdSet = CommandSet
-            { slashCommands = [echoCommand, viewCommand]
+            { slashCommands = [echoCommand, viewCommand, historyCommand]
             , defaultCommand = runDefaultAgentCommand requestSettings
             }
 
@@ -244,6 +245,12 @@ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath
     viewCommand :: Members '[Embed IO, Logging] r => SlashCommand r
     viewCommand =
       let (name, fn) = ViewCmd.viewCommand historyRef uiVars
+      in SlashCommand { commandName = name, commandFn = fn }
+
+    -- | History command: edit conversation history in $EDITOR
+    historyCommand :: Members '[Embed IO, Logging] r => SlashCommand r
+    historyCommand =
+      let (name, fn) = HistoryCmd.historyCommand historyRef uiVars
       in SlashCommand { commandName = name, commandFn = fn }
 
     -- | The default agent command: run runixCode with the user's input

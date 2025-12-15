@@ -34,6 +34,7 @@ module UI.OutputHistory
   , renderItem
     -- * Merge logic
   , mergeOutputMessages
+  , mergeEditedMessages
   , addCompletedToolItems
     -- * Legacy compatibility (to be removed)
   , OutputMessage(..)
@@ -300,7 +301,7 @@ renderItem opts item = vBox $ case item of
     renderArgs :: Aeson.Value -> Widget n
     renderArgs (Aeson.Object obj) =
       case KM.toList obj of
-        [(key, val)] ->
+        [(_key, val)] ->
           -- Single parameter: show as func("value") or func(123)
           txt "(" <+> renderSimpleValue val <+> txt ")"
         _ ->
@@ -327,9 +328,9 @@ renderItem opts item = vBox $ case item of
     renderResultValue :: Aeson.Value -> Widget n
     renderResultValue (Aeson.String s) =
       -- For string results, show first few lines
-      let lines = T.lines s
-          preview = T.unlines (take 3 lines)
-          hasMore = length lines > 3
+      let lines' = T.lines s
+          preview = T.unlines (take 3 lines')
+          hasMore = length lines' > 3
       in vBox $ map txt (T.lines preview) ++ if hasMore then [txt "  ..."] else []
     renderResultValue val =
       txt (truncateText 60 $ T.pack $ show val)
@@ -639,6 +640,68 @@ mergeOutputMessages newItems@(newItem:restNew) (oldItem:restOld) =
     _ ->
       -- New item is not a message (shouldn't happen)
       newItem : mergeOutputMessages restNew (oldItem:restOld)
+
+-- | Merge edited messages back into full history
+-- Unlike mergeOutputMessages, this preserves non-editable messages from oldItems
+-- that don't appear in editedMessages
+--
+-- Contract:
+--   editedMessages: List of edited editable messages (UserText, AssistantText, AssistantReasoning)
+--   oldItems: Full history including all message types and non-message items
+--   Returns: Updated history with edited messages replaced, non-editable messages preserved
+mergeEditedMessages :: Eq msg
+                    => (msg -> Bool)  -- ^ Predicate: is this message editable?
+                    -> [OutputItem msg]  -- ^ Edited messages (editable subset)
+                    -> [OutputItem msg]  -- ^ Old full history
+                    -> [OutputItem msg]  -- ^ Merged result
+mergeEditedMessages isEditable editedItems oldItems =
+  -- Strategy: Replace editable MessageItems in oldItems with editedItems,
+  -- keeping non-editable MessageItems and all non-message items unchanged
+  go editedItems oldItems
+  where
+    go [] remaining = filter (not . isEditableMessageItem) remaining
+    go edited [] = edited  -- New edited messages at the end
+    go edited@(e:restEdited) (o:restOld) =
+      case (e, o) of
+        (MessageItem editedMsg, MessageItem oldMsg)
+          | isEditable oldMsg && isEditable editedMsg ->
+              if editedMsg == oldMsg
+              then -- Messages match: keep it and collect any logs after
+                   let (logsAfter, restAfterLogs) = span (not . isMessageItem) restOld
+                   in e : logsAfter ++ go restEdited restAfterLogs
+              else if editedMsg `elem` extractEditableItems restOld
+              then -- Edited message exists later: old message was deleted
+                   go edited restOld
+              else if oldMsg `elem` extractEditableItems restEdited
+              then -- Old message exists later: edited message is insertion
+                   e : go restEdited (o:restOld)
+              else -- Neither exists later: replacement
+                   e : go restEdited restOld
+
+          | isEditable oldMsg ->
+              -- Old is editable but new isn't (shouldn't happen): skip old
+              go edited restOld
+
+          | otherwise ->
+              -- Old is non-editable: keep it, continue with same edited list
+              o : go edited restOld
+
+        (MessageItem _, _) ->
+          -- Old item is not a message: keep it
+          o : go edited restOld
+
+        _ ->
+          -- Edited item is not a message (shouldn't happen): pass through
+          e : go restEdited (o:restOld)
+
+    isEditableMessageItem (MessageItem msg) = isEditable msg
+    isEditableMessageItem _ = False
+
+    extractEditableItems = foldr extractEditable []
+      where
+        extractEditable (MessageItem m) acc
+          | isEditable m = m : acc
+        extractEditable _ acc = acc
 
 -- | Patch the output history with a new message list
 -- LEGACY: Not used, kept for reference only

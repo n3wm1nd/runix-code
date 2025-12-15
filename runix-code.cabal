@@ -96,7 +96,9 @@ library runix-code-tui-lib
                     , UI.UserInput.Interpreter
                     , UI.ForegroundCmd
                     , UI.ForegroundCmdInterpreter
+                    , UI.MessageFormat
                     , UI.Commands.View
+                    , UI.Commands.History
 
     build-depends:    base >=4.17 && <5
                     , runix-code
