@@ -2,6 +2,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE InstanceSigs #-}
+{-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 
 -- | Model definitions for runix-code
 --
@@ -33,6 +36,7 @@ module Models
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import GHC.Generics (Generic)
 import UniversalLLM
 import qualified UniversalLLM.Providers.Anthropic as AnthropicProvider
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
@@ -355,3 +359,62 @@ instance ModelDefaults (Model GLM46 ZAI) where
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable reasoning extraction
     ]
+
+--------------------------------------------------------------------------------
+-- Model Configuration Types
+--------------------------------------------------------------------------------
+
+-- | Type instances for ConfigFor - each model's canonical configuration
+type instance ConfigFor (Model ClaudeSonnet45 Anthropic) = ClaudeSonnet45Config
+type instance ConfigFor (Model GLM45Air LlamaCpp) = GLM45AirConfig
+type instance ConfigFor (Model Qwen3Coder LlamaCpp) = Qwen3CoderConfig
+type instance ConfigFor (Model Universal OpenRouter) = UniversalConfig
+type instance ConfigFor (Model GLM45Air_ZAI ZAI) = GLM45AirZAIConfig
+type instance ConfigFor (Model GLM46 ZAI) = GLM46Config
+
+-- Claude Sonnet 4.5 configuration
+data ClaudeSonnet45Config = ClaudeSonnet45Config
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- GLM-4.5-Air (LlamaCpp) configuration
+data GLM45AirConfig = GLM45AirConfig
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- Qwen3-Coder configuration (no reasoning)
+data Qwen3CoderConfig = Qwen3CoderConfig
+  { streaming :: StreamingSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- Universal (OpenRouter) configuration
+data UniversalConfig = UniversalConfig
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- GLM-4.5-Air (ZAI) configuration
+data GLM45AirZAIConfig = GLM45AirZAIConfig
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- GLM-4.6 configuration
+data GLM46Config = GLM46Config
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
