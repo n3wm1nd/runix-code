@@ -57,6 +57,9 @@ library
     exposed-modules:  Agent
                     , Tools
                     , Tools.Claude
+                    , Tools.ToolBuilder.Types
+                    , Tools.ToolBuilder.Agent
+                    , Tools.ToolBuilder.Prompt
                     , GeneratedTools
                     , Models
                     , Config

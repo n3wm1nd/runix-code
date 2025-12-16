@@ -622,16 +622,16 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
 
       info("file written, compiling now")
       -- Step 5: Test compilation
-      buildResult <- cabalBuild (WorkingDirectory workingDir)
+      CabalBuildResult success _stdout errors <- cabalBuild (WorkingDirectory workingDir)
 
-      if buildSuccess buildResult
+      if success
         then do
           -- Success: keep the updated file
           return $ GenerateToolResult True ("Successfully generated tool: " <> expectedFuncName) (Just (T.pack generatedToolsPath))
         else do
           -- Failure: revert to original content
           Runix.FileSystem.Effects.writeFile generatedToolsPath (T.encodeUtf8 originalContent)
-          let errorMsg = "Compilation failed: " <> buildErrors buildResult
+          let errorMsg = "Compilation failed: " <> errors
           return $ GenerateToolResult False errorMsg Nothing
 
 -- Helper functions for code generation

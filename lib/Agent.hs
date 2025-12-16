@@ -27,7 +27,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.ByteString (ByteString)
 import Control.Monad (forM)
-import Polysemy (Member, Members, Sem)
+import Polysemy (Member, Members, Sem, raise)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, ask, runReader)
 import Polysemy.Fail (Fail, runFail)
@@ -41,6 +41,8 @@ import Runix.LLM.ToolInstances ()
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
 import qualified Tools.Claude
+import qualified Tools.ToolBuilder.Agent as ToolBuilder
+import qualified GeneratedTools
 import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
@@ -202,7 +204,7 @@ runixCodeAgentLoop = do
   subagents <- Tools.Claude.loadSubagents
   skills <- Tools.Claude.loadSkills
 
-  let baseTools :: [LLMTool (Sem (Fail ': r))]
+  let 
       baseTools =
         [ LLMTool Tools.grep
         , LLMTool Tools.glob
@@ -213,17 +215,30 @@ runixCodeAgentLoop = do
         , LLMTool Tools.todoCheck
         , LLMTool Tools.todoDelete
         , LLMTool Tools.cabalBuild
-        , LLMTool Tools.generateTool
+        , LLMTool Tools.generateTool                  -- OLD: simple proof-of-concept
         ]
 
+      -- Tools available to tool-builder (restricted set)
+
+      builderTools =
+        [ LLMTool Tools.readFile
+        , LLMTool Tools.writeFile
+        , LLMTool Tools.editFile
+        , LLMTool Tools.cabalBuild
+        , LLMTool Tools.grep
+        ]
+
+      -- Add tool-builder to baseTools (just like Claude subagents)
+      allBaseTools = baseTools ++ [LLMTool (ToolBuilder.buildTool @model builderTools)]
+
   -- Convert subagents to tools
-  subagentTools :: [LLMTool (Sem (Fail ': r))] <- return $ map (Tools.Claude.claudeSubagentToTool @model baseTools) subagents
+  subagentTools <- return $ map (Tools.Claude.claudeSubagentToTool @model allBaseTools) subagents
 
   -- Convert skills to tools
-  skillTools :: [LLMTool (Sem (Fail ': r))] <- mapM (Tools.Claude.claudeSkillToTool @model) skills
+  skillTools  <- mapM (Tools.Claude.claudeSkillToTool @model) skills
 
-  -- Combine all tools
-  let tools = baseTools ++ subagentTools ++ skillTools
+  -- Combine all tools (including auto-registered generated tools)
+  let tools = allBaseTools ++ subagentTools ++ skillTools ++ GeneratedTools.generatedTools
       configs = setTools tools baseConfigs
 
   -- Check for file changes and inject as system messages
