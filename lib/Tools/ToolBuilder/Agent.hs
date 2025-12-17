@@ -17,7 +17,7 @@ module Tools.ToolBuilder.Agent
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Polysemy (Member, Members, Sem)
+import Polysemy (Member, Members, Sem, raise)
 import Polysemy.State (State, get, put)
 import Polysemy.Fail (Fail)
 import UniversalLLM.Core.Types (Message(..))
@@ -69,10 +69,15 @@ buildTool
   -> BuildMode
   -> Sem r BuildToolResult
 buildTool toolName desc mode = do
+  -- Get data directory and create build function for all operations
+  AppConfig.RunixDataDir dataDir <- getConfig
+  let generatedToolsPath = dataDir </> "lib/GeneratedTools.hs"
+      build = Tools.cabalBuild (Tools.WorkingDirectory $ T.pack dataDir)
+
   -- PRECONDITION: Verify current source tree compiles, abort otherwise
   -- The agent can't fix a broken codebase it didn't create
   info "Verifying codebase compiles before starting tool-builder..."
-  baselineCompile <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+  baselineCompile <- build
   case baselineCompile of
     Tools.CabalBuildResult False _stdout stderr -> do
       fail $ "Codebase does not compile. Fix these errors first:\n" <> T.unpack stderr
@@ -91,9 +96,9 @@ buildTool toolName desc mode = do
 
   info $ "Starting tool-builder for: " <> getToolName toolName
 
-  -- Step 4: Run tool-builder loop
+  -- Step 4: Run tool-builder loop (passing build function and paths)
   put @[Message model] toolBuilderHistory
-  summary <- toolBuilderLoop @model toolBuilderPrompt
+  summary <- toolBuilderLoop @model toolBuilderPrompt generatedToolsPath build
 
   -- Step 5: Restore caller's history (unchanged)
   -- The tool-builder's iterations are discarded
@@ -118,15 +123,13 @@ writeToolcodeAtomic
      , Member Fail r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member Logging r
-     , Member (Config AppConfig.RunixDataDir) r
      )
-  => ToolName
+  => FilePath  -- ^ Path to GeneratedTools.hs
+  -> Sem r Tools.CabalBuildResult  -- ^ Build function
+  -> ToolName
   -> ToolImplementation
   -> Sem r WriteToolcodeResult
-writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
-  -- Get path to GeneratedTools.hs from config
-  AppConfig.RunixDataDir dataDir <- getConfig
-  let generatedToolsPath = dataDir </> "lib/GeneratedTools.hs"
+writeToolcodeAtomic generatedToolsPath build (ToolName name) (ToolImplementation code) = do
 
   -- Read current content
   currentContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
@@ -140,7 +143,7 @@ writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
   _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent newContent)
 
   -- Try to compile
-  buildResult <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+  buildResult <- build
 
   case buildResult of
     Tools.CabalBuildResult True _stdout _stderr -> do
@@ -155,7 +158,7 @@ writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
       _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent registeredContent)
 
       -- Verify it still compiles after registration
-      finalBuild <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+      finalBuild <- build
       case finalBuild of
         Tools.CabalBuildResult True _ _ -> do
           info $ "Tool successfully registered: " <> name
@@ -294,31 +297,30 @@ toolBuilderLoop
      , Member Fail r
      , Member Grep r
      , Member PromptStore r
-     , Member (Config AppConfig.RunixDataDir) r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
      )
-  => Text  -- ^ System prompt
+  => Text      -- ^ System prompt
+  -> FilePath  -- ^ Path to GeneratedTools.hs
+  -> Sem r Tools.CabalBuildResult  -- ^ Build function
   -> Sem r BuildToolResult
-toolBuilderLoop systemPrompt = do
+toolBuilderLoop systemPrompt generatedToolsPath build = do
   -- CRITICAL: Explicit type signature with ScopedTypeVariables to bind 'r'
   let
       builderTools =
         [ LLMTool Tools.readFile
         , LLMTool Tools.glob
         , LLMTool Tools.grep
-        , LLMTool writeToolcodeAtomic
-        , LLMTool (Tools.cabalBuild (Tools.WorkingDirectory "."))
+        , LLMTool (writeToolcodeAtomic generatedToolsPath (raise build))
+        , LLMTool (raise build)
         ]
       configs = [ULL.SystemPrompt systemPrompt]
       configsWithTools = setTools builderTools configs
 
   -- FORCED CONTEXT: Always inject GeneratedTools.hs content at start of loop
   -- The agent doesn't decide whether to read it - we force-feed the current state
-  AppConfig.RunixDataDir dataDir <- getConfig
-  let generatedToolsPath = dataDir </> "lib/GeneratedTools.hs"
   generatedToolsContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
   let Tools.ReadFileResult generatedToolsText = generatedToolsContent
       contextMessage = SystemText $ T.unlines
@@ -342,7 +344,7 @@ toolBuilderLoop systemPrompt = do
       -- No more tool calls - agent thinks it's done
       -- ENFORCE: Verify compilation before allowing completion
       info "Agent claims completion, verifying compilation..."
-      finalCompile <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+      finalCompile <- build
 
       case finalCompile of
         Tools.CabalBuildResult True _ _ -> do
@@ -363,7 +365,7 @@ toolBuilderLoop systemPrompt = do
                 ]
               historyWithError = updatedHistory ++ [errorMessage]
           put @[Message model] historyWithError
-          toolBuilderLoop @model systemPrompt
+          toolBuilderLoop @model systemPrompt generatedToolsPath build
 
     calls -> do
       -- Execute tools and continue
@@ -375,7 +377,7 @@ toolBuilderLoop systemPrompt = do
       if countToolCalls updatedHistory > 20
         then fail $ "Tool builder exceeded maximum iterations (20)"
 
-        else toolBuilderLoop @model systemPrompt
+        else toolBuilderLoop @model systemPrompt generatedToolsPath build
 
 -- | Count tool calls in history
 countToolCalls :: [Message model] -> Int
