@@ -27,7 +27,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Data.ByteString (ByteString)
 import Control.Monad (forM)
-import Polysemy (Member, Members, Sem, raise)
+import Polysemy (Member, Members, Sem)
 import Polysemy.State (State, runState, get, put)
 import Polysemy.Reader (Reader, ask, runReader)
 import Polysemy.Fail (Fail, runFail)
@@ -204,7 +204,7 @@ runixCodeAgentLoop = do
   subagents <- Tools.Claude.loadSubagents
   skills <- Tools.Claude.loadSkills
 
-  let 
+  let
       baseTools =
         [ LLMTool Tools.grep
         , LLMTool Tools.glob
@@ -215,21 +215,10 @@ runixCodeAgentLoop = do
         , LLMTool Tools.todoCheck
         , LLMTool Tools.todoDelete
         , LLMTool Tools.cabalBuild
-        , LLMTool Tools.generateTool                  -- OLD: simple proof-of-concept
-        ]
-
-      -- Tools available to tool-builder (restricted set)
-
-      builderTools =
-        [ LLMTool Tools.readFile
-        , LLMTool Tools.writeFile
-        , LLMTool Tools.editFile
-        , LLMTool Tools.cabalBuild
-        , LLMTool Tools.grep
         ]
 
       -- Add tool-builder to baseTools (just like Claude subagents)
-      allBaseTools = baseTools ++ [LLMTool (ToolBuilder.buildTool @model builderTools)]
+      allBaseTools = baseTools ++ [LLMTool (ToolBuilder.buildTool @model)]
 
   -- Convert subagents to tools
   subagentTools <- return $ map (Tools.Claude.claudeSubagentToTool @model allBaseTools) subagents

@@ -1,4 +1,7 @@
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+
 
 -- | Tool-builder agent with agent loop
 --
@@ -10,7 +13,6 @@
 module Tools.ToolBuilder.Agent
   ( buildTool
   , toolBuilderLoop
-  , runToolBuilderSession
   ) where
 
 import Data.Text (Text)
@@ -27,9 +29,13 @@ import Runix.LLM.ToolExecution (executeTool)
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
+import Runix.Grep.Effects (Grep)
 import Tools.ToolBuilder.Types
 import Tools.ToolBuilder.Prompt (loadToolBuilderPrompt)
 import qualified Tools  -- Import base tools
+import Runix.LLM.ToolInstances ()
+import qualified Autodocodec
+import qualified UniversalLLM.Core.Tools
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -45,17 +51,28 @@ buildTool
      ( Member (LLM model) r
      , Member Logging r
      , Member Cmd r
+     , Member Fail r
+     , Member Grep r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
      )
-  => [LLMTool (Sem (Fail ': r))]  -- ^ Builder tools (passed from caller, just like Claude agents)
-  -> ToolName
+  => ToolName
   -> ToolDescription
   -> BuildMode
   -> Sem r BuildToolResult
-buildTool builderTools toolName desc mode = do
+buildTool toolName desc mode = do
+  -- PRECONDITION: Verify current source tree compiles, abort otherwise
+  -- The agent can't fix a broken codebase it didn't create
+  info "Verifying codebase compiles before starting tool-builder..."
+  baselineCompile <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+  case baselineCompile of
+    Tools.CabalBuildResult False _stdout stderr -> do
+      fail $ "Codebase does not compile. Fix these errors first:\n" <> T.unpack stderr
+    Tools.CabalBuildResult True _ _ -> do
+      info "Baseline compilation successful, proceeding with tool-builder"
+
   -- Step 1: Capture calling agent's history (this is the context inheritance)
   callerHistory <- get @[Message model]
 
@@ -68,9 +85,9 @@ buildTool builderTools toolName desc mode = do
 
   info $ "Starting tool-builder for: " <> getToolName toolName
 
-  -- Step 4: Run tool-builder loop with restricted tools
+  -- Step 4: Run tool-builder loop
   put @[Message model] toolBuilderHistory
-  (summary, _finalHistory) <- runToolBuilderSession @model builderTools toolBuilderPrompt
+  summary <- toolBuilderLoop @model toolBuilderPrompt
 
   -- Step 5: Restore caller's history (unchanged)
   -- The tool-builder's iterations are discarded
@@ -79,6 +96,63 @@ buildTool builderTools toolName desc mode = do
   info $ "Tool-builder finished with: " <> buildMessage summary
 
   return summary
+
+--------------------------------------------------------------------------------
+-- Tool for Agent to Write Code
+--------------------------------------------------------------------------------
+
+-- | Atomically write tool code to GeneratedTools.hs
+-- Appends the code, attempts compilation, and rolls back if it fails
+writeToolcodeAtomic
+  :: forall r.
+     ( Member Cmd r
+     , Member Fail r
+     , Members '[FileSystemRead, FileSystemWrite] r
+     , Member Logging r
+     )
+  => ToolName
+  -> ToolImplementation
+  -> Sem r WriteToolcodeResult
+writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
+  let generatedToolsPath = "apps/runix-code/lib/GeneratedTools.hs"
+
+  -- Read current content
+  currentContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
+  let Tools.ReadFileResult currentText = currentContent
+
+  -- Append new tool with marker
+  let marker = "-- Generated tool: " <> name
+      newContent = currentText <> "\n\n" <> marker <> "\n" <> code
+
+  -- Write it out
+  _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent newContent)
+
+  -- Try to compile
+  buildResult <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+
+  case buildResult of
+    Tools.CabalBuildResult True _stdout _stderr -> do
+      info $ "Successfully added tool: " <> name
+      return $ WriteToolcodeResult ("Tool '" <> name <> "' added and compiled successfully")
+
+    Tools.CabalBuildResult False _stdout stderr -> do
+      -- Compilation failed - roll back
+      info $ "Compilation failed for tool: " <> name <> ", rolling back"
+      _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent currentText)
+      fail $ "Compilation failed:\n" <> T.unpack stderr
+
+-- Result type
+newtype WriteToolcodeResult = WriteToolcodeResult Text
+  deriving stock (Show, Eq)
+  deriving (Autodocodec.HasCodec) via Text
+
+instance UniversalLLM.Core.Tools.ToolParameter WriteToolcodeResult where
+  paramName _ _ = "result"
+  paramDescription _ = "result of writing tool code"
+
+instance UniversalLLM.Core.Tools.ToolFunction WriteToolcodeResult where
+  toolFunctionName _ = "write_toolcode_atomic"
+  toolFunctionDescription _ = "Atomically write tool code to GeneratedTools.hs. Code is appended, compiled, and rolled back if compilation fails."
 
 -- | Extract tool name from ToolName newtype
 getToolName :: ToolName -> Text
@@ -126,35 +200,6 @@ formatToolBuildTask (ToolName name) (ToolDescription desc) mode =
         ]
 
 --------------------------------------------------------------------------------
--- Tool-Builder Session
---------------------------------------------------------------------------------
-
--- | Run a single tool-builder session
--- Returns summary and final history (history will be discarded by caller)
-runToolBuilderSession
-  :: forall model r.
-     ( Member (LLM model) r
-     , Member Logging r
-     , Member Cmd r
-     , Members '[FileSystemRead, FileSystemWrite] r
-     , Member (State [Message model]) r
-     , HasTools model
-     , SupportsSystemPrompt (ProviderOf model)
-     )
-  => [LLMTool (Sem (Fail ': r))]  -- ^ Builder tools
-  -> Text  -- ^ System prompt
-  -> Sem r (BuildToolResult, [Message model])
-runToolBuilderSession builderTools systemPrompt = do
-  let configs = [ULL.SystemPrompt systemPrompt]
-      configsWithTools = setTools builderTools configs
-
-  -- Run the loop
-  result <- toolBuilderLoop @model configsWithTools builderTools
-
-  finalHistory <- get @[Message model]
-  return (result, finalHistory)
-
---------------------------------------------------------------------------------
 -- Agent Loop
 --------------------------------------------------------------------------------
 
@@ -168,47 +213,87 @@ toolBuilderLoop
   :: forall model r.
      ( Member (LLM model) r
      , Member Logging r
+     , Member Cmd r
+     , Member Fail r
+     , Member Grep r
+     , Members '[FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
+     , SupportsSystemPrompt (ProviderOf model)
      )
-  => [ULL.ModelConfig model]
-  -> [LLMTool (Sem (Fail ': r))]
+  => Text  -- ^ System prompt
   -> Sem r BuildToolResult
-toolBuilderLoop configs tools = do
-  history <- get @[Message model]
-  responseMsgs <- queryLLM configs history
+toolBuilderLoop systemPrompt = do
+  -- CRITICAL: Explicit type signature with ScopedTypeVariables to bind 'r'
+  let
+      builderTools =
+        [ LLMTool Tools.readFile
+        , LLMTool Tools.glob
+        , LLMTool Tools.grep
+        , LLMTool writeToolcodeAtomic
+        ]
+      configs = [ULL.SystemPrompt systemPrompt]
+      configsWithTools = setTools builderTools configs
 
-  let updatedHistory = history ++ responseMsgs
+  -- FORCED CONTEXT: Always inject GeneratedTools.hs content at start of loop
+  -- The agent doesn't decide whether to read it - we force-feed the current state
+  generatedToolsContent <- Tools.readFile (Tools.FilePath "apps/runix-code/lib/GeneratedTools.hs")
+  let Tools.ReadFileResult generatedToolsText = generatedToolsContent
+      contextMessage = SystemText $ T.unlines
+        [ "=== CURRENT STATE OF GeneratedTools.hs ==="
+        , generatedToolsText
+        , "=== END OF GeneratedTools.hs ==="
+        ]
+
+  history <- get @[Message model]
+  let historyWithContext = history ++ [contextMessage]
+  put @[Message model] historyWithContext
+  responseMsgs <- queryLLM configsWithTools historyWithContext
+
+  let updatedHistory = historyWithContext ++ responseMsgs
       toolCalls = [tc | AssistantTool tc <- responseMsgs]
 
   put @[Message model] updatedHistory
 
   case toolCalls of
     [] -> do
-      -- No more tool calls - extract final summary
-      let responseText = case [txt | AssistantText txt <- responseMsgs] of
-            (txt:_) -> txt
-            [] -> "Tool build completed"
+      -- No more tool calls - agent thinks it's done
+      -- ENFORCE: Verify compilation before allowing completion
+      info "Agent claims completion, verifying compilation..."
+      finalCompile <- Tools.cabalBuild (Tools.WorkingDirectory ".")
 
-      -- Parse the response to determine success
-      let success = detectSuccess responseText
-          errors = if success then Nothing else Just responseText
+      case finalCompile of
+        Tools.CabalBuildResult True _ _ -> do
+          -- Success! Actually done
+          info "Compilation verified, tool-builder succeeded"
+          let responseText = case [txt | AssistantText txt <- responseMsgs] of
+                (txt:_) -> txt
+                [] -> "Tool build completed"
+          return $ BuildToolResult responseText
 
-      return $ BuildToolResult success responseText errors
+        Tools.CabalBuildResult False _stdout stderr -> do
+          -- Compilation failed - force agent to continue and fix it
+          info "Compilation failed after agent claimed completion, forcing retry"
+          let errorMessage = SystemText $ T.unlines
+                [ "COMPILATION FAILED - you are not done yet!"
+                , "Fix these errors before claiming success:"
+                , stderr
+                ]
+              historyWithError = updatedHistory ++ [errorMessage]
+          put @[Message model] historyWithError
+          toolBuilderLoop @model systemPrompt
 
     calls -> do
       -- Execute tools and continue
-      results <- mapM (executeTool tools) calls
+      results <- mapM (executeTool builderTools) calls
       let historyWithResults = updatedHistory ++ map ToolResultMsg results
       put @[Message model] historyWithResults
 
       -- Check if we hit max retries (safety limit)
       if countToolCalls updatedHistory > 20
-        then return $ BuildToolResult
-               False
-               "Tool builder exceeded maximum iterations (20)"
-               (Just "Too many retries - possible infinite loop")
-        else toolBuilderLoop @model configs tools
+        then fail $ "Tool builder exceeded maximum iterations (20)"
+
+        else toolBuilderLoop @model systemPrompt
 
 -- | Count tool calls in history
 countToolCalls :: [Message model] -> Int

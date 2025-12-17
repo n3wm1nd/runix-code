@@ -61,17 +61,14 @@ instance HasCodec BuildMode where
 
 -- | Result from the tool-builder agent
 data BuildToolResult = BuildToolResult
-  { buildSuccess :: Bool
-  , buildMessage :: Text
-  , compilationErrors :: Maybe Text
+  { 
+    buildMessage :: Text
   } deriving stock (Show, Eq)
 
 instance HasCodec BuildToolResult where
   codec = Autodocodec.object "BuildToolResult" $
     BuildToolResult
-      <$> Autodocodec.requiredField "success" "whether tool build succeeded" Autodocodec..= buildSuccess
-      <*> Autodocodec.requiredField "message" "summary of what happened" Autodocodec..= buildMessage
-      <*> Autodocodec.optionalField "errors" "compilation errors if any" Autodocodec..= compilationErrors
+      <$> Autodocodec.requiredField "message" "summary of what happened" Autodocodec..= buildMessage
 
 --------------------------------------------------------------------------------
 -- ToolParameter Instances
