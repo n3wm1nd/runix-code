@@ -114,8 +114,6 @@ writeToolcodeAtomic
   -> ToolImplementation
   -> Sem r WriteToolcodeResult
 writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
-  let generatedToolsPath = "apps/runix-code/lib/GeneratedTools.hs"
-
   -- Read current content
   currentContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
   let Tools.ReadFileResult currentText = currentContent
@@ -153,6 +151,10 @@ instance UniversalLLM.Core.Tools.ToolParameter WriteToolcodeResult where
 instance UniversalLLM.Core.Tools.ToolFunction WriteToolcodeResult where
   toolFunctionName _ = "write_toolcode_atomic"
   toolFunctionDescription _ = "Atomically write tool code to GeneratedTools.hs. Code is appended, compiled, and rolled back if compilation fails."
+
+-- | Path to GeneratedTools.hs (relative from project root where cabal build runs)
+generatedToolsPath :: String
+generatedToolsPath = "apps/runix-code/lib/GeneratedTools.hs"
 
 -- | Extract tool name from ToolName newtype
 getToolName :: ToolName -> Text
@@ -237,7 +239,7 @@ toolBuilderLoop systemPrompt = do
 
   -- FORCED CONTEXT: Always inject GeneratedTools.hs content at start of loop
   -- The agent doesn't decide whether to read it - we force-feed the current state
-  generatedToolsContent <- Tools.readFile (Tools.FilePath "apps/runix-code/lib/GeneratedTools.hs")
+  generatedToolsContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
   let Tools.ReadFileResult generatedToolsText = generatedToolsContent
       contextMessage = SystemText $ T.unlines
         [ "=== CURRENT STATE OF GeneratedTools.hs ==="
