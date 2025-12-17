@@ -17,7 +17,7 @@ module Tools.ToolBuilder.Agent
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Polysemy (Member, Members, Sem, raise)
+import Polysemy (Member, Members, Sem)
 import Polysemy.State (State, get, put)
 import Polysemy.Fail (Fail)
 import UniversalLLM.Core.Types (Message(..))
@@ -102,7 +102,10 @@ buildTool toolName desc mode = do
 --------------------------------------------------------------------------------
 
 -- | Atomically write tool code to GeneratedTools.hs
--- Appends the code, attempts compilation, and rolls back if it fails
+-- Appends the code, attempts compilation, and if successful:
+-- 1. Adds tool to generatedTools list
+-- 2. Adds export to module export list
+-- If compilation fails, rolls everything back
 writeToolcodeAtomic
   :: forall r.
      ( Member Cmd r
@@ -130,8 +133,27 @@ writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
 
   case buildResult of
     Tools.CabalBuildResult True _stdout _stderr -> do
-      info $ "Successfully added tool: " <> name
-      return $ WriteToolcodeResult ("Tool '" <> name <> "' added and compiled successfully")
+      info $ "Tool compiled successfully, adding to generatedTools list: " <> name
+
+      -- SUCCESS: Now automatically register the tool
+      -- Extract function name from the code (should be the function definition)
+      let functionName = extractFunctionName code
+          -- Add to generatedTools list and exports
+          registeredContent = addToolToRegistry newContent functionName
+
+      _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent registeredContent)
+
+      -- Verify it still compiles after registration
+      finalBuild <- Tools.cabalBuild (Tools.WorkingDirectory ".")
+      case finalBuild of
+        Tools.CabalBuildResult True _ _ -> do
+          info $ "Tool successfully registered: " <> name
+          return $ WriteToolcodeResult ("SUCCESS: Tool '" <> name <> "' has been added, compiled, and registered in generatedTools list. You are DONE!")
+        Tools.CabalBuildResult False _ stderr -> do
+          -- Registration broke compilation - roll back everything
+          info $ "Registration failed for tool: " <> name <> ", rolling back"
+          _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent currentText)
+          fail $ "Tool registration failed:\n" <> T.unpack stderr
 
     Tools.CabalBuildResult False _stdout stderr -> do
       -- Compilation failed - roll back
@@ -159,6 +181,52 @@ generatedToolsPath = "apps/runix-code/lib/GeneratedTools.hs"
 -- | Extract tool name from ToolName newtype
 getToolName :: ToolName -> Text
 getToolName (ToolName name) = name
+
+-- | Extract function name from tool code
+-- Looks for the main function definition (e.g., "echoTool :: ...")
+extractFunctionName :: Text -> Text
+extractFunctionName code =
+  let codeLines = T.lines code
+      -- Find lines with " :: " (type signature)
+      sigLines = filter (\line -> " :: " `T.isInfixOf` line) codeLines
+      -- Take first signature, extract function name (everything before ::)
+      firstSig = case sigLines of
+        (sig:_) -> T.strip $ T.takeWhile (/= ':') sig
+        [] -> "unknownTool"  -- fallback
+  in firstSig
+
+-- | Add tool to generatedTools list and module exports
+-- This modifies the file content to:
+-- 1. Add function to module export list
+-- 2. Add LLMTool to generatedTools list
+addToolToRegistry :: Text -> Text -> Text
+addToolToRegistry fileContent functionName =
+  let contentLines = T.lines fileContent
+
+      -- Add to exports (find the line with "-- * Generated types...")
+      (beforeExports, afterExports) = break (T.isInfixOf "-- * Generated types") contentLines
+      exportsUpdated = case afterExports of
+        (exportComment:rest) ->
+          beforeExports ++ [exportComment, "  , " <> functionName] ++ rest
+        [] -> contentLines  -- shouldn't happen, but handle gracefully
+
+      -- Add to generatedTools list
+      -- Strategy: Find the closing bracket "]" and insert before it
+      isClosingBracket line = T.strip line == "]"
+      (beforeClosing, afterClosing) = break isClosingBracket exportsUpdated
+      toolsUpdated = case afterClosing of
+        (closingBracket:rest) ->
+          -- Check if the list is empty (previous line is the opening bracket comment)
+          case reverse beforeClosing of
+            (lastLine:_) | T.isInfixOf "[ -- Tools will be added here" lastLine ->
+              -- Empty list: add first item without comma
+              beforeClosing ++ ["    LLMTool " <> functionName, closingBracket] ++ rest
+            _ ->
+              -- Non-empty list: add comma to last item and add new item
+              beforeClosing ++ ["  , LLMTool " <> functionName, closingBracket] ++ rest
+        [] -> exportsUpdated  -- shouldn't happen
+
+  in T.unlines toolsUpdated
 
 --------------------------------------------------------------------------------
 -- Task Formatting
@@ -233,6 +301,7 @@ toolBuilderLoop systemPrompt = do
         , LLMTool Tools.glob
         , LLMTool Tools.grep
         , LLMTool writeToolcodeAtomic
+        , LLMTool (Tools.cabalBuild (Tools.WorkingDirectory "."))
         ]
       configs = [ULL.SystemPrompt systemPrompt]
       configsWithTools = setTools builderTools configs
@@ -304,13 +373,6 @@ countToolCalls = length . filter isToolCall
     isToolCall (AssistantTool _) = True
     isToolCall _ = False
 
--- | Detect success from response text
-detectSuccess :: Text -> Bool
-detectSuccess txt =
-  let lower = T.toLower txt
-      hasSuccess = "success" `T.isInfixOf` lower
-      hasFail = "fail" `T.isInfixOf` lower || "error" `T.isInfixOf` lower
-  in hasSuccess && not hasFail
 
 --------------------------------------------------------------------------------
 -- Helpers

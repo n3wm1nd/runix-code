@@ -7,10 +7,15 @@ module GeneratedTools
     generatedTools
 
     -- * Generated types and functions will be exported here
+  , helloGreetingTool
     -- (tool-builder will add exports automatically)
+  , echoTool
+  , helloworldTool
   ) where
 
 import UniversalLLM.Core.Tools (LLMTool(..), ToolFunction(..), ToolParameter(..))
+import Runix.LLM.ToolInstances ()
+
 import Polysemy (Sem, Member, Members)
 import Polysemy.Fail (Fail)
 import Data.Text (Text)
@@ -33,7 +38,10 @@ import Runix.Bash.Effects (Bash)
 generatedTools :: forall r. [LLMTool (Sem (Fail ': r))]
 generatedTools =
   [ -- Tools will be added here by tool-builder
-    -- Each new tool gets added as: , LLMTool toolFunctionName
+    -- Each new tool gets added as: LLMTool toolFunctionName
+    LLMTool echoTool
+  , LLMTool helloworldTool
+  , LLMTool helloGreetingTool
   ]
 
 --------------------------------------------------------------------------------
@@ -48,3 +56,71 @@ generatedTools =
 -- 4. ToolFunction instance (defines tool name/description)
 -- 5. Function implementation
 -- 6. Blank line separator
+
+
+-- Generated tool: echo
+newtype EchoInput = EchoInput Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+instance ToolParameter EchoInput where
+  paramName _ _ = "input"
+  paramDescription _ = "The text to be echoed back"
+
+newtype EchoResult = EchoResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+instance ToolParameter EchoResult where
+  paramName _ _ = "result"
+  paramDescription _ = "The echoed text"
+
+instance ToolFunction EchoResult where
+  toolFunctionName _ = "echo"
+  toolFunctionDescription _ = "Simple echo tool that returns the input text unchanged"
+
+echoTool :: EchoInput -> Sem r EchoResult
+echoTool (EchoInput input) = return $ EchoResult input
+
+-- Generated tool: helloworld
+newtype HelloWorldInput = HelloWorldInput Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+instance ToolParameter HelloWorldInput where
+  paramName _ _ = "name"
+  paramDescription _ = "Name to include in the greeting"
+
+newtype HelloWorldResult = HelloWorldResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+instance ToolParameter HelloWorldResult where
+  paramName _ _ = "greeting"
+  paramDescription _ = "A friendly greeting message"
+
+instance ToolFunction HelloWorldResult where
+  toolFunctionName _ = "helloworld"
+  toolFunctionDescription _ = "Generates a friendly hello world greeting"
+
+helloworldTool :: HelloWorldInput -> Sem r HelloWorldResult
+helloworldTool (HelloWorldInput name) = 
+  return $ HelloWorldResult $ "Hello, " <> name <> "! Welcome to the world!"
+
+
+-- Generated tool: hello-greeting
+-- Generated tool: hello-greeting
+newtype HelloGreetingResult = HelloGreetingResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+instance ToolParameter HelloGreetingResult where
+  paramName _ _ = "greeting"
+  paramDescription _ = "A fixed greeting message"
+
+instance ToolFunction HelloGreetingResult where
+  toolFunctionName _ = "hello-greeting"
+  toolFunctionDescription _ = "Returns a simple hello greeting without any inputs"
+
+helloGreetingTool :: Sem r HelloGreetingResult
+helloGreetingTool = return $ HelloGreetingResult "Hello, World!"
