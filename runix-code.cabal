@@ -64,7 +64,10 @@ library
                     , Models
                     , Config
                     , Runner
+                    , Runix.PromptStore.Effects
                     , UI.UserInput
+    other-modules:    Paths_runix_code
+    autogen-modules:  Paths_runix_code
 
     build-depends:    base >=4.17 && <5
                     , runix

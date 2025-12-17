@@ -30,8 +30,12 @@ import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
 import Runix.Grep.Effects (Grep)
+import Runix.PromptStore.Effects (PromptStore)
+import Runix.Config.Effects (Config, getConfig)
+import System.FilePath ((</>))
 import Tools.ToolBuilder.Types
 import Tools.ToolBuilder.Prompt (loadToolBuilderPrompt)
+import qualified Config as AppConfig
 import qualified Tools  -- Import base tools
 import Runix.LLM.ToolInstances ()
 import qualified Autodocodec
@@ -53,6 +57,8 @@ buildTool
      , Member Cmd r
      , Member Fail r
      , Member Grep r
+     , Member PromptStore r
+     , Member (Config AppConfig.RunixDataDir) r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
@@ -112,11 +118,16 @@ writeToolcodeAtomic
      , Member Fail r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member Logging r
+     , Member (Config AppConfig.RunixDataDir) r
      )
   => ToolName
   -> ToolImplementation
   -> Sem r WriteToolcodeResult
 writeToolcodeAtomic (ToolName name) (ToolImplementation code) = do
+  -- Get path to GeneratedTools.hs from config
+  AppConfig.RunixDataDir dataDir <- getConfig
+  let generatedToolsPath = dataDir </> "lib/GeneratedTools.hs"
+
   -- Read current content
   currentContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
   let Tools.ReadFileResult currentText = currentContent
@@ -173,10 +184,6 @@ instance UniversalLLM.Core.Tools.ToolParameter WriteToolcodeResult where
 instance UniversalLLM.Core.Tools.ToolFunction WriteToolcodeResult where
   toolFunctionName _ = "write_toolcode_atomic"
   toolFunctionDescription _ = "Atomically write tool code to GeneratedTools.hs. Code is appended, compiled, and rolled back if compilation fails."
-
--- | Path to GeneratedTools.hs (relative from project root where cabal build runs)
-generatedToolsPath :: String
-generatedToolsPath = "apps/runix-code/lib/GeneratedTools.hs"
 
 -- | Extract tool name from ToolName newtype
 getToolName :: ToolName -> Text
@@ -286,6 +293,8 @@ toolBuilderLoop
      , Member Cmd r
      , Member Fail r
      , Member Grep r
+     , Member PromptStore r
+     , Member (Config AppConfig.RunixDataDir) r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
@@ -308,6 +317,8 @@ toolBuilderLoop systemPrompt = do
 
   -- FORCED CONTEXT: Always inject GeneratedTools.hs content at start of loop
   -- The agent doesn't decide whether to read it - we force-feed the current state
+  AppConfig.RunixDataDir dataDir <- getConfig
+  let generatedToolsPath = dataDir </> "lib/GeneratedTools.hs"
   generatedToolsContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
   let Tools.ReadFileResult generatedToolsText = generatedToolsContent
       contextMessage = SystemText $ T.unlines

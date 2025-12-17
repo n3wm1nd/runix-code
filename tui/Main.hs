@@ -43,6 +43,9 @@ import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging.Effects (Logging(..), info, Level(..))
+import Runix.PromptStore.Effects (PromptStore, promptStoreIO)
+import Runix.Config.Effects (Config)
+import qualified Runix.Config.Effects as ConfigEffect
 import Runix.Cancellation.Effects (Cancellation(..))
 import Runix.Streaming.Effects (StreamChunk)
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
@@ -58,6 +61,7 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified UI.Effects
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
+import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 
 
@@ -120,6 +124,7 @@ agentLoop :: forall model.
              , SupportsStreaming (ProviderOf model)
              )
           => FilePath  -- CWD for security restrictions
+          -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
           -> IORef [Message model]
           -> SystemPrompt
@@ -128,9 +133,9 @@ agentLoop :: forall model.
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
-agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime = do
+agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
-  let runToIO' = runM . runError . interpretTUIEffects cwd uiVars . modelInterpreter
+  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars . modelInterpreter
 
   result <- runToIO' $ forever $ runOneIteration
 
@@ -325,6 +330,9 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   -- Get data file path for the system prompt
   promptPath <- getDataFileName "prompt/runix-code.md"
 
+  -- Get data directory for RunixDataDir config
+  dataDir <- RunixDataDir <$> Paths_runix_code.getDataDir
+
   -- Load system prompt using the composed interpreter stack
   let runToIO' = runM . runError @String . loggingIO . failLog . filesystemReadIO
 
@@ -338,7 +346,7 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   stat <- getFileStatus exePath
   let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
 
-  _ <- forkIO $ agentLoop cwd uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime
+  _ <- forkIO $ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime
   return uiVars
 
 --------------------------------------------------------------------------------
@@ -358,10 +366,13 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
 
 interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
                     => FilePath  -- CWD for security restrictions
+                    -> RunixDataDir  -- Data directory path
                     -> UIVars msg
                     -> Sem (Grep
                          : Bash
                          : Cmd
+                         : PromptStore
+                         : Runix.Config.Effects.Config RunixDataDir
                          : FileWatcher
                          : HTTP
                          : HTTPStreaming
@@ -376,7 +387,7 @@ interpretTUIEffects :: (Member (Error String) r, Member (Embed IO) r)
                          : UI.Effects.UI
                          : r) a
                     -> Sem r a
-interpretTUIEffects cwd uiVars =
+interpretTUIEffects cwd dataDir uiVars =
   interpretUI uiVars
     . interpretForegroundCmd uiVars    -- ForegroundCmd effect
     . interpretUserInput uiVars        -- UserInput effect
@@ -392,6 +403,8 @@ interpretTUIEffects cwd uiVars =
     . httpIOStreaming (withRequestTimeout 300)  -- Emit StreamChunk BS
     . httpIO (withRequestTimeout 300)           -- Handle non-streaming HTTP
     . fileWatcherIO                     -- Interpret FileWatcher effect
+    . ConfigEffect.runConfig dataDir    -- Provide data directory
+    . promptStoreIO                     -- Interpret PromptStore effect
     . cmdIO
     . bashIO
     . grepIO                            -- Interpret grep effect

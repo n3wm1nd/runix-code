@@ -46,8 +46,11 @@ import qualified GeneratedTools
 import Runix.Grep.Effects (Grep)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
+import Runix.PromptStore.Effects (PromptStore)
+import Runix.Config.Effects (Config)
 import qualified Runix.FileSystem.Effects
 import Runix.FileSystem.Effects (FileWatcher, interceptFileAccessRead, interceptFileAccessWrite)
+import qualified Config as AppConfig
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
@@ -138,6 +141,8 @@ runixCode
      , Member (UserInput widget) r
      , Member Cmd r
      , Member FileWatcher r
+     , Member PromptStore r
+     , Member (Config AppConfig.RunixDataDir) r
      , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
@@ -188,6 +193,8 @@ runixCodeAgentLoop
      , Member (UserInput widget) r
      , Member Cmd r
      , Member FileWatcher r
+     , Member PromptStore r
+     , Member (Config AppConfig.RunixDataDir) r
      , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig model]) r

@@ -8,38 +8,25 @@ module Tools.ToolBuilder.Prompt
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import qualified Data.Text.Encoding as TE
 import Polysemy (Member, Sem)
-import Polysemy.Fail (Fail, runFail)
-import Runix.FileSystem.Effects (FileSystemRead, fileExists)
-import qualified Runix.FileSystem.Effects
 import Runix.Logging.Effects (Logging, info, warning)
+import Runix.PromptStore.Effects (PromptStore, getPrompt)
 
 -- | Load tool-builder system prompt with fallback
--- Uses a fixed path relative to the data directory
+-- Uses PromptStore effect to load from Cabal's data directory
 -- Never fails - returns default prompt if file doesn't exist or can't be read
 loadToolBuilderPrompt
-  :: (Member FileSystemRead r, Member Logging r)
+  :: (Member PromptStore r, Member Logging r)
   => Sem r Text
 loadToolBuilderPrompt = do
-  -- Use fixed path - the data files are installed by cabal
-  -- and should be accessible at this path
-  let promptPath = "prompt/tool-builder.md"
-
-  -- Try to load the prompt file, fall back to default if any operation fails
-  result <- runFail $ do
-    exists <- fileExists promptPath
-    if exists
-      then do
-        info $ T.pack $ "Loading tool-builder prompt from " <> promptPath
-        contents <- Runix.FileSystem.Effects.readFile promptPath
-        return $ TE.decodeUtf8 contents
-      else
-        return defaultToolBuilderPrompt
+  -- Use PromptStore to get the prompt
+  result <- getPrompt "tool-builder.md"
 
   case result of
-    Right prompt -> return prompt
-    Left _ -> do
+    Just prompt -> do
+      info "Loading tool-builder prompt from data directory"
+      return prompt
+    Nothing -> do
       warning "tool-builder.md not found or couldn't be read, using default prompt"
       return defaultToolBuilderPrompt
 

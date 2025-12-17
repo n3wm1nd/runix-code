@@ -18,14 +18,19 @@ import Polysemy.Error (runError)
 import Runix.LLM.Interpreter hiding (SystemPrompt)
 import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem.Effects (fileWatcherNoop)
+import Runix.PromptStore.Effects (promptStoreIO)
+import Runix.Config.Effects (Config)
+import qualified Runix.Config.Effects as ConfigEffect
 import Runix.Cancellation.Effects (cancelNoop)
 import Runix.Streaming.Effects (ignoreChunks)
 import qualified Data.ByteString as BS
 
 import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
-import Config
+import qualified Config
+import Config (RunixDataDir(..), loadConfig, cfgModelSelection, cfgSessionFile)
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
+import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 
 --------------------------------------------------------------------------------
@@ -89,10 +94,14 @@ main = do
 -- | Run the agent with the model interpreter
 --
 -- This composes the model interpreter with CLI effects (no streaming, simple I/O)
-runAgent :: ModelInterpreter -> Config -> Text -> IO (Either String Text)
+runAgent :: ModelInterpreter -> Config.Config -> Text -> IO (Either String Text)
 runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg userInput = do
   -- Get data file path for the system prompt
   promptPath <- getDataFileName "prompt/runix-code.md"
+
+  -- Get the data directory from Cabal - this is where source files are during development
+  -- and where they're installed during installation
+  runixDataDir <- RunixDataDir <$> Paths_runix_code.getDataDir
 
   -- Compose: model interpreter + CLI base effects + run to IO
   let runToIO' = runM
@@ -107,6 +116,8 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . cmdIO
                . bashIO
                . fileWatcherNoop         -- No-op file watcher for CLI
+               . ConfigEffect.runConfig runixDataDir
+               . promptStoreIO
                . filesystemIO
                . grepIO
                . interpretModel

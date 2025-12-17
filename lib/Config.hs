@@ -14,6 +14,7 @@ module Config
   ( -- * Configuration Types
     Config(..)
   , ModelSelection(..)
+  , RunixDataDir(..)
     -- * Configuration Loading
   , loadConfig
   , getModelSelection
@@ -42,6 +43,11 @@ data ModelSelection
   | UseOpenRouter
   | UseGLM45AirZAI
   | UseGLM46ZAI
+  deriving stock (Show, Eq)
+
+-- | Path to the runix-code data directory (apps/runix-code during development)
+-- This is where source files live (lib/GeneratedTools.hs, etc.), not the Cabal installation data directory
+newtype RunixDataDir = RunixDataDir FilePath
   deriving stock (Show, Eq)
 
 -- | Application configuration

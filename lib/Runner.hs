@@ -58,6 +58,10 @@ import Runix.Cmd.Effects (Cmd)
 import Runix.HTTP.Effects (HTTP, HTTPStreaming)
 import Runix.Logging.Effects (Logging)
 import Runix.Cancellation.Effects (Cancellation, cancelNoop)
+import Runix.PromptStore.Effects (PromptStore, promptStoreIO)
+import Runix.Config.Effects (Config)
+import qualified Runix.Config.Effects as ConfigEffect
+import qualified Config as AppConfig
 import qualified Runix.Logging.Effects as Log
 import Data.Default (Default, def)
 
@@ -191,7 +195,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation] r
+               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation, PromptStore] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -206,6 +210,7 @@ runWithEffects action =
     . httpIO (withRequestTimeout 300)
     . cmdIO
     . bashIO
+    . promptStoreIO
     . filesystemIO
     . grepIO
     $ action
