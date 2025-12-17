@@ -62,7 +62,7 @@ exampleTool param = do
 
 ## Available Effects
 
-Common Polysemy effects you can use:
+All necessary imports are already in GeneratedTools.hs. Common Polysemy effects available:
 
 - `FileSystemRead` - Read files
 - `FileSystemWrite` - Write files
@@ -70,8 +70,7 @@ Common Polysemy effects you can use:
 - `Cmd` - Run commands
 - `Bash` - Execute bash commands
 - `Fail` - Error handling
-
-Import from: `Runix.FileSystem.Effects`, `Runix.Grep.Effects`, etc.
+- `LLM` - Language model queries
 
 ## Important Notes
 

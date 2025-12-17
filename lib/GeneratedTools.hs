@@ -1,6 +1,7 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DerivingVia #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# OPTIONS_GHC -Wno-unused-imports #-}
 
 module GeneratedTools
   ( -- * Tool Registration
@@ -14,10 +15,10 @@ module GeneratedTools
   ) where
 
 import UniversalLLM.Core.Tools (LLMTool(..), ToolFunction(..), ToolParameter(..))
-import Runix.LLM.ToolInstances ()
-
 import Polysemy (Sem, Member, Members)
 import Polysemy.Fail (Fail)
+-- Orphan instances for Tool system are re-exported via Runix.LLM.Effects
+import Runix.LLM.Effects (LLM)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Autodocodec (HasCodec(..))
