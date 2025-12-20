@@ -153,7 +153,7 @@ claudeSonnet45ComposableProvider ::
   (HasTools model,
   BaseComposableProvider model) =>
  ComposableProvider model (ToolState model, BaseState model)
-claudeSonnet45ComposableProvider = providerTools
+claudeSonnet45ComposableProvider = withTools `chainProviders` baseProvider
 
 instance BaseComposableProvider (Model ClaudeSonnet45 Anthropic) where
   baseProvider = AnthropicProvider.baseComposableProvider
@@ -195,7 +195,7 @@ glm45AirComposableProvider ::
   BaseComposableProvider model ) =>
   ComposableProvider model
   (ToolState model, (ReasoningState model, BaseState model))
-glm45AirComposableProvider = providerReasoningTools
+glm45AirComposableProvider = withTools `chainProviders` withReasoning `chainProviders` baseProvider
 
 instance BaseComposableProvider (Model GLM45Air LlamaCpp) where
   type BaseState (Model GLM45Air LlamaCpp) = ((), ((), ()))
@@ -222,7 +222,7 @@ instance HasTools (Model Qwen3Coder LlamaCpp) where
 
 -- Composable provider for Qwen3Coder
 qwen3CoderComposableProvider :: ComposableProvider (Model Qwen3Coder LlamaCpp) (ToolState (Model Qwen3Coder LlamaCpp), ())
-qwen3CoderComposableProvider = providerTools
+qwen3CoderComposableProvider = withTools `chainProviders` baseProvider
 
 instance BaseComposableProvider (Model Qwen3Coder LlamaCpp) where
   baseProvider = Openai.baseComposableProvider
@@ -260,7 +260,7 @@ universalComposableProvider ::
   BaseComposableProvider model) =>
   ComposableProvider model
   (ToolState model, (ReasoningState model, BaseState model))
-universalComposableProvider = providerReasoningTools
+universalComposableProvider = withTools `chainProviders` withReasoning `chainProviders` baseProvider
 
 instance BaseComposableProvider (Model Universal OpenRouter) where
   baseProvider = OpenAI.baseComposableProvider
