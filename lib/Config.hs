@@ -43,6 +43,7 @@ data ModelSelection
   | UseOpenRouter
   | UseGLM45AirZAI
   | UseGLM46ZAI
+  | UseGLM47ZAI
   deriving stock (Show, Eq)
 
 -- | Path to the runix-code data directory (apps/runix-code during development)
@@ -64,7 +65,7 @@ data Config = Config
 -- | Load configuration from CLI args and environment variables
 --
 -- Environment variables:
--- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai")
+-- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai")
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional, legacy)
@@ -121,7 +122,11 @@ getModelSelection = do
       "glm-4.6-zai" -> return UseGLM46ZAI
       "glm46zai" -> return UseGLM46ZAI
       "zai-glm46" -> return UseGLM46ZAI
-      "zai" -> return UseGLM46ZAI  -- Default to latest GLM
+      "glm-47-zai" -> return UseGLM47ZAI
+      "glm-4.7-zai" -> return UseGLM47ZAI
+      "glm47zai" -> return UseGLM47ZAI
+      "zai-glm47" -> return UseGLM47ZAI
+      "zai" -> return UseGLM47ZAI  -- Default to latest GLM
       unknown -> do
         hPutStr IO.stderr $ "warn: Unknown model '" <> T.unpack unknown <> "', using claude-sonnet-45\n"
         return UseClaudeSonnet45

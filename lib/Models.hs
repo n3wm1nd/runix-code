@@ -23,6 +23,7 @@ module Models
   , ZAI(..)
   , GLM45Air_ZAI(..)
   , GLM46(..)
+  , GLM47(..)
     -- * Default Configurations
   , ModelDefaults(..)
     -- * Composable Providers
@@ -32,6 +33,7 @@ module Models
   , universalComposableProvider
   , glm45AirZAIComposableProvider
   , glm46ComposableProvider
+  , glm47ComposableProvider
   ) where
 
 import Data.Text (Text)
@@ -361,6 +363,42 @@ instance ModelDefaults (Model GLM46 ZAI) where
     , Reasoning True    -- Enable reasoning extraction
     ]
 
+-- | GLM-4.7 model via ZAI
+data GLM47 = GLM47 deriving stock (Show, Eq)
+
+instance Provider (Model GLM47 ZAI) where
+  type ProviderRequest (Model GLM47 ZAI) = OpenAIRequest
+  type ProviderResponse (Model GLM47 ZAI) = OpenAIResponse
+
+instance ModelName (Model GLM47 ZAI) where
+  modelName (Model _ _) = "glm-4.7"
+
+instance HasTools (Model GLM47 ZAI) where
+  withTools = OpenAI.openAITools
+
+instance HasReasoning (Model GLM47 ZAI) where
+  withReasoning = OpenAI.openAIReasoning
+
+instance HasJSON (Model GLM47 ZAI) where
+  withJSON = OpenAI.openAIJSON
+
+-- Composable provider for GLM47
+glm47ComposableProvider ::
+  ( HasTools model, HasReasoning model, HasJSON model,
+  BaseComposableProvider model ) =>
+  ComposableProvider model
+  (JSONState model, (ReasoningState model, (ToolState model, BaseState model)))
+glm47ComposableProvider = withJSON `chainProviders` withReasoning `chainProviders` withTools `chainProviders` baseProvider
+
+instance BaseComposableProvider (Model GLM47 ZAI) where
+  baseProvider = OpenAI.baseComposableProvider
+
+instance ModelDefaults (Model GLM47 ZAI) where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
+    ]
+
 --------------------------------------------------------------------------------
 -- Model Configuration Types
 --------------------------------------------------------------------------------
@@ -372,6 +410,7 @@ type instance ConfigFor (Model Qwen3Coder LlamaCpp) = Qwen3CoderConfig
 type instance ConfigFor (Model Universal OpenRouter) = UniversalConfig
 type instance ConfigFor (Model GLM45Air_ZAI ZAI) = GLM45AirZAIConfig
 type instance ConfigFor (Model GLM46 ZAI) = GLM46Config
+type instance ConfigFor (Model GLM47 ZAI) = GLM47Config
 
 -- Claude Sonnet 4.5 configuration
 data ClaudeSonnet45Config = ClaudeSonnet45Config
@@ -414,6 +453,14 @@ data GLM45AirZAIConfig = GLM45AirZAIConfig
 
 -- GLM-4.6 configuration
 data GLM46Config = GLM46Config
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- GLM-4.7 configuration
+data GLM47Config = GLM47Config
   { streaming :: StreamingSetting
   , reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
