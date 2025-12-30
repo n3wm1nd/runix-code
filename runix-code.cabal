@@ -12,7 +12,7 @@ description:
   - Effect-based security (compile-time guarantees)
   - Multi-provider LLM support
 
-license:            GPL
+license:            GPL-3.0-or-later
 license-file:       LICENSE
 author:             Runix Contributors
 maintainer:         runix@example.com
