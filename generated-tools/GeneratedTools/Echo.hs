@@ -1,5 +1,3 @@
-{-# LANGUAGE DerivingStrategies #-}
-
 -- | Generated tool: echo
 module GeneratedTools.Echo where
 
@@ -10,7 +8,7 @@ import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
 
 -- Generated tool: echo
 newtype EchoInput = EchoInput Text
-  deriving stock (Show, Eq)
+  deriving (Show, Eq)
 
 instance HasCodec EchoInput where
   codec = dimapCodec EchoInput (\(EchoInput t) -> t) codec
@@ -20,7 +18,7 @@ instance ToolParameter EchoInput where
   paramDescription _ = "The text to echo back"
 
 newtype EchoResult = EchoResult Text
-  deriving stock (Show, Eq)
+  deriving (Show, Eq)
 
 instance HasCodec EchoResult where
   codec = dimapCodec EchoResult (\(EchoResult t) -> t) codec

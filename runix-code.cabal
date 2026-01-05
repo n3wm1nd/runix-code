@@ -32,7 +32,6 @@ common warnings
                  -Wnoncanonical-monad-instances
                  -Wmissing-export-lists
                  -Wpartial-fields
-                 -Wmissing-deriving-strategies
 
 common extensions
     default-extensions:
@@ -55,8 +54,20 @@ common extensions
 -- Generated tools library - automatically managed by tool-builder agent
 -- ALL generated code compiled with Safe Haskell (untrusted LLM output)
 library generated-tools
-    import:           warnings, extensions
+    import:           warnings
     default-extensions: Safe
+                        OverloadedStrings
+                        FlexibleInstances
+                        MultiParamTypeClasses
+                        RankNTypes
+                        TypeApplications
+                        TypeFamilies
+                        TypeOperators
+                        GADTs
+                        DataKinds
+
+
+
     exposed-modules:  GeneratedTools
                     -- GENERATED_TOOLS_MODULES_START
                     , GeneratedTools.Echo
@@ -71,6 +82,7 @@ library generated-tools
                       -trust polysemy
                       -trust autodocodec
                       -trust universal-llm
+                      -Wno-missing-export-lists
 
     build-depends:    base >=4.17 && <5
                     , runix
