@@ -17,6 +17,7 @@ module Tools.ToolBuilder.Agent
 
 import Data.Text (Text)
 import qualified Data.Text as T
+import qualified Data.Char
 import Polysemy (Member, Members, Sem, raise)
 import Polysemy.State (State, get, put)
 import Polysemy.Fail (Fail)
@@ -71,7 +72,9 @@ buildTool
 buildTool toolName desc mode = do
   -- Get data directory and create build function for all operations
   AppConfig.RunixDataDir dataDir <- getConfig
-  let generatedToolsPath = dataDir </> "lib/GeneratedTools.hs"
+  let cabalFilePath = dataDir </> "runix-code.cabal"
+      registryFilePath = dataDir </> "generated-tools/GeneratedTools.hs"
+      toolModulesDir = dataDir </> "generated-tools/GeneratedTools"
       build = Tools.cabalBuild (Tools.WorkingDirectory $ T.pack dataDir)
 
   -- PRECONDITION: Verify current source tree compiles, abort otherwise
@@ -98,7 +101,7 @@ buildTool toolName desc mode = do
 
   -- Step 4: Run tool-builder loop (passing build function and paths)
   put @[Message model] toolBuilderHistory
-  summary <- toolBuilderLoop @model toolBuilderPrompt generatedToolsPath build
+  summary <- toolBuilderLoop @model toolBuilderPrompt cabalFilePath registryFilePath toolModulesDir build
 
   -- Step 5: Restore caller's history (unchanged)
   -- The tool-builder's iterations are discarded
@@ -112,67 +115,100 @@ buildTool toolName desc mode = do
 -- Tool for Agent to Write Code
 --------------------------------------------------------------------------------
 
--- | Atomically write tool code to GeneratedTools.hs
--- Appends the code, attempts compilation, and if successful:
--- 1. Adds tool to generatedTools list
--- 2. Adds export to module export list
+-- | Atomically write tool code as a new module
+-- Creates individual module file, updates registry and cabal file
 -- If compilation fails, rolls everything back
 writeToolcodeAtomic
   :: forall r.
-     ( Member Cmd r
-     , Member Fail r
+     ( Member Fail r
      , Members '[FileSystemRead, FileSystemWrite] r
      , Member Logging r
      )
-  => FilePath  -- ^ Path to GeneratedTools.hs
+  => FilePath  -- ^ Path to cabal file
+  -> FilePath  -- ^ Path to GeneratedTools.hs (registry)
+  -> FilePath  -- ^ Path to GeneratedTools/ directory
   -> Sem r Tools.CabalBuildResult  -- ^ Build function
   -> ToolName
   -> ToolImplementation
   -> Sem r WriteToolcodeResult
-writeToolcodeAtomic generatedToolsPath build (ToolName name) (ToolImplementation code) = do
+writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (ToolImplementation code) = do
+  -- Derive module name from tool name (e.g., "echo" -> "Echo")
+  let moduleName = toModuleName name
+      moduleFilePath = modulesDir </> T.unpack moduleName <> ".hs"
+      qualifiedModuleName = "GeneratedTools." <> moduleName
 
-  -- Read current content
-  currentContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
-  let Tools.ReadFileResult currentText = currentContent
+  info $ "Creating new tool module: " <> qualifiedModuleName
 
-  -- Append new tool with marker
-  let marker = "-- Generated tool: " <> name
-      newContent = currentText <> "\n\n" <> marker <> "\n" <> code
+  -- Step 1: Read current state of all files (for rollback)
+  registryContent <- Tools.readFile (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
 
-  -- Write it out
-  _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent newContent)
+  cabalContent <- Tools.readFile (Tools.FilePath $ T.pack cabalPath)
+  let Tools.ReadFileResult cabalText = cabalContent
 
-  -- Try to compile
+  -- Step 2: Create module file with proper module header
+  let moduleContent = T.unlines
+        [ "{-# LANGUAGE DerivingStrategies #-}"
+        , "{-# LANGUAGE DerivingVia #-}"
+        , "{-# LANGUAGE FlexibleContexts #-}"
+        , ""
+        , "-- | Generated tool: " <> name
+        , "module " <> qualifiedModuleName <> " where"
+        , ""
+        , "import UniversalLLM.Core.Tools (LLMTool(..), ToolFunction(..), ToolParameter(..))"
+        , "import Polysemy (Sem, Member, Members)"
+        , "import Polysemy.Fail (Fail)"
+        , "import Runix.LLM.Effects (LLM)"
+        , "import Data.Text (Text)"
+        , "import qualified Data.Text as T"
+        , "import Autodocodec (HasCodec(..))"
+        , "import qualified Autodocodec"
+        , ""
+        , "-- Import effects that this tool might need"
+        , "import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)"
+        , "import Runix.Grep.Effects (Grep)"
+        , "import Runix.Cmd.Effects (Cmd)"
+        , "import Runix.Bash.Effects (Bash)"
+        , ""
+        , code
+        ]
+
+  _ <- Tools.writeFile (Tools.FilePath $ T.pack moduleFilePath) (Tools.FileContent moduleContent)
+  info $ "Created module file: " <> T.pack moduleFilePath
+
+  -- Step 3: Update cabal file to add new exposed-module
+  let updatedCabal = addModuleToCabal cabalText qualifiedModuleName
+  _ <- Tools.writeFile (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent updatedCabal)
+  info "Updated cabal file with new module"
+
+  -- Step 4: Update registry file
+  let functionName = extractFunctionName code
+      updatedRegistry = updateRegistry registryText moduleName qualifiedModuleName functionName
+  _ <- Tools.writeFile (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updatedRegistry)
+  info "Updated registry file with new tool"
+
+  -- Step 5: Try to compile
+  info "Attempting compilation..."
   buildResult <- build
 
   case buildResult of
     Tools.CabalBuildResult True _stdout _stderr -> do
-      info $ "Tool compiled successfully, adding to generatedTools list: " <> name
-
-      -- SUCCESS: Now automatically register the tool
-      -- Extract function name from the code (should be the function definition)
-      let functionName = extractFunctionName code
-          -- Add to generatedTools list and exports
-          registeredContent = addToolToRegistry newContent functionName
-
-      _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent registeredContent)
-
-      -- Verify it still compiles after registration
-      finalBuild <- build
-      case finalBuild of
-        Tools.CabalBuildResult True _ _ -> do
-          info $ "Tool successfully registered: " <> name
-          return $ WriteToolcodeResult ("SUCCESS: Tool '" <> name <> "' has been added, compiled, and registered in generatedTools list. You are DONE!")
-        Tools.CabalBuildResult False _ stderr -> do
-          -- Registration broke compilation - roll back everything
-          info $ "Registration failed for tool: " <> name <> ", rolling back"
-          _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent currentText)
-          fail $ "Tool registration failed:\n" <> T.unpack stderr
+      info $ "Tool successfully created and registered: " <> name
+      return $ WriteToolcodeResult ("SUCCESS: Tool '" <> name <> "' has been created as module " <> qualifiedModuleName <> " and registered. You are DONE!")
 
     Tools.CabalBuildResult False _stdout stderr -> do
-      -- Compilation failed - roll back
-      info $ "Compilation failed for tool: " <> name <> ", rolling back"
-      _ <- Tools.writeFile (Tools.FilePath $ T.pack generatedToolsPath) (Tools.FileContent currentText)
+      -- Compilation failed - roll back all changes
+      info $ "Compilation failed for tool: " <> name <> ", rolling back all changes"
+
+      -- Restore registry file (this removes the import/export/registration)
+      _ <- Tools.writeFile (Tools.FilePath $ T.pack registryPath) (Tools.FileContent registryText)
+
+      -- Restore cabal file (this removes the module from exposed-modules)
+      _ <- Tools.writeFile (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
+
+      -- Note: The module file remains but is orphaned (not referenced by cabal)
+      -- This is harmless and avoids requiring file deletion privileges
+
       fail $ "Compilation failed:\n" <> T.unpack stderr
 
 -- Result type
@@ -192,6 +228,16 @@ instance UniversalLLM.Core.Tools.ToolFunction WriteToolcodeResult where
 getToolName :: ToolName -> Text
 getToolName (ToolName name) = name
 
+-- | Convert tool name to PascalCase module name
+-- Examples: "echo" -> "Echo", "hello-world" -> "HelloWorld"
+toModuleName :: Text -> Text
+toModuleName name =
+  let parts = T.split (\c -> c == '-' || c == '_') name
+      capitalize t = case T.uncons t of
+        Just (c, rest) -> T.cons (Data.Char.toUpper c) rest
+        Nothing -> t
+  in T.concat (map capitalize parts)
+
 -- | Extract function name from tool code
 -- Looks for the main function definition (e.g., "echoTool :: ...")
 extractFunctionName :: Text -> Text
@@ -205,38 +251,46 @@ extractFunctionName code =
         [] -> "unknownTool"  -- fallback
   in firstSig
 
--- | Add tool to generatedTools list and module exports
--- This modifies the file content to:
--- 1. Add function to module export list
--- 2. Add LLMTool to generatedTools list
-addToolToRegistry :: Text -> Text -> Text
-addToolToRegistry fileContent functionName =
-  let contentLines = T.lines fileContent
+-- | Add module to cabal file between markers
+addModuleToCabal :: Text -> Text -> Text
+addModuleToCabal cabalContent moduleName =
+  let contentLines = T.lines cabalContent
+      -- Find the marker line
+      (beforeMarker, afterMarker) = break (T.isInfixOf "GENERATED_TOOLS_MODULES_START") contentLines
+      -- Insert new module after the marker
+      updated = case afterMarker of
+        (markerLine:rest) ->
+          beforeMarker ++ [markerLine, "                    , " <> moduleName] ++ rest
+        [] -> contentLines  -- marker not found, return unchanged
+  in T.unlines updated
 
-      -- Add to exports (find the line with "-- * Generated types...")
-      (beforeExports, afterExports) = break (T.isInfixOf "-- * Generated types") contentLines
-      exportsUpdated = case afterExports of
-        (exportComment:rest) ->
-          beforeExports ++ [exportComment, "  , " <> functionName] ++ rest
-        [] -> contentLines  -- shouldn't happen, but handle gracefully
+-- | Update registry file with import, export, and tool registration
+updateRegistry :: Text -> Text -> Text -> Text -> Text
+updateRegistry registryContent moduleName qualifiedModuleName functionName =
+  let contentLines = T.lines registryContent
 
-      -- Add to generatedTools list
-      -- Strategy: Find the closing bracket "]" and insert before it
-      isClosingBracket line = T.strip line == "]"
-      (beforeClosing, afterClosing) = break isClosingBracket exportsUpdated
-      toolsUpdated = case afterClosing of
-        (closingBracket:rest) ->
-          -- Check if the list is empty (previous line is the opening bracket comment)
-          case reverse beforeClosing of
-            (lastLine:_) | T.isInfixOf "[ -- Tools will be added here" lastLine ->
-              -- Empty list: add first item without comma
-              beforeClosing ++ ["    LLMTool " <> functionName, closingBracket] ++ rest
-            _ ->
-              -- Non-empty list: add comma to last item and add new item
-              beforeClosing ++ ["  , LLMTool " <> functionName, closingBracket] ++ rest
-        [] -> exportsUpdated  -- shouldn't happen
+      -- Step 1: Add import
+      (beforeImports, afterImports) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_START") contentLines
+      withImport = case afterImports of
+        (markerLine:rest) ->
+          beforeImports ++ [markerLine, "import qualified " <> qualifiedModuleName <> " as " <> moduleName] ++ rest
+        [] -> contentLines
 
-  in T.unlines toolsUpdated
+      -- Step 2: Add export
+      (beforeExports, afterExports) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_START") withImport
+      withExport = case afterExports of
+        (markerLine:rest) ->
+          beforeExports ++ [markerLine, "  , " <> moduleName <> "." <> functionName] ++ rest
+        [] -> withImport
+
+      -- Step 3: Add to generatedTools list
+      (beforeTools, afterTools) = break (T.isInfixOf "GENERATED_TOOLS_LIST_START") withExport
+      withTool = case afterTools of
+        (markerLine:rest) ->
+          beforeTools ++ [markerLine, "    LLMTool " <> moduleName <> "." <> functionName] ++ rest
+        [] -> withExport
+
+  in T.unlines withTool
 
 --------------------------------------------------------------------------------
 -- Task Formatting
@@ -253,13 +307,13 @@ formatToolBuildTask (ToolName name) (ToolDescription desc) mode =
         , "Description: " <> desc
         , ""
         , "Requirements:"
-        , "- Read GeneratedTools.hs to understand existing patterns"
+        , "- Read GeneratedTools.hs registry to understand the structure"
         , "- Create complete implementation with type signature and instances"
-        , "- Append to GeneratedTools.hs"
-        , "- Add the tool to the generatedTools list"
-        , "- Add exports to the module export list"
-        , "- Run cabal_build to validate"
-        , "- If compilation fails, fix errors and retry"
+        , "- Use write_toolcode_atomic to create the new tool module"
+        , "  (This will create GeneratedTools/{ModuleName}.hs, update the registry, and update the cabal file)"
+        , "- The tool will be automatically registered in the generatedTools list"
+        , "- Compilation is validated automatically"
+        , "- If compilation fails, fix errors and retry with write_toolcode_atomic"
         , "- When successful, report what you built"
         ]
 
@@ -270,10 +324,10 @@ formatToolBuildTask (ToolName name) (ToolDescription desc) mode =
         , "New specification: " <> desc
         , ""
         , "Requirements:"
-        , "- Read GeneratedTools.hs and locate the existing tool"
-        , "- Replace ONLY that tool's implementation"
-        , "- Preserve all other tools"
-        , "- Update the generatedTools list if needed"
+        , "- Read the existing tool module file (GeneratedTools/{ModuleName}.hs)"
+        , "- Modify ONLY that tool's implementation"
+        , "- Preserve the module structure"
+        , "- Use write_file to update the module"
         , "- Run cabal_build to validate"
         , "- If compilation fails, fix errors and retry"
         , "- When successful, report what changed"
@@ -303,29 +357,31 @@ toolBuilderLoop
      , SupportsSystemPrompt (ProviderOf model)
      )
   => Text      -- ^ System prompt
-  -> FilePath  -- ^ Path to GeneratedTools.hs
+  -> FilePath  -- ^ Path to cabal file
+  -> FilePath  -- ^ Path to GeneratedTools.hs (registry)
+  -> FilePath  -- ^ Path to GeneratedTools/ directory
   -> Sem r Tools.CabalBuildResult  -- ^ Build function
   -> Sem r BuildToolResult
-toolBuilderLoop systemPrompt generatedToolsPath build = do
+toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
   -- CRITICAL: Explicit type signature with ScopedTypeVariables to bind 'r'
   let
       builderTools =
         [ LLMTool Tools.readFile
         , LLMTool Tools.glob
         , LLMTool Tools.grep
-        , LLMTool (writeToolcodeAtomic generatedToolsPath (raise build))
+        , LLMTool (writeToolcodeAtomic cabalPath registryPath modulesDir (raise build))
         , LLMTool (raise build)
         ]
       configs = [ULL.SystemPrompt systemPrompt]
       configsWithTools = setTools builderTools configs
 
-  -- FORCED CONTEXT: Always inject GeneratedTools.hs content at start of loop
+  -- FORCED CONTEXT: Always inject GeneratedTools.hs registry content at start of loop
   -- The agent doesn't decide whether to read it - we force-feed the current state
-  generatedToolsContent <- Tools.readFile (Tools.FilePath $ T.pack generatedToolsPath)
-  let Tools.ReadFileResult generatedToolsText = generatedToolsContent
+  registryContent <- Tools.readFile (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
       contextMessage = SystemText $ T.unlines
-        [ "=== CURRENT STATE OF GeneratedTools.hs ==="
-        , generatedToolsText
+        [ "=== CURRENT STATE OF GeneratedTools.hs (registry) ==="
+        , registryText
         , "=== END OF GeneratedTools.hs ==="
         ]
 
@@ -365,7 +421,7 @@ toolBuilderLoop systemPrompt generatedToolsPath build = do
                 ]
               historyWithError = updatedHistory ++ [errorMessage]
           put @[Message model] historyWithError
-          toolBuilderLoop @model systemPrompt generatedToolsPath build
+          toolBuilderLoop @model systemPrompt cabalPath registryPath modulesDir build
 
     calls -> do
       -- Execute tools and continue
@@ -377,7 +433,7 @@ toolBuilderLoop systemPrompt generatedToolsPath build = do
       if countToolCalls updatedHistory > 20
         then fail $ "Tool builder exceeded maximum iterations (20)"
 
-        else toolBuilderLoop @model systemPrompt generatedToolsPath build
+        else toolBuilderLoop @model systemPrompt cabalPath registryPath modulesDir build
 
 -- | Count tool calls in history
 countToolCalls :: [Message model] -> Int

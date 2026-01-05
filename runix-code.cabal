@@ -52,6 +52,30 @@ common extensions
         TypeFamilies
         TypeOperators
 
+-- Generated tools library - automatically managed by tool-builder agent
+library generated-tools
+    import:           warnings, extensions
+    exposed-modules:  GeneratedTools
+                    -- GENERATED_TOOLS_MODULES_START
+                    -- Generated tool modules will be added here automatically
+                    -- Example: , GeneratedTools.Echo
+                    -- GENERATED_TOOLS_MODULES_END
+
+    build-depends:    base >=4.17 && <5
+                    , runix
+                    , universal-llm
+                    , polysemy >=1.9
+                    , text >=2.0
+                    , autodocodec >=0.2
+                    , aeson
+                    , bytestring
+                    , vector
+                    , directory
+                    , filepath
+
+    hs-source-dirs:   generated-tools
+    default-language: Haskell2010
+
 library
     import:           warnings, extensions
     exposed-modules:  Agent
@@ -60,7 +84,6 @@ library
                     , Tools.ToolBuilder.Types
                     , Tools.ToolBuilder.Agent
                     , Tools.ToolBuilder.Prompt
-                    , GeneratedTools
                     , Models
                     , Config
                     , Runner
@@ -81,6 +104,7 @@ library
                     , directory
                     , filepath
                     , data-default
+                    , generated-tools
 
     hs-source-dirs:   lib
     default-language: Haskell2010
