@@ -53,13 +53,24 @@ common extensions
         TypeOperators
 
 -- Generated tools library - automatically managed by tool-builder agent
+-- ALL generated code compiled with Safe Haskell (untrusted LLM output)
 library generated-tools
     import:           warnings, extensions
+    default-extensions: Safe
     exposed-modules:  GeneratedTools
                     -- GENERATED_TOOLS_MODULES_START
+                    , GeneratedTools.Echo
                     -- Generated tool modules will be added here automatically
                     -- Example: , GeneratedTools.Echo
                     -- GENERATED_TOOLS_MODULES_END
+
+    ghc-options:      -fpackage-trust
+                      -trust base
+                      -trust runix
+                      -trust text
+                      -trust polysemy
+                      -trust autodocodec
+                      -trust universal-llm
 
     build-depends:    base >=4.17 && <5
                     , runix

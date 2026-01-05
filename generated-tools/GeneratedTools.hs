@@ -9,15 +9,17 @@ module GeneratedTools
   ( generatedTools
     -- * Generated tool exports
     -- GENERATED_TOOL_EXPORTS_START
+  , Echo.echoTool
     -- Tool exports will be added here automatically
     -- GENERATED_TOOL_EXPORTS_END
   ) where
 
-import UniversalLLM.Core.Tools (LLMTool(..))
-import Polysemy (Sem)
-import Polysemy.Fail (Fail)
+import Runix.Safe.Polysemy (Sem)
+import Runix.Safe.Polysemy.Fail (Fail)
+import Runix.LLM.Effects (LLMTool(..))
 
 -- GENERATED_TOOL_IMPORTS_START
+import qualified GeneratedTools.Echo as Echo
 -- Tool module imports will be added here automatically
 -- Example: import qualified GeneratedTools.Echo as Echo
 -- GENERATED_TOOL_IMPORTS_END
@@ -31,6 +33,7 @@ import Polysemy.Fail (Fail)
 generatedTools :: forall r. [LLMTool (Sem (Fail ': r))]
 generatedTools =
   [ -- GENERATED_TOOLS_LIST_START
+    LLMTool Echo.echoTool
     -- Tools will be added here automatically
     -- Example: LLMTool Echo.echoTool
     -- GENERATED_TOOLS_LIST_END

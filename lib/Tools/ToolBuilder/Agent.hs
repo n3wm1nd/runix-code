@@ -148,27 +148,8 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
 
   -- Step 2: Create module file with proper module header
   let moduleContent = T.unlines
-        [ "{-# LANGUAGE DerivingStrategies #-}"
-        , "{-# LANGUAGE DerivingVia #-}"
-        , "{-# LANGUAGE FlexibleContexts #-}"
-        , ""
-        , "-- | Generated tool: " <> name
+        [ "-- | Generated tool: " <> name
         , "module " <> qualifiedModuleName <> " where"
-        , ""
-        , "import UniversalLLM.Core.Tools (LLMTool(..), ToolFunction(..), ToolParameter(..))"
-        , "import Polysemy (Sem, Member, Members)"
-        , "import Polysemy.Fail (Fail)"
-        , "import Runix.LLM.Effects (LLM)"
-        , "import Data.Text (Text)"
-        , "import qualified Data.Text as T"
-        , "import Autodocodec (HasCodec(..))"
-        , "import qualified Autodocodec"
-        , ""
-        , "-- Import effects that this tool might need"
-        , "import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)"
-        , "import Runix.Grep.Effects (Grep)"
-        , "import Runix.Cmd.Effects (Cmd)"
-        , "import Runix.Bash.Effects (Bash)"
         , ""
         , code
         ]
