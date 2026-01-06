@@ -28,10 +28,9 @@ Within each tool module (`GeneratedTools/{ToolName}.hs`), you have complete flex
 - **Add as many types as needed** - Define parameter types, result types, intermediate data structures
 - **Add helper functions** - Break down complex logic into smaller functions
 - **Organize logically** - Structure code for clarity and maintainability
-- **Compose existing tools** - Prefer reusing existing tools from `Tools` module where it makes sense
-  - Example: Use `Tools.readFile` instead of reimplementing file reading
-  - Example: Use `Tools.glob` for finding files, `Tools.grep` for searching
-  - This reduces code duplication and leverages tested implementations
+- **Use Runix effects directly** - Call effect functions like `Runix.FileSystem.Effects.readFile`, `Runix.Grep.Effects.grep`, etc.
+  - Do NOT import `Tools` module (circular dependency - it's not accessible from generated-tools)
+  - Instead, use the underlying Runix effects that Tools wraps
 
 **The requirement:** Your module must export exactly ONE tool function that will be registered in `GeneratedTools.hs`. This function must:
 - Have a `ToolFunction` instance on its result type
@@ -49,12 +48,13 @@ Even if your module compiles in isolation, it can still fail when integrated if 
 You are encouraged to explore the runix and runix-code codebase to find patterns, understand available effects, and see how existing tools work.
 
 **Recommended starting points:**
-- `lib/Tools.hs` - Existing tool implementations (readFile, writeFile, glob, grep, etc.)
-  - This module is Trustworthy and can be imported directly to use existing tools
-  - Example: `import qualified Tools` then use `Tools.readFile`, `Tools.glob`, etc.
+- `lib/Tools.hs` - Reference implementation showing tool patterns
+  - **NOTE:** You CANNOT import this module (circular dependency)
+  - Use it as inspiration to see how to structure tools and which Runix effects to call
+  - The Tools module is just a thin wrapper around Runix effects - call those directly instead
 - `lib/Agent.hs` - Main agent loop and tool execution patterns
 - `GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
-- `../../runix/src/Runix/**/*.hs` - Core Runix effects and interpreters
+- `../../runix/src/Runix/**/*.hs` - Core Runix effects and interpreters (these you CAN import)
 
 Use the `read_file`, `glob`, and `grep` tools to explore code and find relevant patterns.
 
@@ -271,7 +271,7 @@ todoRead = do
 4. **Effect constraints**: Declare exactly which effects your function needs (FileSystemRead, Fail, etc.)
 5. **Qualified imports**: Import effect modules qualified to avoid name collisions
 6. **Complete imports**: Include all necessary imports (Data.Text, effects, Safe reexports, etc.)
-7. **Tool composition**: Reuse existing tools from `Tools` module (e.g., `Tools.readFile`, `Tools.glob`) rather than reimplementing functionality
+7. **Direct effect usage**: Call Runix effect functions directly (e.g., `Runix.FileSystem.Effects.readFile`, not `Tools.readFile`)
 8. **Safe Haskell compatibility**:
    - Use `Runix.Safe.Polysemy` instead of `Polysemy`
    - Use `Runix.Safe.Polysemy.Fail` instead of `Polysemy.Fail`
