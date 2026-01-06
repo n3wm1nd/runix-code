@@ -360,10 +360,29 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
   -- The agent doesn't decide whether to read it - we force-feed the current state
   registryContent <- Tools.readFile (Tools.FilePath $ T.pack registryPath)
   let Tools.ReadFileResult registryText = registryContent
-      contextMessage = SystemText $ T.unlines
+
+  -- Read cabal file and extract generated-tools sublibrary configuration
+  cabalContent <- Tools.readFile (Tools.FilePath $ T.pack cabalPath)
+  let Tools.ReadFileResult cabalText = cabalContent
+      cabalSublibraryExcerpt = extractGeneratedToolsSublibrary cabalText
+
+  -- Get list of existing generated tool files
+  generatedToolFiles <- Tools.glob (Tools.Pattern "generated-tools/**/*.hs")
+  let Tools.GlobResult fileList = generatedToolFiles
+      fileTree = T.unlines $ map (\f -> "  - " <> f) fileList
+
+  let contextMessage = SystemText $ T.unlines
         [ "=== CURRENT STATE OF GeneratedTools.hs (registry) ==="
         , registryText
         , "=== END OF GeneratedTools.hs ==="
+        , ""
+        , "=== CABAL SUBLIBRARY CONFIGURATION (for reference) ==="
+        , cabalSublibraryExcerpt
+        , "=== END OF CABAL CONFIGURATION ==="
+        , ""
+        , "=== EXISTING GENERATED TOOL FILES ==="
+        , fileTree
+        , "=== END OF FILE TREE ==="
         ]
 
   history <- get @[Message model]
@@ -427,6 +446,23 @@ countToolCalls = length . filter isToolCall
 --------------------------------------------------------------------------------
 -- Helpers
 --------------------------------------------------------------------------------
+
+-- | Extract the 'library generated-tools' sublibrary section from cabal file
+-- Reads from "library generated-tools" until the next unindented non-empty line
+extractGeneratedToolsSublibrary :: Text -> Text
+extractGeneratedToolsSublibrary cabalText =
+  let contentLines = T.lines cabalText
+      -- Find the start of generated-tools sublibrary
+      (_, afterStart) = break (T.isPrefixOf "library generated-tools") contentLines
+  in case afterStart of
+    [] -> "-- library generated-tools section not found"
+    (start:rest) ->
+      let -- Take lines while they're either empty or indented
+          sublibraryLines = takeWhile isPartOfBlock rest
+          isPartOfBlock line =
+            T.null (T.strip line) ||  -- empty line
+            (not (T.null line) && T.head line `elem` [' ', '\t'])  -- indented line
+      in T.unlines (start : sublibraryLines)
 
 -- | Update config with new tool list
 setTools :: HasTools model => [LLMTool (Sem r)] -> [ULL.ModelConfig model] -> [ULL.ModelConfig model]

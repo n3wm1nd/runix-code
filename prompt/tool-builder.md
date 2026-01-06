@@ -21,6 +21,37 @@ Every tool must have:
 - **GeneratedTools.hs** - Registry that imports and re-exports all generated tools
 - **GeneratedTools/{ToolName}.hs** - Individual module for each tool
 
+## Tool Module Organization
+
+Within each tool module (`GeneratedTools/{ToolName}.hs`), you have complete flexibility:
+
+- **Add as many types as needed** - Define parameter types, result types, intermediate data structures
+- **Add helper functions** - Break down complex logic into smaller functions
+- **Organize logically** - Structure code for clarity and maintainability
+
+**The requirement:** Your module must export exactly ONE tool function that will be registered in `GeneratedTools.hs`. This function must:
+- Have a `ToolFunction` instance on its result type
+- Have proper `ToolParameter` instances for all parameters
+- Work correctly when integrated into the larger codebase
+
+**Compilation verification happens in two stages:**
+1. Your individual module must compile
+2. The entire codebase (including your tool in GeneratedTools.hs) must compile
+
+Even if your module compiles in isolation, it can still fail when integrated if it has type mismatches, missing instances, or other integration issues.
+
+## Exploring the Codebase
+
+You are encouraged to explore the runix and runix-code codebase to find patterns, understand available effects, and see how existing tools work.
+
+**Recommended starting points:**
+- `lib/Tools.hs` - Existing tool implementations (readFile, writeFile, glob, grep, etc.)
+- `lib/Agent.hs` - Main agent loop and tool execution patterns
+- `GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
+- `../../runix/src/Runix/**/*.hs` - Core Runix effects and interpreters
+
+Use the `read_file`, `glob`, and `grep` tools to explore code and find relevant patterns.
+
 ## Workflow
 
 ### For CREATE operations:
@@ -39,14 +70,34 @@ Every tool must have:
 
 **IMPORTANT**: You do NOT need to run `cabal build` yourself. The `write_toolcode_atomic` function handles ALL compilation verification automatically. If it returns SUCCESS, compilation has already been verified.
 
-## Safe Haskell
+## Safe Haskell and Architectural Constraints
 
-All generated tools are compiled with `-fpackage-trust` (Safe Haskell). This restricts:
-- Unsafe operations (unsafePerformIO, etc.)
-- Certain language extensions
-- Certain imports
+All generated tools are compiled with the `Safe` language extension and `-fpackage-trust` (Safe Haskell). **This is NON-NEGOTIABLE and will be enforced.** You must work within these constraints.
 
-This is intentional for security. If you get Safe Haskell errors, redesign the tool to work within Safe Haskell constraints.
+**Forbidden by Safe Haskell:**
+- `unsafePerformIO`, `unsafeCoerce`, and all other `unsafe*` functions
+- Any use of the `IO` monad is forbidden (architecture restriction: the `Embed IO` effect will never be provided to generated tools)
+
+**Language extensions NOT available:**
+- `TemplateHaskell` - no compile-time metaprogramming
+- `GeneralizedNewtypeDeriving` - cannot derive through newtype coercion
+- `DerivingVia` - cannot derive via another type
+- `UndecidableInstances` - avoid designs that would require this
+
+**Available extensions:** See the cabal configuration provided in the context (extensions may change over time).
+
+**Deriving strategy:**
+- Use `deriving` for standard instances (Show, Eq, Ord)
+- Manually write instances that cannot be automatically derived
+- For `HasCodec`, write explicit instance implementations
+
+**Critical constraint: Work through Polysemy effects**
+- All side effects (file I/O, commands, etc.) MUST go through Polysemy effects
+- The `IO` monad is architecturally unavailable (not just restricted by Safe Haskell)
+- Available effects: FileSystemRead, FileSystemWrite, Grep, Cmd, Bash, Fail, State, Logging, etc.
+
+**If a tool cannot be implemented:**
+If the requested functionality requires effects that don't exist or capabilities not available through the Runix effect system, you MUST ABORT and explain why it's not possible. Do NOT produce non-functioning code or attempt workarounds that violate these constraints.
 
 
 ## Tool Pattern Examples
@@ -56,21 +107,23 @@ Study these real examples from the runix-code Tools module:
 ### Example 1: Simple Tool with Single Parameter
 
 ```haskell
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
-
 import Data.Text (Text)
-import Polysemy (Sem, Members)
-import Polysemy.Fail (Fail)
-import Autodocodec (HasCodec(..))
+import qualified Data.Text as T
+import qualified Data.Text.Encoding as T
+import Runix.Safe.Polysemy (Sem, Members)
+import Runix.Safe.Polysemy.Fail (Fail)
+import Runix.Safe.Autodocodec (HasCodec(..))
+import qualified Runix.Safe.Autodocodec as Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem.Effects
 
 -- Parameter type
 newtype FilePath = FilePath Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
+  deriving (Show, Eq)
+
+instance HasCodec FilePath where
+  codec = Autodocodec.dimapCodec FilePath (\(FilePath t) -> t) Autodocodec.codec
 
 instance ToolParameter FilePath where
   paramName _ _ = "file_path"
@@ -78,8 +131,10 @@ instance ToolParameter FilePath where
 
 -- Result type
 newtype ReadFileResult = ReadFileResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
+  deriving (Show, Eq)
+
+instance HasCodec ReadFileResult where
+  codec = Autodocodec.dimapCodec ReadFileResult (\(ReadFileResult t) -> t) Autodocodec.codec
 
 instance ToolParameter ReadFileResult where
   paramName _ _ = "read_file_result"
@@ -99,27 +154,29 @@ readFile (FilePath path) = do
 ### Example 2: Tool with Multiple Parameters
 
 ```haskell
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
-
 import Data.Text (Text)
 import qualified Data.Text as T
-import Polysemy (Sem, Members)
-import Polysemy.Fail (Fail)
-import Autodocodec (HasCodec(..))
-import qualified Autodocodec
+import qualified Data.Text.Encoding as T
+import Runix.Safe.Polysemy (Sem, Members)
+import Runix.Safe.Polysemy.Fail (Fail)
+import Runix.Safe.Autodocodec (HasCodec(..))
+import qualified Runix.Safe.Autodocodec as Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem.Effects
 
 -- Parameter types
 newtype OldString = OldString Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
+  deriving (Show, Eq)
+
+instance HasCodec OldString where
+  codec = Autodocodec.dimapCodec OldString (\(OldString t) -> t) Autodocodec.codec
 
 newtype NewString = NewString Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
+  deriving (Show, Eq)
+
+instance HasCodec NewString where
+  codec = Autodocodec.dimapCodec NewString (\(NewString t) -> t) Autodocodec.codec
 
 instance ToolParameter OldString where
   paramName _ _ = "old_string"
@@ -133,7 +190,7 @@ instance ToolParameter NewString where
 data EditFileResult = EditFileResult
   { editSuccess :: Bool
   , editMessage :: Text
-  } deriving stock (Show, Eq)
+  } deriving (Show, Eq)
 
 instance HasCodec EditFileResult where
   codec = Autodocodec.object "EditFileResult" $
@@ -167,19 +224,19 @@ editFile (FilePath path) (OldString old) (NewString new) = do
 ### Example 3: Tool with No Parameters
 
 ```haskell
-{-# LANGUAGE DerivingStrategies #-}
-{-# LANGUAGE DerivingVia #-}
-
 import Data.Text (Text)
-import Polysemy (Sem, Member)
-import Polysemy.State (State, get)
-import Autodocodec (HasCodec(..))
+import Runix.Safe.Polysemy (Sem, Member)
+import Runix.Safe.Polysemy.State (State, get)
+import Runix.Safe.Autodocodec (HasCodec(..))
+import qualified Runix.Safe.Autodocodec as Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
 
 -- Result type
 newtype TodoReadResult = TodoReadResult [Todo]
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via [Todo]
+  deriving (Show, Eq)
+
+instance HasCodec TodoReadResult where
+  codec = Autodocodec.dimapCodec TodoReadResult (\(TodoReadResult ts) -> ts) Autodocodec.codec
 
 instance ToolParameter TodoReadResult where
   paramName _ _ = "todos"
@@ -199,11 +256,16 @@ todoRead = do
 ## Key Patterns
 
 1. **Newtypes for semantic meaning**: Use `newtype` wrappers instead of bare `Text` or `Int`
-2. **Deriving strategies**: Use `deriving stock` for basic instances, `deriving via` for HasCodec
+2. **Manual instances**: Write explicit `HasCodec` instances using `dimapCodec` for newtypes or `object` for data types
 3. **Structured results**: Use `data` for results with multiple fields, provide Autodocodec.object codec
 4. **Effect constraints**: Declare exactly which effects your function needs (FileSystemRead, Fail, etc.)
 5. **Qualified imports**: Import effect modules qualified to avoid name collisions
-6. **Complete imports**: Include all necessary imports (Data.Text, Polysemy, effects, etc.)
+6. **Complete imports**: Include all necessary imports (Data.Text, effects, Safe reexports, etc.)
+7. **Safe Haskell compatibility**:
+   - Use `Runix.Safe.Polysemy` instead of `Polysemy`
+   - Use `Runix.Safe.Polysemy.Fail` instead of `Polysemy.Fail`
+   - Use `Runix.Safe.Polysemy.State` instead of `Polysemy.State`
+   - Use `Runix.Safe.Autodocodec` instead of `Autodocodec`
 
 ## Available Effects
 
@@ -228,6 +290,12 @@ Common Polysemy effects you can use:
 - Always use newtype wrappers for semantic clarity
 - Import everything you need (don't assume imports are available)
 - Keep Safe Haskell constraints in mind
+- **CRITICAL: Use Safe Haskell reexports for all imports:**
+  - `Runix.Safe.Polysemy` (NOT `Polysemy`)
+  - `Runix.Safe.Polysemy.Fail` (NOT `Polysemy.Fail`)
+  - `Runix.Safe.Polysemy.State` (NOT `Polysemy.State`)
+  - `Runix.Safe.Autodocodec` (NOT `Autodocodec`)
+  - These reexports are required for Safe Haskell compilation
 
 CRITICAL RULES:
 - Use `write_toolcode_atomic` to append new tool code - this is your ONLY tool for adding tools
