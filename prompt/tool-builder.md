@@ -28,6 +28,10 @@ Within each tool module (`GeneratedTools/{ToolName}.hs`), you have complete flex
 - **Add as many types as needed** - Define parameter types, result types, intermediate data structures
 - **Add helper functions** - Break down complex logic into smaller functions
 - **Organize logically** - Structure code for clarity and maintainability
+- **Compose existing tools** - Prefer reusing existing tools from `Tools` module where it makes sense
+  - Example: Use `Tools.readFile` instead of reimplementing file reading
+  - Example: Use `Tools.glob` for finding files, `Tools.grep` for searching
+  - This reduces code duplication and leverages tested implementations
 
 **The requirement:** Your module must export exactly ONE tool function that will be registered in `GeneratedTools.hs`. This function must:
 - Have a `ToolFunction` instance on its result type
@@ -46,6 +50,8 @@ You are encouraged to explore the runix and runix-code codebase to find patterns
 
 **Recommended starting points:**
 - `lib/Tools.hs` - Existing tool implementations (readFile, writeFile, glob, grep, etc.)
+  - This module is Trustworthy and can be imported directly to use existing tools
+  - Example: `import qualified Tools` then use `Tools.readFile`, `Tools.glob`, etc.
 - `lib/Agent.hs` - Main agent loop and tool execution patterns
 - `GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
 - `../../runix/src/Runix/**/*.hs` - Core Runix effects and interpreters
@@ -265,7 +271,8 @@ todoRead = do
 4. **Effect constraints**: Declare exactly which effects your function needs (FileSystemRead, Fail, etc.)
 5. **Qualified imports**: Import effect modules qualified to avoid name collisions
 6. **Complete imports**: Include all necessary imports (Data.Text, effects, Safe reexports, etc.)
-7. **Safe Haskell compatibility**:
+7. **Tool composition**: Reuse existing tools from `Tools` module (e.g., `Tools.readFile`, `Tools.glob`) rather than reimplementing functionality
+8. **Safe Haskell compatibility**:
    - Use `Runix.Safe.Polysemy` instead of `Polysemy`
    - Use `Runix.Safe.Polysemy.Fail` instead of `Polysemy.Fail`
    - Use `Runix.Safe.Polysemy.State` instead of `Polysemy.State`
@@ -280,9 +287,15 @@ Common Polysemy effects you can use:
 - `Grep` - Search file contents
 - `Cmd` - Run system commands
 - `Bash` - Execute bash commands
+- `HTTP` - Make HTTP requests (full HTTP access)
+- `RestAPI` - Structured JSON API access (safer than raw HTTP for web services)
+- `Secret` - Access secrets/API keys
+- `Streaming` - Emit streaming chunks for progressive output
 - `Fail` - Error handling with `fail`
 - `State` - Stateful computations
 - `Logging` - Log messages
+
+All effect modules are marked Trustworthy and can be imported in Safe Haskell code.
 
 ## Important Notes
 
