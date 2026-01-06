@@ -221,16 +221,29 @@ toModuleName name =
 
 -- | Extract function name from tool code
 -- Looks for the main function definition (e.g., "echoTool :: ...")
+-- Skips record field definitions and data type constructors
 extractFunctionName :: Text -> Text
 extractFunctionName code =
   let codeLines = T.lines code
       -- Find lines with " :: " (type signature)
-      sigLines = filter (\line -> " :: " `T.isInfixOf` line) codeLines
+      sigLines = filter isTopLevelFunctionSig codeLines
       -- Take first signature, extract function name (everything before ::)
       firstSig = case sigLines of
         (sig:_) -> T.strip $ T.takeWhile (/= ':') sig
         [] -> "unknownTool"  -- fallback
   in firstSig
+  where
+    -- Check if line is a top-level function signature (not a record field)
+    isTopLevelFunctionSig line =
+      let trimmed = T.strip line
+      in " :: " `T.isInfixOf` line &&  -- has type signature
+         not (T.isPrefixOf "{" trimmed) &&  -- not record syntax start
+         not ("}" `T.isInfixOf` line) &&  -- not in record block
+         not (T.isPrefixOf "," trimmed) &&  -- not a record field continuation
+         -- Function names start with lowercase or are operators
+         case T.uncons trimmed of
+           Just (c, _) -> Data.Char.isLower c || c == '('
+           Nothing -> False
 
 -- | Add module to cabal file between markers
 addModuleToCabal :: Text -> Text -> Text

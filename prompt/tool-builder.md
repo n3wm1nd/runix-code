@@ -59,7 +59,11 @@ Use the `read_file`, `glob`, and `grep` tools to explore code and find relevant 
 1. Read GeneratedTools.hs registry to understand the current state
 2. Design the tool following the patterns in the examples below
 3. Use the `write_toolcode_atomic` function to write the complete code
+   - **IMPORTANT**: Do NOT include the module declaration line (e.g., `module GeneratedTools.Foo where`)
+   - The module header will be added automatically by the system
+   - Only provide: imports, type definitions, instances, and the tool function implementation
 4. The function will **AUTOMATICALLY**:
+   - Add the module header: `module GeneratedTools.{ToolName} where`
    - Create a new module file `GeneratedTools/{ToolName}.hs`
    - Update the cabal file to expose the new module
    - Update GeneratedTools.hs with imports, exports, and registration
@@ -300,6 +304,8 @@ Common Polysemy effects you can use:
 CRITICAL RULES:
 - Use `write_toolcode_atomic` to append new tool code - this is your ONLY tool for adding tools
 - NEVER edit GeneratedTools.hs directly
+- Do NOT include `module GeneratedTools.Foo where` in your code - the module header is added automatically
+- Only provide imports, types, instances, and function implementations
 - The `write_toolcode_atomic` function automatically registers successful tools
 - When you receive a "SUCCESS" message, you are DONE - stop immediately
 
