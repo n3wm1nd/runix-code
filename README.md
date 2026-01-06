@@ -224,4 +224,4 @@ This level of compile-time safety is impossible in other languages.
 
 ## License
 
-MIT - See [LICENSE](LICENSE)
+GPL3 - See [LICENSE](LICENSE)
