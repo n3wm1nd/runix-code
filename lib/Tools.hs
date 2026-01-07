@@ -16,6 +16,8 @@ module Tools
     readFile
   , writeFile
   , editFile
+  , mkdir
+  , remove
   , glob
   , grep
   , diff
@@ -44,6 +46,8 @@ module Tools
   , ReadFileResult (..)
   , WriteFileResult (..)
   , EditFileResult (..)
+  , MkdirResult (..)
+  , RemoveResult (..)
   , GlobResult (..)
   , GrepResult (..)
   , DiffResult (..)
@@ -61,6 +65,8 @@ module Tools
   , FileContent (..)
   , OldString (..)
   , NewString (..)
+  , CreateParents (..)
+  , Recursive (..)
   , Pattern (..)
   , Command (..)
   , TodoText (..)
@@ -133,6 +139,14 @@ newtype NewString = NewString Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
 
+newtype CreateParents = CreateParents Bool
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Bool
+
+newtype Recursive = Recursive Bool
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Bool
+
 newtype Pattern = Pattern Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
@@ -182,6 +196,14 @@ instance ToolParameter OldString where
 instance ToolParameter NewString where
   paramName _ _ = "new_string"
   paramDescription _ = "string to replace with"
+
+instance ToolParameter CreateParents where
+  paramName _ _ = "create_parents"
+  paramDescription _ = "whether to create parent directories if they don't exist"
+
+instance ToolParameter Recursive where
+  paramName _ _ = "recursive"
+  paramDescription _ = "whether to remove directories recursively"
 
 instance ToolParameter Pattern where
   paramName _ _ = "pattern"
@@ -239,6 +261,14 @@ instance HasCodec EditFileResult where
     EditFileResult
       <$> Autodocodec.requiredField "success" "whether the edit succeeded" Autodocodec..= editSuccess
       <*> Autodocodec.requiredField "message" "description of what happened" Autodocodec..= editMessage
+
+newtype MkdirResult = MkdirResult Bool
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Bool
+
+newtype RemoveResult = RemoveResult Bool
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Bool
 
 newtype GlobResult = GlobResult [Text]
   deriving stock (Show, Eq)
@@ -325,6 +355,14 @@ instance ToolParameter EditFileResult where
   paramName _ _ = "edit_file_result"
   paramDescription _ = "edit result with success status and message"
 
+instance ToolParameter MkdirResult where
+  paramName _ _ = "mkdir_result"
+  paramDescription _ = "mkdir success status"
+
+instance ToolParameter RemoveResult where
+  paramName _ _ = "remove_result"
+  paramDescription _ = "remove success status"
+
 instance ToolParameter GlobResult where
   paramName _ _ = "glob_result"
   paramDescription _ = "list of matching file paths"
@@ -381,6 +419,14 @@ instance ToolFunction WriteFileResult where
 instance ToolFunction EditFileResult where
   toolFunctionName _ = "edit_file"
   toolFunctionDescription _ = "Edit an existing file by replacing old_string with new_string"
+
+instance ToolFunction MkdirResult where
+  toolFunctionName _ = "mkdir"
+  toolFunctionDescription _ = "Create a directory, optionally creating parent directories"
+
+instance ToolFunction RemoveResult where
+  toolFunctionName _ = "remove"
+  toolFunctionDescription _ = "Remove a file or directory, optionally recursive"
 
 instance ToolFunction GlobResult where
   toolFunctionName _ = "glob"
@@ -488,6 +534,28 @@ replaceAndCount old new haystack
         (before, rest) ->
           let after = T.drop (T.length old) rest
           in go (new : before : acc) (count + 1) after
+
+-- | Create a directory
+-- Fails if directory creation fails
+mkdir
+  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  => FilePath
+  -> CreateParents
+  -> Sem r MkdirResult
+mkdir (FilePath path) (CreateParents createParents) = do
+  Runix.FileSystem.Effects.createDirectory createParents (T.unpack path)
+  return $ MkdirResult True
+
+-- | Remove a file or directory
+-- Fails if removal fails
+remove
+  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  => FilePath
+  -> Recursive
+  -> Sem r RemoveResult
+remove (FilePath path) (Recursive recursive) = do
+  Runix.FileSystem.Effects.remove recursive (T.unpack path)
+  return $ RemoveResult True
 
 -- | Find files matching a pattern
 -- Fails if glob operation cannot be completed
