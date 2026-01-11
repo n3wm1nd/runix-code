@@ -48,12 +48,12 @@ import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
 import Runix.PromptStore.Effects (PromptStore)
 import Runix.Config.Effects (Config)
-import qualified Runix.FileSystem.Effects
-import Runix.FileSystem.Effects (FileWatcher, interceptFileAccessRead, interceptFileAccessWrite)
+import Runix.FileSystem.Simple.Effects hiding (FileWatcher)
 import qualified Config as AppConfig
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
+import Runix.FileSystem.Effects (FileWatcher, getChangedFiles, interceptFileAccessRead, interceptFileAccessWrite)
 
 --------------------------------------------------------------------------------
 -- Semantic Newtypes
@@ -109,7 +109,7 @@ instance ToolFunction (RunixCodeResult model) where
 
 -- | Format file changes with diffs as a system message
 -- Diffs old content (via stdin) against current file
-formatFileChanges :: Members '[Runix.FileSystem.Effects.FileSystemRead, Cmd, Fail] r
+formatFileChanges :: Members '[FileSystem, FileSystemRead, Cmd, Fail] r
                   => [(String, ByteString, ByteString)]
                   -> Sem r Text
 formatFileChanges changes = do
@@ -140,10 +140,10 @@ runixCode
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
-     , Member FileWatcher r
+     , Member (FileWatcher Default) r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
-     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
+     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
      , Member (Reader [ULL.ModelConfig model]) r
@@ -192,10 +192,10 @@ runixCodeAgentLoop
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
-     , Member FileWatcher r
+     , Member (FileWatcher Default) r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
-     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
+     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig model]) r
      , Member (State [Message model]) r
@@ -240,7 +240,7 @@ runixCodeAgentLoop = do
   -- Check for file changes and inject as system messages
   currentHistory <- get @[Message model]
 
-  changedFiles <- Runix.FileSystem.Effects.getChangedFiles
+  changedFiles <- getChangedFiles @Default
 
   historyWithChanges <- if null changedFiles
         then return currentHistory
@@ -275,7 +275,7 @@ runixCodeAgentLoop = do
 
     calls -> do
       -- Execute all tool calls with logging - tools mutate State [Todo] directly
-      results <- mapM (interceptFileAccessRead . interceptFileAccessWrite . executeTool tools) calls
+      results <- mapM (interceptFileAccessRead @Default . interceptFileAccessWrite @Default . executeTool tools) calls
       let historyWithResults = historyWithResponse ++ map ToolResultMsg results
 
       -- Update history again with tool results

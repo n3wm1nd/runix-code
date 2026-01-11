@@ -27,7 +27,7 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderOf)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolExecution (executeTool)
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
+import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
 import Runix.Grep.Effects (Grep)
@@ -60,7 +60,7 @@ buildTool
      , Member Grep r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
-     , Members '[FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
@@ -345,7 +345,7 @@ toolBuilderLoop
      , Member Fail r
      , Member Grep r
      , Member PromptStore r
-     , Members '[FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
      , Member (State [Message model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)

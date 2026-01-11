@@ -19,6 +19,7 @@ module Tools.Claude
   , ClaudeInstructions (..)
   ) where
 
+import Prelude hiding (readFile)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
@@ -36,7 +37,7 @@ import Runix.LLM.ToolInstances ()
 import Runix.Cmd.Effects (Cmd, cmdExec, CmdOutput(..))
 import Runix.Logging.Effects (Logging)
 import Runix.LLM.ToolExecution (executeTool)
-import qualified Runix.FileSystem.Effects
+import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite, glob, readFile)
 import Autodocodec (HasCodec, codec)
 import qualified Autodocodec
 
@@ -148,17 +149,17 @@ setTools tools configs =
 
 -- | Load all subagent definitions from .claude/agents/*.md
 loadSubagents
-  :: Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
+  :: Members '[FileSystem, FileSystemRead, FileSystemWrite] r
   => Sem r [ClaudeAgent]
 loadSubagents = do
-  result <- runFail $ Runix.FileSystem.Effects.glob ".claude/agents" "*.md"
+  result <- runFail $ glob ".claude/agents" "*.md"
   case result of
     Left _ -> return []
     Right files -> catMaybes <$> mapM parseAgentFile files
   where
-    parseAgentFile :: Member Runix.FileSystem.Effects.FileSystemRead r => FilePath -> Sem r (Maybe ClaudeAgent)
+    parseAgentFile :: Member FileSystemRead r => FilePath -> Sem r (Maybe ClaudeAgent)
     parseAgentFile path = do
-      contentResult <- runFail $ Runix.FileSystem.Effects.readFile path
+      contentResult <- runFail $ readFile path
       case contentResult of
         Left _ -> return Nothing
         Right contents -> return $ parseAgentMarkdown (TE.decodeUtf8 contents)
@@ -232,17 +233,17 @@ claudeSubagent tools agent (UserPrompt userPrompt) = do
 
 -- | Load all skill definitions from .claude/skills/*/SKILL.md
 loadSkills
-  :: Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
+  :: Members '[FileSystem, FileSystemRead, FileSystemWrite] r
   => Sem r [ClaudeSkill]
 loadSkills = do
-  result <- runFail $ Runix.FileSystem.Effects.glob ".claude/skills" "*/SKILL.md"
+  result <- runFail $ glob ".claude/skills" "*/SKILL.md"
   case result of
     Left _ -> return []
     Right files -> catMaybes <$> mapM parseSkillFile files
   where
-    parseSkillFile :: Member Runix.FileSystem.Effects.FileSystemRead r => FilePath -> Sem r (Maybe ClaudeSkill)
+    parseSkillFile :: Member FileSystemRead r => FilePath -> Sem r (Maybe ClaudeSkill)
     parseSkillFile path = do
-      contentResult <- runFail $ Runix.FileSystem.Effects.readFile path
+      contentResult <- runFail $ readFile path
       case contentResult of
         Left _ -> return Nothing
         Right contents -> do
@@ -270,13 +271,13 @@ parseSkillMarkdown basePath content =
 loadSkillScripts
   :: forall r.
      ( Member Cmd r
-     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
+     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
      )
   => ClaudeSkill
   -> Sem r [LLMTool (Sem (Fail ': r))]
 loadSkillScripts skill = do
   let scriptsPath = skillBasePath skill </> "scripts"
-  result <- runFail $ Runix.FileSystem.Effects.glob scriptsPath "*"
+  result <- runFail $ glob scriptsPath "*"
   case result of
     Left _ -> return []
     Right scriptPaths -> return $ map makeScriptTool scriptPaths
@@ -319,7 +320,7 @@ claudeSkillToTool
      , Member Logging r
      , Member (State [Message model]) r
      , Member Cmd r
-     , Members '[Runix.FileSystem.Effects.FileSystemRead, Runix.FileSystem.Effects.FileSystemWrite] r
+     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
      )
@@ -338,7 +339,7 @@ claudeSkillToTool skill = do
 -- | Load CLAUDE.md files from current directory and .claude/ directory
 -- Silently ignores files that can't be read
 loadClaudeMdConfigs
-  :: Member Runix.FileSystem.Effects.FileSystemRead r
+  :: Member FileSystemRead r
   => Sem r [ClaudeInstructions]
 loadClaudeMdConfigs = do
   rootClaudeMd <- tryReadFile "CLAUDE.md"
@@ -349,9 +350,9 @@ loadClaudeMdConfigs = do
     , fmap (\content -> ClaudeInstructions $ "# Additional Instructions (.claude/CLAUDE.md)\n\n" <> content) dotClaudeMd
     ]
   where
-    tryReadFile :: Member Runix.FileSystem.Effects.FileSystemRead r => FilePath -> Sem r (Maybe Text)
+    tryReadFile :: Member FileSystemRead r => FilePath -> Sem r (Maybe Text)
     tryReadFile path = do
-      result <- runFail $ Runix.FileSystem.Effects.readFile path
+      result <- runFail $ readFile path
       return $ case result of
         Right contents -> Just (TE.decodeUtf8 contents)
         Left _ -> Nothing

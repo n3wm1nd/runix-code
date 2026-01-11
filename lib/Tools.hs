@@ -88,8 +88,8 @@ import Polysemy.Fail (Fail)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
-import qualified Runix.FileSystem.Effects
+import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite)
+import qualified Runix.FileSystem.Simple.Effects as FileSystem
 import Runix.Grep.Effects (Grep)
 import Runix.Logging.Effects 
 import qualified Runix.Grep.Effects
@@ -481,7 +481,7 @@ readFile
   :: forall r. (Members [FileSystemRead, FileSystemWrite, Fail] r) => FilePath
   -> Sem r ReadFileResult
 readFile (FilePath path) = do
-  contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
+  contents <- FileSystem.readFile (T.unpack path)
   return $ ReadFileResult (T.decodeUtf8 contents)
 
 -- | Write a new file
@@ -493,7 +493,7 @@ writeFile
   -> Sem r WriteFileResult
 writeFile (FilePath path) (FileContent content) = do
   let bytes = T.encodeUtf8 content
-  Runix.FileSystem.Effects.writeFile (T.unpack path) bytes
+  FileSystem.writeFile (T.unpack path) bytes
   return $ WriteFileResult True
 
 -- | Edit existing file via string replacement
@@ -506,7 +506,7 @@ editFile
   -> NewString
   -> Sem r EditFileResult
 editFile (FilePath path) (OldString old) (NewString new) = do
-  contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
+  contents <- FileSystem.readFile (T.unpack path)
   let contentText = T.decodeUtf8 contents
       (replaced, occurrences) = replaceAndCount old new contentText
   case occurrences of
@@ -514,7 +514,7 @@ editFile (FilePath path) (OldString old) (NewString new) = do
            "Error: old_string not found in file. No changes made."
     1 -> do
       let newBytes = T.encodeUtf8 replaced
-      Runix.FileSystem.Effects.writeFile (T.unpack path) newBytes
+      FileSystem.writeFile (T.unpack path) newBytes
       return $ EditFileResult True $
         "Successfully replaced 1 occurrence in " <> path
     n -> return $ EditFileResult False $
@@ -543,7 +543,7 @@ mkdir
   -> CreateParents
   -> Sem r MkdirResult
 mkdir (FilePath path) (CreateParents createParents) = do
-  Runix.FileSystem.Effects.createDirectory createParents (T.unpack path)
+  FileSystem.createDirectory createParents (T.unpack path)
   return $ MkdirResult True
 
 -- | Remove a file or directory
@@ -554,18 +554,18 @@ remove
   -> Recursive
   -> Sem r RemoveResult
 remove (FilePath path) (Recursive recursive) = do
-  Runix.FileSystem.Effects.remove recursive (T.unpack path)
+  FileSystem.remove recursive (T.unpack path)
   return $ RemoveResult True
 
 -- | Find files matching a pattern
 -- Fails if glob operation cannot be completed
 glob
-  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  :: Members [FileSystem, Fail] r
   => Pattern
   -> Sem r GlobResult
 glob (Pattern pattern) = do
   -- Glob from current directory
-  files <- Runix.FileSystem.Effects.glob "." (T.unpack pattern)
+  files <- FileSystem.glob "." (T.unpack pattern)
   return $ GlobResult (map T.pack files)
 
 -- | Search file contents with regex
@@ -586,14 +586,14 @@ grep (Pattern pattern) = do
 -- | Run unified diff between two files
 -- Fails if either file doesn't exist (uses Fail effect)
 diff
-  :: Members '[FileSystemRead, Cmd, Fail] r
+  :: Members '[FileSystem, FileSystemRead, Cmd, Fail] r
   => FilePath
   -> FilePath
   -> Sem r DiffResult
 diff (FilePath file1) (FilePath file2) = do
   -- Verify files exist (for safety)
-  exists1 <- Runix.FileSystem.Effects.fileExists (T.unpack file1)
-  exists2 <- Runix.FileSystem.Effects.fileExists (T.unpack file2)
+  exists1 <- FileSystem.fileExists (T.unpack file1)
+  exists2 <- FileSystem.fileExists (T.unpack file2)
 
   if not exists1
     then fail $ "File does not exist: " ++ T.unpack file1
@@ -611,14 +611,14 @@ diff (FilePath file1) (FilePath file2) = do
 -- | Run unified diff between old content (via stdin) and a file
 -- The label is used for the "old" file name in the diff output
 diffContentVsFile
-  :: Members '[FileSystemRead, Cmd, Fail] r
+  :: Members '[FileSystem, FileSystemRead, Cmd, Fail] r
   => String           -- ^ Label for old content (e.g., "path/to/file.old")
   -> ByteString       -- ^ Old content
   -> FilePath         -- ^ Path to current file
   -> Sem r DiffResult
 diffContentVsFile label oldContent (FilePath file) = do
   -- Verify file exists
-  exists <- Runix.FileSystem.Effects.fileExists (T.unpack file)
+  exists <- FileSystem.fileExists (T.unpack file)
   if not exists
     then fail $ "File does not exist: " ++ T.unpack file
     else do
@@ -679,7 +679,7 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
     (_, Left errMsg) -> return $ GenerateToolResult False errMsg Nothing
     (Right (), Right ()) -> do
       -- Step 2: Read GeneratedTools.hs (must exist since it's in cabal build)
-      currentContent <- T.decodeUtf8 <$> Runix.FileSystem.Effects.readFile generatedToolsPath
+      currentContent <- T.decodeUtf8 <$> FileSystem.readFile generatedToolsPath
 
       -- Step 3: Generate new tool code with fixed signature
       let newToolCode = formatToolCodeWithSignature expectedFuncName funcSig functionDef
@@ -687,7 +687,7 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
 
       -- Step 4: Store original content and write updated version
       let originalContent = currentContent
-      Runix.FileSystem.Effects.writeFile generatedToolsPath (T.encodeUtf8 updatedContent)
+      FileSystem.writeFile generatedToolsPath (T.encodeUtf8 updatedContent)
 
       info("file written, compiling now")
       -- Step 5: Test compilation
@@ -699,7 +699,7 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
           return $ GenerateToolResult True ("Successfully generated tool: " <> expectedFuncName) (Just (T.pack generatedToolsPath))
         else do
           -- Failure: revert to original content
-          Runix.FileSystem.Effects.writeFile generatedToolsPath (T.encodeUtf8 originalContent)
+          FileSystem.writeFile generatedToolsPath (T.encodeUtf8 originalContent)
           let errorMsg = "Compilation failed: " <> errors
           return $ GenerateToolResult False errorMsg Nothing
 

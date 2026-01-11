@@ -50,8 +50,8 @@ import Polysemy.Error
 import Polysemy.State (State, runState)
 import Polysemy.Reader (Reader, runReader)
 
-import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite, readFile, writeFile, fileExists)
+import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite, filesystemIO, readFile, writeFile, fileExists)
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
 import Runix.Cmd.Effects (Cmd)
@@ -76,6 +76,7 @@ import Runix.Streaming.Effects (ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), GLM45Air_ZAI(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider, glm45AirZAIComposableProvider, glm46ComposableProvider, glm47ComposableProvider)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
+import qualified Runix.FileSystem.System.Effects as System.Effects
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -87,7 +88,7 @@ import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, get
 -- We deserialize with a specific model type for type safety, but
 -- the messages can be used with any compatible model.
 loadSession :: forall model s r.
-               ( Members [FileSystemRead, FileSystemWrite] r
+               ( Members [FileSystem, FileSystemRead, FileSystemWrite] r
                , Member Logging r
                , Member Fail r
                , Default s
@@ -171,7 +172,7 @@ deserializeMessages composableProvider val = case val of
 --------------------------------------------------------------------------------
 
 -- | Load system prompt from file or use default
-loadSystemPrompt :: (Members [FileSystemRead, Fail] r, Member Logging r)
+loadSystemPrompt :: (Members [FileSystem, FileSystemRead, Fail] r, Member Logging r)
                  => FilePath  -- ^ Path to system prompt file
                  -> Text      -- ^ Default prompt if file doesn't exist
                  -> Sem r Text
@@ -195,7 +196,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation, PromptStore] r
+               => (forall r. Members '[UserInput widget, FileSystem, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation, PromptStore] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -212,7 +213,7 @@ runWithEffects action =
     . bashIO
     . promptStoreIO
     . filesystemIO
-    . grepIO
+    . System.Effects.filesystemIO . grepIO -- TODO: update as grep gets updated, temporary only
     $ action
 
 --------------------------------------------------------------------------------
@@ -230,8 +231,8 @@ data ModelInterpreter where
     , SupportsStreaming (ProviderOf model)
     ) =>
     { interpretModel :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a
-    , miLoadSession :: forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
-    , miSaveSession :: forall r. (Members [FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
+    , miLoadSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
+    , miSaveSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreter
 
 -- | Create a model-specific interpreter based on configuration

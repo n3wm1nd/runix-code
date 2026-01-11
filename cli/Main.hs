@@ -16,10 +16,10 @@ import Polysemy
 import Polysemy.Error (runError)
 
 import Runix.LLM.Interpreter hiding (SystemPrompt)
-import Runix.Runner (filesystemIO, grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem.Effects (fileWatcherNoop)
+import Runix.FileSystem.Simple.Effects (filesystemIO, Default)
 import Runix.PromptStore.Effects (promptStoreIO)
-import Runix.Config.Effects (Config)
 import qualified Runix.Config.Effects as ConfigEffect
 import Runix.Cancellation.Effects (cancelNoop)
 import Runix.Streaming.Effects (ignoreChunks)
@@ -32,6 +32,7 @@ import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), r
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
+import qualified Runix.FileSystem.System.Effects as Runix.Filesystem.System.Effects
 
 --------------------------------------------------------------------------------
 -- CLI Widget Type
@@ -115,11 +116,11 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . httpIO (withRequestTimeout 300)
                . cmdIO
                . bashIO
-               . fileWatcherNoop         -- No-op file watcher for CLI
+               . fileWatcherNoop @Default       -- No-op file watcher for CLI
                . ConfigEffect.runConfig runixDataDir
                . promptStoreIO
                . filesystemIO
-               . grepIO
+               . Runix.Filesystem.System.Effects.filesystemIO . grepIO
                . interpretModel
 
   runToIO' $ do
