@@ -48,12 +48,12 @@ import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
 import Runix.PromptStore.Effects (PromptStore)
 import Runix.Config.Effects (Config)
-import Runix.FileSystem.Simple.Effects hiding (FileWatcher, getChangedFiles, watchFile, clearWatched, unwatchFile, getWatchedFiles)
+import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher, getChangedFiles, interceptFileAccessRead, interceptFileAccessWrite)
 import qualified Config as AppConfig
+import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS)
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
-import Runix.FileSystem.Effects (FileWatcher, getChangedFiles, interceptFileAccessRead, interceptFileAccessWrite)
 
 --------------------------------------------------------------------------------
 -- Semantic Newtypes
@@ -109,7 +109,7 @@ instance ToolFunction (RunixCodeResult model) where
 
 -- | Format file changes with diffs as a system message
 -- Diffs old content (via stdin) against current file
-formatFileChanges :: Members '[FileSystem, FileSystemRead, Cmd, Fail] r
+formatFileChanges :: Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, Cmd, Fail] r
                   => [(String, ByteString, ByteString)]
                   -> Sem r Text
 formatFileChanges changes = do
@@ -118,7 +118,7 @@ formatFileChanges changes = do
   -- Process each changed file
   diffs <- forM changes $ \(path, oldContent, _newContent) -> do
     -- Run diff with old content via stdin, label it as path.old
-    Tools.DiffResult diffOutput <- Tools.diffContentVsFile (path ++ ".old") oldContent (Tools.FilePath $ T.pack path)
+    Tools.DiffResult diffOutput <- Tools.diffContentVsFile @ProjectFS (path ++ ".old") oldContent (Tools.FilePath $ T.pack path)
     return diffOutput
 
   return $ header <> T.intercalate "\n---\n\n" diffs
@@ -140,10 +140,12 @@ runixCode
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
-     , Member (FileWatcher Default) r
+     , Member (FileWatcher ProjectFS) r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
-     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
+     , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
+     , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
      , Member (Reader [ULL.ModelConfig model]) r
@@ -192,10 +194,12 @@ runixCodeAgentLoop
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmd r
-     , Member (FileWatcher Default) r
+     , Member (FileWatcher ProjectFS) r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
-     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
+     , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
+     , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , ImplementsWidget widget Text
      , Member (Reader [ULL.ModelConfig model]) r
      , Member (State [Message model]) r
@@ -214,9 +218,9 @@ runixCodeAgentLoop = do
   let
       baseTools =
         [ LLMTool Tools.grep
-        , LLMTool Tools.glob
-        , LLMTool Tools.readFile
-        , LLMTool Tools.getCwd
+        , LLMTool (Tools.glob @ProjectFS)
+        , LLMTool (Tools.readFile @ProjectFS)
+        , LLMTool (Tools.getCwd @ProjectFS)
         , LLMTool (Tools.ask @widget)
         , LLMTool Tools.todoWrite
         , LLMTool Tools.todoRead
@@ -241,7 +245,7 @@ runixCodeAgentLoop = do
   -- Check for file changes and inject as system messages
   currentHistory <- get @[Message model]
 
-  changedFiles <- getChangedFiles @Default
+  changedFiles <- getChangedFiles @ProjectFS
 
   historyWithChanges <- if null changedFiles
         then return currentHistory
@@ -276,7 +280,7 @@ runixCodeAgentLoop = do
 
     calls -> do
       -- Execute all tool calls with logging - tools mutate State [Todo] directly
-      results <- mapM (interceptFileAccessRead @Default . interceptFileAccessWrite @Default . executeTool tools) calls
+      results <- mapM (interceptFileAccessRead @ProjectFS . interceptFileAccessWrite @ProjectFS . executeTool tools) calls
       let historyWithResults = historyWithResponse ++ map ToolResultMsg results
 
       -- Update history again with tool results

@@ -89,8 +89,8 @@ import Polysemy.Fail (Fail)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite)
-import qualified Runix.FileSystem.Simple.Effects as FileSystem
+import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite)
+import qualified Runix.FileSystem.Effects as FileSystem
 import Runix.Grep.Effects (Grep)
 import Runix.Logging.Effects 
 import qualified Runix.Grep.Effects
@@ -492,43 +492,43 @@ instance ToolFunction TodoDeleteResult where
 
 -- | Get current working directory
 
-getCwd :: forall r. (Members [FileSystem, Fail] r) => Sem r GetCwdResult
+getCwd :: forall project r. (Members [FileSystem project, Fail] r) => Sem r GetCwdResult
 getCwd  = do
-  cwd <- FileSystem.getCwd 
+  cwd <- FileSystem.getCwd @project
   return $ GetCwdResult (FilePath . T.pack $ cwd)
 
 
 -- | Read a file from the filesystem
 readFile
-  :: forall r. (Members [FileSystemRead, FileSystemWrite, Fail] r) => FilePath
+  :: forall project r. (Members [FileSystemRead project, Fail] r) => FilePath
   -> Sem r ReadFileResult
 readFile (FilePath path) = do
-  contents <- FileSystem.readFile (T.unpack path)
+  contents <- FileSystem.readFile @project (T.unpack path)
   return $ ReadFileResult (T.decodeUtf8 contents)
 
 -- | Write a new file
 -- Fails if write operation cannot be completed
 writeFile
-  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  :: forall project r. Members [FileSystemWrite project, Fail] r
   => FilePath
   -> FileContent
   -> Sem r WriteFileResult
 writeFile (FilePath path) (FileContent content) = do
   let bytes = T.encodeUtf8 content
-  FileSystem.writeFile (T.unpack path) bytes
+  FileSystem.writeFile @project (T.unpack path) bytes
   return $ WriteFileResult True
 
 -- | Edit existing file via string replacement
 -- Returns error if old_string matches 0 or >1 times (must match exactly once)
 -- Fails if file cannot be read or written
 editFile
-  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  :: forall project r. Members [FileSystemRead project, FileSystemWrite project, Fail] r
   => FilePath
   -> OldString
   -> NewString
   -> Sem r EditFileResult
 editFile (FilePath path) (OldString old) (NewString new) = do
-  contents <- FileSystem.readFile (T.unpack path)
+  contents <- FileSystem.readFile @project (T.unpack path)
   let contentText = T.decodeUtf8 contents
       (replaced, occurrences) = replaceAndCount old new contentText
   case occurrences of
@@ -536,7 +536,7 @@ editFile (FilePath path) (OldString old) (NewString new) = do
            "Error: old_string not found in file. No changes made."
     1 -> do
       let newBytes = T.encodeUtf8 replaced
-      FileSystem.writeFile (T.unpack path) newBytes
+      FileSystem.writeFile @project (T.unpack path) newBytes
       return $ EditFileResult True $
         "Successfully replaced 1 occurrence in " <> path
     n -> return $ EditFileResult False $
@@ -560,34 +560,34 @@ replaceAndCount old new haystack
 -- | Create a directory
 -- Fails if directory creation fails
 mkdir
-  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  :: forall project r. Members [FileSystemWrite project, Fail] r
   => FilePath
   -> CreateParents
   -> Sem r MkdirResult
 mkdir (FilePath path) (CreateParents createParents) = do
-  FileSystem.createDirectory createParents (T.unpack path)
+  FileSystem.createDirectory @project createParents (T.unpack path)
   return $ MkdirResult True
 
 -- | Remove a file or directory
 -- Fails if removal fails
 remove
-  :: Members [FileSystemRead, FileSystemWrite, Fail] r
+  :: forall project r. Members [FileSystemWrite project, Fail] r
   => FilePath
   -> Recursive
   -> Sem r RemoveResult
 remove (FilePath path) (Recursive recursive) = do
-  FileSystem.remove recursive (T.unpack path)
+  FileSystem.remove @project recursive (T.unpack path)
   return $ RemoveResult True
 
 -- | Find files matching a pattern
 -- Fails if glob operation cannot be completed
 glob
-  :: Members [FileSystem, Fail] r
+  :: forall project r. Members [FileSystem project, Fail] r
   => Pattern
   -> Sem r GlobResult
 glob (Pattern pattern) = do
   -- Glob from current directory
-  files <- FileSystem.glob "." (T.unpack pattern)
+  files <- FileSystem.glob @project "." (T.unpack pattern)
   return $ GlobResult (map T.pack files)
 
 -- | Search file contents with regex
@@ -608,14 +608,14 @@ grep (Pattern pattern) = do
 -- | Run unified diff between two files
 -- Fails if either file doesn't exist (uses Fail effect)
 diff
-  :: Members '[FileSystem, FileSystemRead, Cmd, Fail] r
+  :: forall project r. Members '[FileSystem project, FileSystemRead project, Cmd, Fail] r
   => FilePath
   -> FilePath
   -> Sem r DiffResult
 diff (FilePath file1) (FilePath file2) = do
   -- Verify files exist (for safety)
-  exists1 <- FileSystem.fileExists (T.unpack file1)
-  exists2 <- FileSystem.fileExists (T.unpack file2)
+  exists1 <- FileSystem.fileExists @project (T.unpack file1)
+  exists2 <- FileSystem.fileExists @project (T.unpack file2)
 
   if not exists1
     then fail $ "File does not exist: " ++ T.unpack file1
@@ -633,14 +633,14 @@ diff (FilePath file1) (FilePath file2) = do
 -- | Run unified diff between old content (via stdin) and a file
 -- The label is used for the "old" file name in the diff output
 diffContentVsFile
-  :: Members '[FileSystem, FileSystemRead, Cmd, Fail] r
+  :: forall project r. Members '[FileSystem project, FileSystemRead project, Cmd, Fail] r
   => String           -- ^ Label for old content (e.g., "path/to/file.old")
   -> ByteString       -- ^ Old content
   -> FilePath         -- ^ Path to current file
   -> Sem r DiffResult
 diffContentVsFile label oldContent (FilePath file) = do
   -- Verify file exists
-  exists <- FileSystem.fileExists (T.unpack file)
+  exists <- FileSystem.fileExists @project (T.unpack file)
   if not exists
     then fail $ "File does not exist: " ++ T.unpack file
     else do
@@ -686,7 +686,7 @@ cabalBuild (WorkingDirectory workDir) = do
 -- | Generate a new tool by writing source code and compiling it
 -- Fails if file operations cannot be completed
 generateTool
-  :: Members '[FileSystemRead, FileSystemWrite, Logging, Cmd, Fail] r
+  :: forall project r. Members '[FileSystemRead project, FileSystemWrite project, Logging, Cmd, Fail] r
   => FunctionName
   -> FunctionSignature  -- The required type signature (interface contract)
   -> FunctionBody       -- Complete function definition from LLM
@@ -701,7 +701,7 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
     (_, Left errMsg) -> return $ GenerateToolResult False errMsg Nothing
     (Right (), Right ()) -> do
       -- Step 2: Read GeneratedTools.hs (must exist since it's in cabal build)
-      currentContent <- T.decodeUtf8 <$> FileSystem.readFile generatedToolsPath
+      currentContent <- T.decodeUtf8 <$> FileSystem.readFile @project generatedToolsPath
 
       -- Step 3: Generate new tool code with fixed signature
       let newToolCode = formatToolCodeWithSignature expectedFuncName funcSig functionDef
@@ -709,7 +709,7 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
 
       -- Step 4: Store original content and write updated version
       let originalContent = currentContent
-      FileSystem.writeFile generatedToolsPath (T.encodeUtf8 updatedContent)
+      FileSystem.writeFile @project generatedToolsPath (T.encodeUtf8 updatedContent)
 
       info("file written, compiling now")
       -- Step 5: Test compilation
@@ -721,7 +721,7 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
           return $ GenerateToolResult True ("Successfully generated tool: " <> expectedFuncName) (Just (T.pack generatedToolsPath))
         else do
           -- Failure: revert to original content
-          FileSystem.writeFile generatedToolsPath (T.encodeUtf8 originalContent)
+          FileSystem.writeFile @project generatedToolsPath (T.encodeUtf8 originalContent)
           let errorMsg = "Compilation failed: " <> errors
           return $ GenerateToolResult False errorMsg Nothing
 

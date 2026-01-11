@@ -17,22 +17,23 @@ import Polysemy.Error (runError)
 
 import Runix.LLM.Interpreter hiding (SystemPrompt)
 import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
-import Runix.FileSystem.Effects (fileWatcherNoop)
-import Runix.FileSystem.Simple.Effects (filesystemIO, Default)
+import Runix.FileSystem.Effects (fileWatcherNoop, fileSystemLocal)
+import Runix.FileSystem.Simple.Effects (filesystemIO)
 import Runix.PromptStore.Effects (promptStoreIO)
 import qualified Runix.Config.Effects as ConfigEffect
 import Runix.Cancellation.Effects (cancelNoop)
 import Runix.Streaming.Effects (ignoreChunks)
 import qualified Data.ByteString as BS
+import qualified System.Directory as Dir
 
 import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
 import qualified Config
-import Config (RunixDataDir(..), loadConfig, cfgModelSelection, cfgSessionFile)
+import Config (RunixDataDir(..), ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..), loadConfig, cfgModelSelection, cfgSessionFile)
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
-import qualified Runix.FileSystem.System.Effects as Runix.Filesystem.System.Effects
+import qualified Runix.FileSystem.System.Effects
 
 --------------------------------------------------------------------------------
 -- CLI Widget Type
@@ -97,12 +98,16 @@ main = do
 -- This composes the model interpreter with CLI effects (no streaming, simple I/O)
 runAgent :: ModelInterpreter -> Config.Config -> Text -> IO (Either String Text)
 runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg userInput = do
+  -- Get current working directory for filesystem chroot
+  cwd <- Dir.getCurrentDirectory
+
   -- Get data file path for the system prompt
   promptPath <- getDataFileName "prompt/runix-code.md"
 
   -- Get the data directory from Cabal - this is where source files are during development
   -- and where they're installed during installation
   runixDataDir <- RunixDataDir <$> Paths_runix_code.getDataDir
+  let RunixDataDir runixCodeDir = runixDataDir
 
   -- Compose: model interpreter + CLI base effects + run to IO
   let runToIO' = runM
@@ -116,11 +121,21 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . httpIO (withRequestTimeout 300)
                . cmdIO
                . bashIO
-               . fileWatcherNoop @Default       -- No-op file watcher for CLI
+               . fileWatcherNoop @ProjectFS       -- No-op file watcher for CLI
                . ConfigEffect.runConfig runixDataDir
                . promptStoreIO
+               -- Base System filesystem (must come before parameterized filesystems)
+               . Runix.FileSystem.System.Effects.filesystemWriteIO
+               . Runix.FileSystem.System.Effects.filesystemReadIO
+               -- RunixToolsFS: runix-code source directory
+               . fileSystemLocal (RunixToolsFS runixCodeDir)
+               -- ClaudeConfigFS: access to .claude directories (read-only)
+               . fileSystemLocal (ClaudeConfigFS cwd)
+               -- ProjectFS: user's project
+               . fileSystemLocal (ProjectFS cwd)
+               -- Simple filesystem (for session files to /tmp)
                . filesystemIO
-               . Runix.Filesystem.System.Effects.filesystemIO . grepIO
+               . Runix.FileSystem.System.Effects.filesystemIO . grepIO
                . interpretModel
 
   runToIO' $ do

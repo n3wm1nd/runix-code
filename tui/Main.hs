@@ -30,6 +30,7 @@ import UniversalLLM (ProviderOf)
 import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
+import Config (ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..))
 import Runix.Runner (grepIO, bashIO, cmdIO, failLog, loggingIO)
 import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
@@ -37,7 +38,8 @@ import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
-import Runix.FileSystem.Simple.Effects
+import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher)
+import qualified Runix.FileSystem.Simple.Effects
 import qualified Runix.FileSystem.System.Effects
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
@@ -63,7 +65,7 @@ import qualified UI.Effects
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
-import Runix.FileSystem.Effects (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem)
+import Runix.FileSystem.Effects (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 
 
 --------------------------------------------------------------------------------
@@ -130,7 +132,7 @@ agentLoop :: forall model.
           -> IORef [Message model]
           -> SystemPrompt
           -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
-          -> (forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
+          -> (forall r. (Members [Runix.FileSystem.Simple.Effects.FileSystem, Runix.FileSystem.Simple.Effects.FileSystemRead, Runix.FileSystem.Simple.Effects.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
@@ -189,7 +191,8 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
         let sessionFile = "/tmp/runix-code-session.json"
 
         -- Use the effect stack to save session
-        let runSave = runM . runError @String . loggingIO . failLog . filesystemIO
+        let runSave = runM . runError @String . loggingIO . failLog
+                    . Runix.FileSystem.Simple.Effects.filesystemIO
         result <- runSave $ miSaveSession sessionFile currentHistory
 
         case result of
@@ -294,8 +297,8 @@ buildUIRunner :: forall model.
                  , SupportsStreaming (ProviderOf model)
                  )
               => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
-              -> (forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
-              -> (forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
+              -> (forall r. (Members [Runix.FileSystem.Simple.Effects.FileSystem, Runix.FileSystem.Simple.Effects.FileSystemRead, Runix.FileSystem.Simple.Effects.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
+              -> (forall r. (Members [Runix.FileSystem.Simple.Effects.FileSystem, Runix.FileSystem.Simple.Effects.FileSystemRead, Runix.FileSystem.Simple.Effects.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
@@ -309,7 +312,8 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   -- Load session if resuming
   initialHistory <- case maybeSessionPath of
     Just path -> do
-      let runToIO' = runM . runError @String . loggingIO . failLog . filesystemIO
+      let runToIO' = runM . runError @String . loggingIO . failLog
+                   . Runix.FileSystem.Simple.Effects.filesystemIO
       result <- runToIO' $ miLoadSession path
       case result of
         Right msgs -> do
@@ -335,7 +339,8 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   dataDir <- RunixDataDir <$> Paths_runix_code.getDataDir
 
   -- Load system prompt using the composed interpreter stack
-  let runToIO' = runM . runError @String . loggingIO . failLog . filesystemIO
+  let runToIO' = runM . runError @String . loggingIO . failLog
+               . Runix.FileSystem.Simple.Effects.filesystemIO
 
   result <- runToIO' $ loadSystemPrompt promptPath "You are a helpful AI coding assistant."
   let sysPrompt = case result of
@@ -365,27 +370,34 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
 -- - UI effects and error handling
 
 
+
 interpretTUIEffects ::
-  ( Member (Error String) r,
-    Member (Embed IO) r
-  ) =>
+  (Member (Error String) r, Member (Embed IO) r) =>
   FilePath ->
-  c ->
+  RunixDataDir ->
   UIVars msg ->
   Sem
     ( Grep
         : Bash
         : Cmd
         : PromptStore
-        : ConfigEffect.Config c
-        : FileWatcher
+        : ConfigEffect.Config RunixDataDir
         : HTTP
         : HTTPStreaming
         : StreamChunk BS.ByteString
         : Cancellation
-        : FileSystemWrite
-        : FileSystemRead
-        : FileSystem
+        : FileSystemWrite RunixToolsFS
+        : FileSystemRead RunixToolsFS
+        : FileSystem RunixToolsFS
+        : FileSystemWrite ClaudeConfigFS
+        : FileSystemRead ClaudeConfigFS
+        : FileSystem ClaudeConfigFS
+        : FileWatcher ProjectFS
+        : FileSystemWrite ProjectFS
+        : FileSystemRead ProjectFS
+        : FileSystem ProjectFS
+        : Runix.FileSystem.System.Effects.FileSystemRead
+        : Runix.FileSystem.System.Effects.FileSystemWrite
         : Fail
         : Logging
         : UserInput TUIWidget
@@ -395,29 +407,40 @@ interpretTUIEffects ::
     )
     a ->
   Sem r a
-interpretTUIEffects cwd dataDir uiVars =
+interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
   interpretUI uiVars
-    . interpretForegroundCmd uiVars -- ForegroundCmd effect
-    . interpretUserInput uiVars -- UserInput effect
+    . interpretForegroundCmd uiVars
+    . interpretUserInput uiVars
     . interpretLoggingToUI
     . failLog
-    . filesystemIO
-    . loggingWrite @Default "runix"
-    . filterFileSystem @Default (limitToSubpath cwd <> hideGit)
-    . filterRead @Default (limitToSubpath cwd <> hideGit)
-    . filterWrite @Default (limitToSubpath cwd <> hideClaude <> hideGit)
-    . interpretCancellation uiVars -- Handle Cancellation effect
-    . interpretStreamChunkToUI uiVars -- Handle StreamChunk Text
-    . reinterpretSSEChunks -- Convert StreamChunk BS -> StreamChunk Text
-    . httpIOStreaming (withRequestTimeout 300) -- Emit StreamChunk BS
-    . httpIO (withRequestTimeout 300) -- Handle non-streaming HTTP
-    . fileWatcher -- Interpret FileWatcher effect with content-based change detection
-    . ConfigEffect.runConfig dataDir -- Provide data directory
-    . promptStoreIO -- Interpret PromptStore effect
+    -- Base System filesystem
+    . Runix.FileSystem.System.Effects.filesystemIO
+    -- ProjectFS: user's project with chroot, filters, logging, and file watching
+    . fileSystemLocal (ProjectFS cwd)
+    . fileWatcherGeneric @ProjectFS
+    . interceptFileAccessWrite @ProjectFS
+    . interceptFileAccessRead @ProjectFS
+    . loggingWrite @ProjectFS "project"
+    . filterWrite @ProjectFS (hideClaude <> hideGit)
+    . filterRead @ProjectFS (hideGit)
+    . filterFileSystem @ProjectFS (hideGit)
+    -- ClaudeConfigFS: access to .claude directories (read-only)
+    . fileSystemLocal (ClaudeConfigFS cwd)
+    . filterFileSystem @ClaudeConfigFS (onlyClaude)
+    . filterRead @ClaudeConfigFS (onlyClaude)
+    -- RunixToolsFS: runix-code source directory
+    . fileSystemLocal (RunixToolsFS runixCodeDir)
+    . loggingWrite @RunixToolsFS "runix-tools"
+    . interpretCancellation uiVars
+    . interpretStreamChunkToUI uiVars
+    . reinterpretSSEChunks
+    . httpIOStreaming (withRequestTimeout 300)
+    . httpIO (withRequestTimeout 300)
+    . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
+    . promptStoreIO
     . cmdIO
     . bashIO
-    -- temporary add filesystem access just for grep until we decouple it from FileSystem.System
-    . Runix.FileSystem.System.Effects.filesystemIO . grepIO . raiseUnder2 -- Interpret grep effect
+    . grepIO
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)

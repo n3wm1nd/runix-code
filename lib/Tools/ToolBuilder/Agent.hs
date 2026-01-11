@@ -27,7 +27,8 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderOf)
 import qualified UniversalLLM as ULL
 import Runix.LLM.Effects (LLM, queryLLM)
 import Runix.LLM.ToolExecution (executeTool)
-import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite)
+import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite)
+import Config (RunixToolsFS)
 import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
 import Runix.Grep.Effects (Grep)
@@ -60,7 +61,7 @@ buildTool
      , Member Grep r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
-     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member (State [Message model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
@@ -121,7 +122,7 @@ buildTool toolName desc mode = do
 writeToolcodeAtomic
   :: forall r.
      ( Member Fail r
-     , Members '[FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member Logging r
      )
   => FilePath  -- ^ Path to cabal file
@@ -140,10 +141,10 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
   info $ "Creating new tool module: " <> qualifiedModuleName
 
   -- Step 1: Read current state of all files (for rollback)
-  registryContent <- Tools.readFile (Tools.FilePath $ T.pack registryPath)
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
   let Tools.ReadFileResult registryText = registryContent
 
-  cabalContent <- Tools.readFile (Tools.FilePath $ T.pack cabalPath)
+  cabalContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath)
   let Tools.ReadFileResult cabalText = cabalContent
 
   -- Step 2: Create module file with proper module header
@@ -154,18 +155,18 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
         , code
         ]
 
-  _ <- Tools.writeFile (Tools.FilePath $ T.pack moduleFilePath) (Tools.FileContent moduleContent)
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack moduleFilePath) (Tools.FileContent moduleContent)
   info $ "Created module file: " <> T.pack moduleFilePath
 
   -- Step 3: Update cabal file to add new exposed-module
   let updatedCabal = addModuleToCabal cabalText qualifiedModuleName
-  _ <- Tools.writeFile (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent updatedCabal)
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent updatedCabal)
   info "Updated cabal file with new module"
 
   -- Step 4: Update registry file
   let functionName = extractFunctionName code
       updatedRegistry = updateRegistry registryText moduleName qualifiedModuleName functionName
-  _ <- Tools.writeFile (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updatedRegistry)
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updatedRegistry)
   info "Updated registry file with new tool"
 
   -- Step 5: Try to compile
@@ -182,10 +183,10 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
       info $ "Compilation failed for tool: " <> name <> ", rolling back all changes"
 
       -- Restore registry file (this removes the import/export/registration)
-      _ <- Tools.writeFile (Tools.FilePath $ T.pack registryPath) (Tools.FileContent registryText)
+      _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent registryText)
 
       -- Restore cabal file (this removes the module from exposed-modules)
-      _ <- Tools.writeFile (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
+      _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
 
       -- Note: The module file remains but is orphaned (not referenced by cabal)
       -- This is harmless and avoids requiring file deletion privileges
@@ -345,7 +346,7 @@ toolBuilderLoop
      , Member Fail r
      , Member Grep r
      , Member PromptStore r
-     , Members '[FileSystem, FileSystemRead, FileSystemWrite] r
+     , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member (State [Message model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
@@ -360,8 +361,8 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
   -- CRITICAL: Explicit type signature with ScopedTypeVariables to bind 'r'
   let
       builderTools =
-        [ LLMTool Tools.readFile
-        , LLMTool Tools.glob
+        [ LLMTool (Tools.readFile @RunixToolsFS)
+        , LLMTool (Tools.glob @RunixToolsFS)
         , LLMTool Tools.grep
         , LLMTool (writeToolcodeAtomic cabalPath registryPath modulesDir (raise build))
         , LLMTool (raise build)
@@ -371,16 +372,16 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
 
   -- FORCED CONTEXT: Always inject GeneratedTools.hs registry content at start of loop
   -- The agent doesn't decide whether to read it - we force-feed the current state
-  registryContent <- Tools.readFile (Tools.FilePath $ T.pack registryPath)
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
   let Tools.ReadFileResult registryText = registryContent
 
   -- Read cabal file and extract generated-tools sublibrary configuration
-  cabalContent <- Tools.readFile (Tools.FilePath $ T.pack cabalPath)
+  cabalContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath)
   let Tools.ReadFileResult cabalText = cabalContent
       cabalSublibraryExcerpt = extractGeneratedToolsSublibrary cabalText
 
   -- Get list of existing generated tool files
-  generatedToolFiles <- Tools.glob (Tools.Pattern "generated-tools/**/*.hs")
+  generatedToolFiles <- Tools.glob @RunixToolsFS (Tools.Pattern "generated-tools/**/*.hs")
   let Tools.GlobResult fileList = generatedToolFiles
       fileTree = T.unlines $ map (\f -> "  - " <> f) fileList
 
