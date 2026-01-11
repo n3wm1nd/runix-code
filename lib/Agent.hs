@@ -48,7 +48,7 @@ import Runix.Cmd.Effects (Cmd)
 import Runix.Logging.Effects (Logging, info)
 import Runix.PromptStore.Effects (PromptStore)
 import Runix.Config.Effects (Config)
-import Runix.FileSystem.Simple.Effects hiding (FileWatcher)
+import Runix.FileSystem.Simple.Effects hiding (FileWatcher, getChangedFiles, watchFile, clearWatched, unwatchFile, getWatchedFiles)
 import qualified Config as AppConfig
 import UI.UserInput (UserInput, ImplementsWidget)
 import Autodocodec (HasCodec(..))

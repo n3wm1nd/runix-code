@@ -37,9 +37,7 @@ import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM.Effects (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
-import Runix.FileSystem.Simple.Effects as SE
-import Runix.FileSystem.Effects (FileWatcher, fileWatcherNoop)
-import qualified Runix.FileSystem.Effects
+import Runix.FileSystem.Simple.Effects
 import qualified Runix.FileSystem.System.Effects
 import Runix.Grep.Effects (Grep)
 import Runix.Bash.Effects (Bash)
@@ -65,6 +63,7 @@ import qualified UI.Effects
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
+import Runix.FileSystem.Effects (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem)
 
 
 --------------------------------------------------------------------------------
@@ -379,7 +378,7 @@ interpretTUIEffects ::
         : Cmd
         : PromptStore
         : ConfigEffect.Config c
-        : Runix.FileSystem.Effects.FileWatcher Default
+        : FileWatcher
         : HTTP
         : HTTPStreaming
         : StreamChunk BS.ByteString
@@ -387,11 +386,6 @@ interpretTUIEffects ::
         : FileSystemWrite
         : FileSystemRead
         : FileSystem
-        : Runix.FileSystem.Effects.FileSystemWrite FilePath
-        : Runix.FileSystem.Effects.FileSystemRead FilePath
-        : Runix.FileSystem.Effects.FileSystem FilePath
-        : Runix.FileSystem.System.Effects.FileSystemRead
-        : Runix.FileSystem.System.Effects.FileSystemWrite
         : Fail
         : Logging
         : UserInput TUIWidget
@@ -407,24 +401,23 @@ interpretTUIEffects cwd dataDir uiVars =
     . interpretUserInput uiVars -- UserInput effect
     . interpretLoggingToUI
     . failLog
-    . Runix.FileSystem.System.Effects.filesystemIO
-    . Runix.FileSystem.Effects.fileSystemLocal cwd
-    . withDefaultFileSystem @FilePath
-    . withDefaultFileSystemRead @FilePath
-    . withDefaultFileSystemWrite @FilePath
+    . filesystemIO
+    . loggingWrite @Default "runix"
+    . filterFileSystem @Default (limitToSubpath cwd <> hideGit)
+    . filterRead @Default (limitToSubpath cwd <> hideGit)
+    . filterWrite @Default (limitToSubpath cwd <> hideClaude <> hideGit)
     . interpretCancellation uiVars -- Handle Cancellation effect
     . interpretStreamChunkToUI uiVars -- Handle StreamChunk Text
     . reinterpretSSEChunks -- Convert StreamChunk BS -> StreamChunk Text
     . httpIOStreaming (withRequestTimeout 300) -- Emit StreamChunk BS
     . httpIO (withRequestTimeout 300) -- Handle non-streaming HTTP
-    -- FIXME: this should be filewatcherIO, or filewatcher (working without systempaths)
-    -- but Default does not provide a system filepath since not all filesystems use one
-    . fileWatcherNoop -- Interpret FileWatcher effect
+    . fileWatcher -- Interpret FileWatcher effect with content-based change detection
     . ConfigEffect.runConfig dataDir -- Provide data directory
     . promptStoreIO -- Interpret PromptStore effect
     . cmdIO
     . bashIO
-    . grepIO -- Interpret grep effect
+    -- temporary add filesystem access just for grep until we decouple it from FileSystem.System
+    . Runix.FileSystem.System.Effects.filesystemIO . grepIO . raiseUnder2 -- Interpret grep effect
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)
