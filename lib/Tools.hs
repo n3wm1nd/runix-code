@@ -16,6 +16,7 @@ module Tools
     readFile
   , writeFile
   , editFile
+  , getCwd
   , mkdir
   , remove
   , glob
@@ -181,6 +182,10 @@ newtype CompileError = CompileError Text
   deriving (HasCodec) via Text
 
 -- ToolParameter instances for parameters
+instance ToolParameter GetCwdResult where
+  paramName _ _ = "cwd"
+  paramDescription _ = "the current working directory"
+
 instance ToolParameter FilePath where
   paramName _ _ = "file_path"
   paramDescription _ = "absolute path to the file"
@@ -240,6 +245,11 @@ instance ToolParameter CompileError where
 --------------------------------------------------------------------------------
 -- Result Types (unique for ToolFunction instances)
 --------------------------------------------------------------------------------
+newtype GetCwdResult = GetCwdResult FilePath
+  deriving stock (Show, Eq)
+
+instance HasCodec GetCwdResult where
+  codec = Autodocodec.dimapCodec GetCwdResult (\(GetCwdResult t) -> t) codec
 
 newtype ReadFileResult = ReadFileResult Text
   deriving stock (Show, Eq)
@@ -408,6 +418,10 @@ instance ToolParameter AskResult where
   paramDescription _ = "the user's text response"
 
 -- ToolFunction instances for result types
+instance ToolFunction GetCwdResult where
+  toolFunctionName _ = "getcwd"
+  toolFunctionDescription _ = "Get the current working directory"
+
 instance ToolFunction ReadFileResult where
   toolFunctionName _ = "read_file"
   toolFunctionDescription _ = "Read a file from the filesystem and return its contents"
@@ -475,6 +489,14 @@ instance ToolFunction TodoDeleteResult where
 --------------------------------------------------------------------------------
 -- File Operations
 --------------------------------------------------------------------------------
+
+-- | Get current working directory
+
+getCwd :: forall r. (Members [FileSystem, Fail] r) => Sem r GetCwdResult
+getCwd  = do
+  cwd <- FileSystem.getCwd 
+  return $ GetCwdResult (FilePath . T.pack $ cwd)
+
 
 -- | Read a file from the filesystem
 readFile

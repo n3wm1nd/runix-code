@@ -216,6 +216,7 @@ runixCodeAgentLoop = do
         [ LLMTool Tools.grep
         , LLMTool Tools.glob
         , LLMTool Tools.readFile
+        , LLMTool Tools.getCwd
         , LLMTool (Tools.ask @widget)
         , LLMTool Tools.todoWrite
         , LLMTool Tools.todoRead
