@@ -4,7 +4,7 @@ module GeneratedTools.Echo where
 import Runix.Safe.Polysemy (Sem)
 import Data.Text (Text)
 import Runix.Safe.Autodocodec (HasCodec(..), dimapCodec)
-import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
+import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
 
 -- Generated tool: echo
 newtype EchoInput = EchoInput Text

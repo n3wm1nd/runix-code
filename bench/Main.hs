@@ -21,7 +21,7 @@ import UI.OutputHistory
   , addStreamingChunk
   )
 import UI.State (Name(..))
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM (Message(..))
 import Brick.Types (Widget)
 
 -- | NFData instance for OutputMessage (for benchmarking)

@@ -41,7 +41,7 @@ import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, addCompletedToolItems)
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified UI.Widgets.MessageHistory as MH

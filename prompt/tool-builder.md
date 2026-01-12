@@ -14,7 +14,7 @@ Every tool must have:
 2. **Parameter types** - Newtypes with HasCodec and ToolParameter instances (if the tool takes parameters)
 3. **Function implementation** - Runs in Sem r monad with required effects
 4. **ToolFunction instance** - Defines tool name and description
-5. **All necessary imports** - Import what you need (UniversalLLM.Core.Tools, Polysemy, effects, etc.)
+5. **All necessary imports** - Import what you need (UniversalLLM.Tools, Polysemy, effects, etc.)
 
 ## Module Structure
 
@@ -124,7 +124,7 @@ import Runix.Safe.Polysemy (Sem, Members)
 import Runix.Safe.Polysemy.Fail (Fail)
 import Runix.Safe.Autodocodec (HasCodec(..))
 import qualified Runix.Safe.Autodocodec as Autodocodec
-import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
+import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem
 
@@ -171,7 +171,7 @@ import Runix.Safe.Polysemy (Sem, Members)
 import Runix.Safe.Polysemy.Fail (Fail)
 import Runix.Safe.Autodocodec (HasCodec(..))
 import qualified Runix.Safe.Autodocodec as Autodocodec
-import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
+import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem
 
@@ -239,7 +239,7 @@ import Runix.Safe.Polysemy (Sem, Member)
 import Runix.Safe.Polysemy.State (State, get)
 import Runix.Safe.Autodocodec (HasCodec(..))
 import qualified Runix.Safe.Autodocodec as Autodocodec
-import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
+import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
 
 -- Result type
 newtype TodoReadResult = TodoReadResult [Todo]

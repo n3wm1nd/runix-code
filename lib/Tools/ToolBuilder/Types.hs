@@ -20,7 +20,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
-import UniversalLLM.Core.Tools (ToolParameter(..), ToolFunction(..))
+import UniversalLLM.Tools (ToolParameter(..), ToolFunction(..))
 
 --------------------------------------------------------------------------------
 -- Parameter Types

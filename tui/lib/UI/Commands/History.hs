@@ -15,7 +15,7 @@ import System.IO.Temp (withSystemTempFile)
 import System.Process (spawnProcess, waitForProcess)
 import Polysemy
 import Runix.Logging (Logging, info)
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM (Message(..))
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 import UI.MessageFormat (formatEditableMessages, parseEditableMessages, isEditableMessage)
 

@@ -88,7 +88,7 @@ import Polysemy.State (State, modify, get, put)
 import Polysemy.Fail (Fail)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
-import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
+import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem as FileSystem
 import Runix.Grep (Grep)

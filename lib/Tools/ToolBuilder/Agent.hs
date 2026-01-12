@@ -21,8 +21,8 @@ import qualified Data.Char
 import Polysemy (Member, Members, Sem, raise)
 import Polysemy.State (State, get, put)
 import Polysemy.Fail (Fail)
-import UniversalLLM.Core.Types (Message(..))
-import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition)
+import UniversalLLM (Message(..))
+import UniversalLLM.Tools (LLMTool(..), llmToolToDefinition)
 import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderOf)
 import qualified UniversalLLM as ULL
 import Runix.LLM (LLM, queryLLM)
@@ -41,7 +41,7 @@ import qualified Config as AppConfig
 import qualified Tools  -- Import base tools
 import Runix.LLM.ToolInstances ()
 import qualified Autodocodec
-import qualified UniversalLLM.Core.Tools
+import qualified UniversalLLM.Tools
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -198,11 +198,11 @@ newtype WriteToolcodeResult = WriteToolcodeResult Text
   deriving stock (Show, Eq)
   deriving (Autodocodec.HasCodec) via Text
 
-instance UniversalLLM.Core.Tools.ToolParameter WriteToolcodeResult where
+instance UniversalLLM.Tools.ToolParameter WriteToolcodeResult where
   paramName _ _ = "result"
   paramDescription _ = "result of writing tool code"
 
-instance UniversalLLM.Core.Tools.ToolFunction WriteToolcodeResult where
+instance UniversalLLM.Tools.ToolFunction WriteToolcodeResult where
   toolFunctionName _ = "write_toolcode_atomic"
   toolFunctionDescription _ = "Atomically write tool code to GeneratedTools.hs. Code is appended, compiled, and rolled back if compilation fails."
 

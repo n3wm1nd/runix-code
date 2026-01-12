@@ -18,7 +18,7 @@ import Polysemy
 import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM (Message(..))
 import Runix.Logging (Level(..))
 
 -- | UI effect for interacting with the user interface

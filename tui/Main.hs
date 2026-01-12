@@ -24,7 +24,7 @@ import System.Posix.Files (getFileStatus, modificationTime)
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
 
-import UniversalLLM.Core.Types (Message(..), ModelConfig(Streaming))
+import UniversalLLM (Message(..), ModelConfig(Streaming))
 import UniversalLLM (ProviderOf)
 
 import Config

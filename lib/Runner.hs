@@ -65,7 +65,7 @@ import qualified Config as AppConfig
 import qualified Runix.Logging as Log
 import Data.Default (Default, def)
 
-import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
+import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
 import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt, SupportsStreaming)
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))

@@ -14,7 +14,7 @@ module UI.MessageFormat
 
 import qualified Data.Text as T
 import Data.Text (Text)
-import UniversalLLM.Core.Types (Message(..))
+import UniversalLLM (Message(..))
 
 --------------------------------------------------------------------------------
 -- Filtering
