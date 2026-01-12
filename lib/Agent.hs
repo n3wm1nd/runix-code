@@ -170,10 +170,41 @@ runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   put @[Message model] newHistory
 
   -- Run agent loop with Reader for configs and State for todos locally
+  -- Build tools once inside the effect stack, before entering the loop
   (_finalTodos, result) <-
     runState ([] :: [Tools.Todo]) $
-      runReader configsWithSystem $
-        runixCodeAgentLoop @model @widget
+      runReader configsWithSystem $ do
+        -- Load Claude Code integrations (subagents and skills) - once, not per iteration
+        subagents <- Tools.Claude.loadSubagents
+        skills <- Tools.Claude.loadSkills
+
+        let
+            baseTools =
+              [ LLMTool Tools.grep
+              , LLMTool (Tools.glob @ProjectFS)
+              , LLMTool (Tools.readFile @ProjectFS)
+              , LLMTool (Tools.getCwd @ProjectFS)
+              , LLMTool (Tools.ask @widget)
+              , LLMTool Tools.todoWrite
+              , LLMTool Tools.todoRead
+              , LLMTool Tools.todoCheck
+              , LLMTool Tools.todoDelete
+              , LLMTool Tools.cabalBuild
+              ]
+
+            -- Add tool-builder to baseTools
+            allBaseTools = baseTools ++ [LLMTool (ToolBuilder.buildTool @model)]
+
+        -- Convert subagents to tools
+        subagentTools <- return $ map (Tools.Claude.claudeSubagentToTool @model allBaseTools) subagents
+
+        -- Convert skills to tools
+        skillTools <- mapM (Tools.Claude.claudeSkillToTool @model) skills
+
+        -- Combine all tools once
+        let tools = allBaseTools ++ subagentTools ++ skillTools ++ GeneratedTools.generatedTools
+
+        runixCodeAgentLoop @model @widget tools
   return result
 
 -- | Update config with new tool list
@@ -186,7 +217,7 @@ setTools tools configs =
     isToolsConfig (ULL.Tools _) = True
     isToolsConfig _ = False
 
--- | Agent loop - reads base configs from Reader, builds tools each iteration
+-- | Agent loop - receives pre-built tools (loaded once, reused across iterations)
 runixCodeAgentLoop
   :: forall model widget r.
      ( Member (LLM model) r
@@ -207,40 +238,11 @@ runixCodeAgentLoop
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
      )
-  => Sem r (RunixCodeResult model)
-runixCodeAgentLoop = do
+  => [LLMTool (Sem (Fail ': r))]  -- ^ Pre-built tools with Fail effect (loaded once, reused)
+  -> Sem r (RunixCodeResult model)
+runixCodeAgentLoop tools = do
   baseConfigs <- ask @[ULL.ModelConfig model]
-
-  -- Load Claude Code integrations (subagents and skills)
-  subagents <- Tools.Claude.loadSubagents
-  skills <- Tools.Claude.loadSkills
-
-  let
-      baseTools =
-        [ LLMTool Tools.grep
-        , LLMTool (Tools.glob @ProjectFS)
-        , LLMTool (Tools.readFile @ProjectFS)
-        , LLMTool (Tools.getCwd @ProjectFS)
-        , LLMTool (Tools.ask @widget)
-        , LLMTool Tools.todoWrite
-        , LLMTool Tools.todoRead
-        , LLMTool Tools.todoCheck
-        , LLMTool Tools.todoDelete
-        , LLMTool Tools.cabalBuild
-        ]
-
-      -- Add tool-builder to baseTools (just like Claude subagents)
-      allBaseTools = baseTools ++ [LLMTool (ToolBuilder.buildTool @model)]
-
-  -- Convert subagents to tools
-  subagentTools <- return $ map (Tools.Claude.claudeSubagentToTool @model allBaseTools) subagents
-
-  -- Convert skills to tools
-  skillTools  <- mapM (Tools.Claude.claudeSkillToTool @model) skills
-
-  -- Combine all tools (including auto-registered generated tools)
-  let tools = allBaseTools ++ subagentTools ++ skillTools ++ GeneratedTools.generatedTools
-      configs = setTools tools baseConfigs
+  let configs = setTools tools baseConfigs
 
   -- Check for file changes and inject as system messages
   currentHistory <- get @[Message model]
@@ -286,8 +288,8 @@ runixCodeAgentLoop = do
       -- Update history again with tool results
       put @[Message model] historyWithResults
 
-      -- Recurse
-      runixCodeAgentLoop @model @widget
+      -- Recurse with same tools
+      runixCodeAgentLoop @model @widget tools
 
 --------------------------------------------------------------------------------
 -- Serialization Types (CLI convenience only)
