@@ -16,7 +16,7 @@ module GeneratedTools
 
 import Runix.Safe.Polysemy (Sem)
 import Runix.Safe.Polysemy.Fail (Fail)
-import Runix.LLM.Effects (LLMTool(..))
+import Runix.LLM (LLMTool(..))
 
 -- GENERATED_TOOL_IMPORTS_START
 import qualified GeneratedTools.Echo as Echo

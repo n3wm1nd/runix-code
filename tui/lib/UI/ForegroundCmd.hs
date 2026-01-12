@@ -5,7 +5,7 @@
 
 -- | ForegroundCmd effect for running commands that need terminal control
 --
--- Unlike Runix.Cmd.Effects.Cmd which runs in background, this effect
+-- Unlike Runix.Cmd.Cmd which runs in background, this effect
 -- suspends the TUI, gives control to the command, then resumes.
 module UI.ForegroundCmd where
 

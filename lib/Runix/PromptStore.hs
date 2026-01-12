@@ -8,7 +8,7 @@
 -- This effect abstracts away the details of how prompts are stored
 -- and loaded, allowing the interpreter to handle the actual I/O and
 -- path resolution using Cabal's data file mechanism.
-module Runix.PromptStore.Effects
+module Runix.PromptStore
   ( -- * Effect
     PromptStore(..)
   , getPrompt

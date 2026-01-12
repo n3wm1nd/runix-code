@@ -12,14 +12,14 @@
 --
 -- This effect allows other effects (like Logging, LLM, etc.) to interact
 -- with the UI without knowing about the concrete UI implementation (brick, CLI, web, etc.)
-module UI.Effects where
+module UI where
 
 import Polysemy
 import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
 import UniversalLLM.Core.Types (Message(..))
-import Runix.Logging.Effects (Level(..))
+import Runix.Logging (Level(..))
 
 -- | UI effect for interacting with the user interface
 --

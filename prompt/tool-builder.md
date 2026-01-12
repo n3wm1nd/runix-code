@@ -28,7 +28,7 @@ Within each tool module (`GeneratedTools/{ToolName}.hs`), you have complete flex
 - **Add as many types as needed** - Define parameter types, result types, intermediate data structures
 - **Add helper functions** - Break down complex logic into smaller functions
 - **Organize logically** - Structure code for clarity and maintainability
-- **Use Runix effects directly** - Call effect functions like `Runix.FileSystem.Effects.readFile`, `Runix.Grep.Effects.grep`, etc.
+- **Use Runix effects directly** - Call effect functions like `Runix.FileSystem.readFile`, `Runix.Grep.grep`, etc.
   - Do NOT import `Tools` module (circular dependency - it's not accessible from generated-tools)
   - Instead, use the underlying Runix effects that Tools wraps
 
@@ -125,8 +125,8 @@ import Runix.Safe.Polysemy.Fail (Fail)
 import Runix.Safe.Autodocodec (HasCodec(..))
 import qualified Runix.Safe.Autodocodec as Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
-import qualified Runix.FileSystem.Effects
+import Runix.FileSystem (FileSystemRead, FileSystemWrite)
+import qualified Runix.FileSystem
 
 -- Parameter type
 newtype FilePath = FilePath Text
@@ -157,7 +157,7 @@ instance ToolFunction ReadFileResult where
 -- Implementation
 readFile :: Members '[FileSystemRead, Fail] r => FilePath -> Sem r ReadFileResult
 readFile (FilePath path) = do
-  contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
+  contents <- Runix.FileSystem.readFile (T.unpack path)
   return $ ReadFileResult (T.decodeUtf8 contents)
 ```
 
@@ -172,8 +172,8 @@ import Runix.Safe.Polysemy.Fail (Fail)
 import Runix.Safe.Autodocodec (HasCodec(..))
 import qualified Runix.Safe.Autodocodec as Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem.Effects (FileSystemRead, FileSystemWrite)
-import qualified Runix.FileSystem.Effects
+import Runix.FileSystem (FileSystemRead, FileSystemWrite)
+import qualified Runix.FileSystem
 
 -- Parameter types
 newtype OldString = OldString Text
@@ -224,10 +224,10 @@ editFile
   -> NewString
   -> Sem r EditFileResult
 editFile (FilePath path) (OldString old) (NewString new) = do
-  contents <- Runix.FileSystem.Effects.readFile (T.unpack path)
+  contents <- Runix.FileSystem.readFile (T.unpack path)
   let contentText = T.decodeUtf8 contents
       replaced = T.replace old new contentText
-  Runix.FileSystem.Effects.writeFile (T.unpack path) (T.encodeUtf8 replaced)
+  Runix.FileSystem.writeFile (T.unpack path) (T.encodeUtf8 replaced)
   return $ EditFileResult True ("Successfully replaced in " <> path)
 ```
 
@@ -271,7 +271,7 @@ todoRead = do
 4. **Effect constraints**: Declare exactly which effects your function needs (FileSystemRead, Fail, etc.)
 5. **Qualified imports**: Import effect modules qualified to avoid name collisions
 6. **Complete imports**: Include all necessary imports (Data.Text, effects, Safe reexports, etc.)
-7. **Direct effect usage**: Call Runix effect functions directly (e.g., `Runix.FileSystem.Effects.readFile`, not `Tools.readFile`)
+7. **Direct effect usage**: Call Runix effect functions directly (e.g., `Runix.FileSystem.readFile`, not `Tools.readFile`)
 8. **Safe Haskell compatibility**:
    - Use `Runix.Safe.Polysemy` instead of `Polysemy`
    - Use `Runix.Safe.Polysemy.Fail` instead of `Polysemy.Fail`

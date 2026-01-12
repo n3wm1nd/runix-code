@@ -89,15 +89,15 @@ import Polysemy.Fail (Fail)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Core.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite)
-import qualified Runix.FileSystem.Effects as FileSystem
-import Runix.Grep.Effects (Grep)
-import Runix.Logging.Effects 
-import qualified Runix.Grep.Effects
-import Runix.Bash.Effects (Bash)
-import qualified Runix.Bash.Effects
-import Runix.Cmd.Effects (Cmd)
-import qualified Runix.Cmd.Effects
+import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
+import qualified Runix.FileSystem as FileSystem
+import Runix.Grep (Grep)
+import Runix.Logging 
+import qualified Runix.Grep
+import Runix.Bash (Bash)
+import qualified Runix.Bash
+import Runix.Cmd (Cmd)
+import qualified Runix.Cmd
 import UI.UserInput (UserInput, requestInput, ImplementsWidget)
 
 --------------------------------------------------------------------------------
@@ -597,12 +597,12 @@ grep
   -> Sem r GrepResult
 grep (Pattern pattern) = do
   -- Grep from current directory
-  matches <- Runix.Grep.Effects.grepSearch "." (T.unpack pattern)
+  matches <- Runix.Grep.grepSearch "." (T.unpack pattern)
   -- Format matches as text
   let formatted = T.intercalate "\n" $
-        map (\m -> T.pack (Runix.Grep.Effects.matchFile m) <> ":" <>
-                   T.pack (show $ Runix.Grep.Effects.matchLine m) <> ":" <>
-                   Runix.Grep.Effects.matchText m) matches
+        map (\m -> T.pack (Runix.Grep.matchFile m) <> ":" <>
+                   T.pack (show $ Runix.Grep.matchLine m) <> ":" <>
+                   Runix.Grep.matchText m) matches
   return $ GrepResult formatted
 
 -- | Run unified diff between two files
@@ -624,11 +624,11 @@ diff (FilePath file1) (FilePath file2) = do
     else do
       -- Run diff command with unified format (-u)
       -- diff returns exit code 0 if files are same, 1 if different, 2 on error
-      output <- Runix.Cmd.Effects.cmdExec "diff" ["-u", T.unpack file1, T.unpack file2]
+      output <- Runix.Cmd.cmdExec "diff" ["-u", T.unpack file1, T.unpack file2]
       -- Check if diff failed (exit code 2 means error)
-      if Runix.Cmd.Effects.exitCode output == 2
-        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.Effects.stderr output)
-        else return $ DiffResult $ Runix.Cmd.Effects.stdout output
+      if Runix.Cmd.exitCode output == 2
+        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.stderr output)
+        else return $ DiffResult $ Runix.Cmd.stdout output
 
 -- | Run unified diff between old content (via stdin) and a file
 -- The label is used for the "old" file name in the diff output
@@ -646,13 +646,13 @@ diffContentVsFile label oldContent (FilePath file) = do
     else do
       -- Run diff with old content via stdin
       -- Use --label to set the filename for stdin content, and - to read from stdin
-      output <- Runix.Cmd.Effects.cmdExecStdin "diff"
+      output <- Runix.Cmd.cmdExecStdin "diff"
                   ["-u", "--label", label, "-", T.unpack file]
                   oldContent
       -- Check if diff failed (exit code 2 means error)
-      if Runix.Cmd.Effects.exitCode output == 2
-        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.Effects.stderr output)
-        else return $ DiffResult $ Runix.Cmd.Effects.stdout output
+      if Runix.Cmd.exitCode output == 2
+        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.stderr output)
+        else return $ DiffResult $ Runix.Cmd.stdout output
 
 --------------------------------------------------------------------------------
 -- Shell Operations
@@ -664,11 +664,11 @@ bash
   => Command
   -> Sem r BashResult
 bash (Command cmd) = do
-  output <- Runix.Bash.Effects.bashExec (T.unpack cmd)
+  output <- Runix.Bash.bashExec (T.unpack cmd)
   -- Format output with stdout and stderr
-  let result = if Runix.Bash.Effects.exitCode output == 0
-               then Runix.Bash.Effects.stdout output
-               else Runix.Bash.Effects.stdout output <> "\nSTDERR:\n" <> Runix.Bash.Effects.stderr output
+  let result = if Runix.Bash.exitCode output == 0
+               then Runix.Bash.stdout output
+               else Runix.Bash.stdout output <> "\nSTDERR:\n" <> Runix.Bash.stderr output
   return $ BashResult result
 
 -- | Run cabal build in a specified directory
@@ -677,10 +677,10 @@ cabalBuild
   => WorkingDirectory
   -> Sem r CabalBuildResult
 cabalBuild (WorkingDirectory workDir) = do
-  output <- Runix.Cmd.Effects.cmdExecIn (T.unpack workDir) "cabal" ["build", "all"]
-  let success = Runix.Cmd.Effects.exitCode output == 0
-      stdout = Runix.Cmd.Effects.stdout output
-      stderr = Runix.Cmd.Effects.stderr output
+  output <- Runix.Cmd.cmdExecIn (T.unpack workDir) "cabal" ["build", "all"]
+  let success = Runix.Cmd.exitCode output == 0
+      stdout = Runix.Cmd.stdout output
+      stderr = Runix.Cmd.stderr output
   return $ CabalBuildResult success stdout stderr
 
 -- | Generate a new tool by writing source code and compiling it

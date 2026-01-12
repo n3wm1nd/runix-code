@@ -25,7 +25,7 @@ module UI.State
 
 import Control.Concurrent.STM
 import Data.Text (Text)
-import Runix.Logging.Effects (Level(..))
+import Runix.Logging (Level(..))
 import UI.UserInput.InputWidget (InputWidget(..))
 
 -- | Resource names for widgets (defined here to avoid circular dependency)

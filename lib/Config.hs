@@ -34,7 +34,7 @@ import System.Environment (getArgs, lookupEnv)
 import qualified Data.Text as T
 import System.IO (hPutStr)
 import qualified System.IO as IO
-import Runix.FileSystem.Effects (HasProjectPath(..))
+import Runix.FileSystem (HasProjectPath(..))
 
 --------------------------------------------------------------------------------
 -- Configuration Types

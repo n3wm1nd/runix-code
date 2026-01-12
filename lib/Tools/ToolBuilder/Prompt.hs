@@ -9,8 +9,8 @@ module Tools.ToolBuilder.Prompt
 import Data.Text (Text)
 import qualified Data.Text as T
 import Polysemy (Member, Sem)
-import Runix.Logging.Effects (Logging, info, warning)
-import Runix.PromptStore.Effects (PromptStore, getPrompt)
+import Runix.Logging (Logging, info, warning)
+import Runix.PromptStore (PromptStore, getPrompt)
 
 -- | Load tool-builder system prompt with fallback
 -- Uses PromptStore effect to load from Cabal's data directory
@@ -125,7 +125,7 @@ defaultToolBuilderPrompt = T.unlines
   , "- `Bash` - Execute bash commands"
   , "- `Fail` - Error handling"
   , ""
-  , "Import from: `Runix.FileSystem.Effects`, `Runix.Grep.Effects`, etc."
+  , "Import from: `Runix.FileSystem`, `Runix.Grep`, etc."
   , ""
   , "## Important Notes"
   , ""

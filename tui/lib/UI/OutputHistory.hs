@@ -62,7 +62,7 @@ import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
 import Brick.Types (Widget)
 import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
-import Runix.Logging.Effects (Level(..))
+import Runix.Logging (Level(..))
 import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.KeyMap as KM

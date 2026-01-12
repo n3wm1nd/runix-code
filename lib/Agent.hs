@@ -36,19 +36,19 @@ import UniversalLLM.Core.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(.
 import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UniversalLLM as ULL
 import UniversalLLM (ProviderOf)
-import Runix.LLM.Effects (LLM, queryLLM)
+import Runix.LLM (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Tools
 import qualified Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
 import qualified GeneratedTools
-import Runix.Grep.Effects (Grep)
-import Runix.Cmd.Effects (Cmd)
-import Runix.Logging.Effects (Logging, info)
-import Runix.PromptStore.Effects (PromptStore)
-import Runix.Config.Effects (Config)
-import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher, getChangedFiles, interceptFileAccessRead, interceptFileAccessWrite)
+import Runix.Grep (Grep)
+import Runix.Cmd (Cmd)
+import Runix.Logging (Logging, info)
+import Runix.PromptStore (PromptStore)
+import Runix.Config (Config)
+import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher, getChangedFiles, interceptFileAccessRead, interceptFileAccessWrite)
 import qualified Config as AppConfig
 import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS)
 import UI.UserInput (UserInput, ImplementsWidget)

@@ -110,7 +110,7 @@ library
                     , Models
                     , Config
                     , Runner
-                    , Runix.PromptStore.Effects
+                    , Runix.PromptStore
                     , UI.UserInput
     other-modules:    Paths_runix_code
     autogen-modules:  Paths_runix_code
@@ -137,7 +137,7 @@ library runix-code-tui-lib
     exposed-modules:  UI.UI
                     , UI.Widgets.MessageHistory
                     , UI.InputPanel
-                    , UI.Effects
+                    , UI
                     , UI.State
                     , UI.Interpreter
                     , UI.LoggingInterpreter

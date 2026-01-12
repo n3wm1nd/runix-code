@@ -36,20 +36,20 @@ import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
-import Runix.LLM.Effects (LLM)
+import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (withLLMCancellation)
-import Runix.FileSystem.Effects (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher)
-import qualified Runix.FileSystem.Simple.Effects
-import qualified Runix.FileSystem.System.Effects
-import Runix.Grep.Effects (Grep)
-import Runix.Bash.Effects (Bash)
-import Runix.Cmd.Effects (Cmd)
-import Runix.HTTP.Effects (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
-import Runix.Logging.Effects (Logging(..), info, Level(..))
-import Runix.PromptStore.Effects (PromptStore, promptStoreIO)
-import qualified Runix.Config.Effects as ConfigEffect
-import Runix.Cancellation.Effects (Cancellation(..))
-import Runix.Streaming.Effects (StreamChunk)
+import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher)
+import qualified Runix.FileSystem.Simple
+import qualified Runix.FileSystem.System
+import Runix.Grep (Grep)
+import Runix.Bash (Bash)
+import Runix.Cmd (Cmd)
+import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
+import Runix.Logging (Logging(..), info, Level(..))
+import Runix.PromptStore (PromptStore, promptStoreIO)
+import qualified Runix.Config as ConfigEffect
+import Runix.Cancellation (Cancellation(..))
+import Runix.Streaming (StreamChunk)
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
@@ -61,11 +61,11 @@ import UI.ForegroundCmdInterpreter (interpretForegroundCmd)
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
-import qualified UI.Effects
+import qualified UI
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
-import Runix.FileSystem.Effects (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
+import Runix.FileSystem (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 
 
 --------------------------------------------------------------------------------
@@ -132,7 +132,7 @@ agentLoop :: forall model.
           -> IORef [Message model]
           -> SystemPrompt
           -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
-          -> (forall r. (Members [Runix.FileSystem.Simple.Effects.FileSystem, Runix.FileSystem.Simple.Effects.FileSystemRead, Runix.FileSystem.Simple.Effects.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
+          -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
@@ -192,7 +192,7 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
 
         -- Use the effect stack to save session
         let runSave = runM . runError @String . loggingIO . failLog
-                    . Runix.FileSystem.Simple.Effects.filesystemIO
+                    . Runix.FileSystem.Simple.filesystemIO
         result <- runSave $ miSaveSession sessionFile currentHistory
 
         case result of
@@ -297,8 +297,8 @@ buildUIRunner :: forall model.
                  , SupportsStreaming (ProviderOf model)
                  )
               => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
-              -> (forall r. (Members [Runix.FileSystem.Simple.Effects.FileSystem, Runix.FileSystem.Simple.Effects.FileSystemRead, Runix.FileSystem.Simple.Effects.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
-              -> (forall r. (Members [Runix.FileSystem.Simple.Effects.FileSystem, Runix.FileSystem.Simple.Effects.FileSystemRead, Runix.FileSystem.Simple.Effects.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
+              -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
+              -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
@@ -313,7 +313,7 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   initialHistory <- case maybeSessionPath of
     Just path -> do
       let runToIO' = runM . runError @String . loggingIO . failLog
-                   . Runix.FileSystem.Simple.Effects.filesystemIO
+                   . Runix.FileSystem.Simple.filesystemIO
       result <- runToIO' $ miLoadSession path
       case result of
         Right msgs -> do
@@ -340,7 +340,7 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
 
   -- Load system prompt using the composed interpreter stack
   let runToIO' = runM . runError @String . loggingIO . failLog
-               . Runix.FileSystem.Simple.Effects.filesystemIO
+               . Runix.FileSystem.Simple.filesystemIO
 
   result <- runToIO' $ loadSystemPrompt promptPath "You are a helpful AI coding assistant."
   let sysPrompt = case result of
@@ -396,13 +396,13 @@ interpretTUIEffects ::
         : FileSystemWrite ProjectFS
         : FileSystemRead ProjectFS
         : FileSystem ProjectFS
-        : Runix.FileSystem.System.Effects.FileSystemRead
-        : Runix.FileSystem.System.Effects.FileSystemWrite
+        : Runix.FileSystem.System.FileSystemRead
+        : Runix.FileSystem.System.FileSystemWrite
         : Fail
         : Logging
         : UserInput TUIWidget
         : UI.ForegroundCmd.ForegroundCmd
-        : UI.Effects.UI
+        : UI.UI
         : r
     )
     a ->
@@ -414,7 +414,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . interpretLoggingToUI
     . failLog
     -- Base System filesystem
-    . Runix.FileSystem.System.Effects.filesystemIO
+    . Runix.FileSystem.System.filesystemIO
     -- ProjectFS: user's project with chroot, filters, logging, and file watching
     . fileSystemLocal (ProjectFS cwd)
     . fileWatcherGeneric @ProjectFS

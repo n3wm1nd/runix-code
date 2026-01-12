@@ -12,8 +12,8 @@ import Polysemy
 import qualified Data.Text as T
 import GHC.Stack (prettyCallStack)
 
-import Runix.Logging.Effects (Logging(..))
-import UI.Effects (UI, logMessage)
+import Runix.Logging (Logging(..))
+import UI (UI, logMessage)
 
 -- | Reinterpret Logging effect as UI effect
 --

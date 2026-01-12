@@ -16,9 +16,9 @@ module UI.Streaming
 import qualified Data.ByteString as BS
 import Control.Concurrent.STM
 import Polysemy (Member, Sem, Embed, embed, interpret, reinterpret)
-import Runix.Streaming.Effects (StreamChunk(..), emitChunk)
+import Runix.Streaming (StreamChunk(..), emitChunk)
 import Runix.Streaming.SSE (StreamingContent(..), extractContentFromChunk)
-import Runix.Cancellation.Effects (Cancellation(..))
+import Runix.Cancellation (Cancellation(..))
 import UI.State (UIVars, AgentEvent(..), sendAgentEvent, readCancellationFlag)
 
 --------------------------------------------------------------------------------

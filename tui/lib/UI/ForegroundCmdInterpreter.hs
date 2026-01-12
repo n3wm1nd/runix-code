@@ -7,7 +7,7 @@ module UI.ForegroundCmdInterpreter where
 import Polysemy
 import UI.ForegroundCmd
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
-import Runix.Logging.Effects (Level(..))
+import Runix.Logging (Level(..))
 import System.Process (callProcess, waitForProcess, spawnProcess)
 import System.IO.Error (catchIOError)
 import qualified Data.Text as T

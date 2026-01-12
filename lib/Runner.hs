@@ -51,32 +51,32 @@ import Polysemy.State (State, runState)
 import Polysemy.Reader (Reader, runReader)
 
 import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
-import Runix.FileSystem.Simple.Effects (FileSystem, FileSystemRead, FileSystemWrite, filesystemIO, readFile, writeFile, fileExists)
-import Runix.Grep.Effects (Grep)
-import Runix.Bash.Effects (Bash)
-import Runix.Cmd.Effects (Cmd)
-import Runix.HTTP.Effects (HTTP, HTTPStreaming)
-import Runix.Logging.Effects (Logging)
-import Runix.Cancellation.Effects (Cancellation, cancelNoop)
-import Runix.PromptStore.Effects (PromptStore, promptStoreIO)
-import Runix.Config.Effects (Config)
-import qualified Runix.Config.Effects as ConfigEffect
+import Runix.FileSystem.Simple (FileSystem, FileSystemRead, FileSystemWrite, filesystemIO, readFile, writeFile, fileExists)
+import Runix.Grep (Grep)
+import Runix.Bash (Bash)
+import Runix.Cmd (Cmd)
+import Runix.HTTP (HTTP, HTTPStreaming)
+import Runix.Logging (Logging)
+import Runix.Cancellation (Cancellation, cancelNoop)
+import Runix.PromptStore (PromptStore, promptStoreIO)
+import Runix.Config (Config)
+import qualified Runix.Config as ConfigEffect
 import qualified Config as AppConfig
-import qualified Runix.Logging.Effects as Log
+import qualified Runix.Logging as Log
 import Data.Default (Default, def)
 
 import UniversalLLM.Core.Types (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
 import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt, SupportsStreaming)
 import UniversalLLM.Providers.Anthropic (Anthropic(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
-import Runix.LLM.Effects (LLM)
+import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, interpretZAI)
-import Runix.Secret.Effects (runSecret)
-import Runix.Streaming.Effects (ignoreChunks)
+import Runix.Secret (runSecret)
+import Runix.Streaming (ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), GLM45Air_ZAI(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider, glm45AirZAIComposableProvider, glm46ComposableProvider, glm47ComposableProvider)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
-import qualified Runix.FileSystem.System.Effects as System.Effects
+import qualified Runix.FileSystem.System as System.Effects
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)

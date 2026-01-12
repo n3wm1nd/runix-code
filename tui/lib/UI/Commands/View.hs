@@ -14,7 +14,7 @@ import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
 import System.Process (spawnProcess, waitForProcess)
 import Polysemy
-import Runix.Logging.Effects (Logging, info)
+import Runix.Logging (Logging, info)
 import UniversalLLM.Core.Types (Message(..), ToolCall(..), ToolResult(..))
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 

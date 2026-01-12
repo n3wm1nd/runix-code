@@ -10,10 +10,10 @@ module UI.Interpreter where
 import Polysemy
 import Control.Concurrent.STM
 
-import UI.Effects
+import UI
 import UI.State (UIVars, userInputQueue, waitForUserInput, sendAgentEvent, UserRequest(..))
 import UI.State (AgentEvent(..))
-import Runix.Logging.Effects (Level(..))
+import Runix.Logging (Level(..))
 
 -- | Interpret UI effect by sending events to the UI thread
 --

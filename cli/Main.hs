@@ -17,12 +17,12 @@ import Polysemy.Error (runError)
 
 import Runix.LLM.Interpreter hiding (SystemPrompt)
 import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
-import Runix.FileSystem.Effects (fileWatcherNoop, fileSystemLocal)
-import Runix.FileSystem.Simple.Effects (filesystemIO)
-import Runix.PromptStore.Effects (promptStoreIO)
-import qualified Runix.Config.Effects as ConfigEffect
-import Runix.Cancellation.Effects (cancelNoop)
-import Runix.Streaming.Effects (ignoreChunks)
+import Runix.FileSystem (fileWatcherNoop, fileSystemLocal)
+import Runix.FileSystem.Simple (filesystemIO)
+import Runix.PromptStore (promptStoreIO)
+import qualified Runix.Config as ConfigEffect
+import Runix.Cancellation (cancelNoop)
+import Runix.Streaming (ignoreChunks)
 import qualified Data.ByteString as BS
 import qualified System.Directory as Dir
 
@@ -33,7 +33,7 @@ import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), r
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
-import qualified Runix.FileSystem.System.Effects
+import qualified Runix.FileSystem.System
 
 --------------------------------------------------------------------------------
 -- CLI Widget Type
@@ -125,8 +125,8 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . ConfigEffect.runConfig runixDataDir
                . promptStoreIO
                -- Base System filesystem (must come before parameterized filesystems)
-               . Runix.FileSystem.System.Effects.filesystemWriteIO
-               . Runix.FileSystem.System.Effects.filesystemReadIO
+               . Runix.FileSystem.System.filesystemWriteIO
+               . Runix.FileSystem.System.filesystemReadIO
                -- RunixToolsFS: runix-code source directory
                . fileSystemLocal (RunixToolsFS runixCodeDir)
                -- ClaudeConfigFS: access to .claude directories (read-only)
@@ -135,7 +135,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . fileSystemLocal (ProjectFS cwd)
                -- Simple filesystem (for session files to /tmp)
                . filesystemIO
-               . Runix.FileSystem.System.Effects.filesystemIO . grepIO
+               . Runix.FileSystem.System.filesystemIO . grepIO
                . interpretModel
 
   runToIO' $ do
