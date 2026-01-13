@@ -29,7 +29,7 @@ import Runix.LLM (LLM, queryLLM)
 import Runix.LLM.ToolExecution (executeTool)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
 import Config (RunixToolsFS)
-import Runix.Cmd (Cmd, interpretCmdSingle)
+import Runix.Cmd (Cmds, interpretCmd)
 import Runix.Logging (Logging, info)
 import Runix.Grep (Grep)
 import Runix.PromptStore (PromptStore)
@@ -56,7 +56,7 @@ buildTool
   :: forall model r.
      ( Member (LLM model) r
      , Member Logging r
-     , Member Cmd r
+     , Member Cmds r
      , Member Fail r
      , Member Grep r
      , Member PromptStore r
@@ -76,7 +76,7 @@ buildTool toolName desc mode = do
   let cabalFilePath = dataDir </> "runix-code.cabal"
       registryFilePath = dataDir </> "generated-tools/GeneratedTools.hs"
       toolModulesDir = dataDir </> "generated-tools/GeneratedTools"
-      build = interpretCmdSingle @"cabal" $ Tools.cabalBuild (Tools.WorkingDirectory $ T.pack dataDir)
+      build = interpretCmd @"cabal" $ Tools.cabalBuild (Tools.WorkingDirectory $ T.pack dataDir)
 
   -- PRECONDITION: Verify current source tree compiles, abort otherwise
   -- The agent can't fix a broken codebase it didn't create
@@ -342,7 +342,7 @@ toolBuilderLoop
   :: forall model r.
      ( Member (LLM model) r
      , Member Logging r
-     , Member Cmd r
+     , Member Cmds r
      , Member Fail r
      , Member Grep r
      , Member PromptStore r

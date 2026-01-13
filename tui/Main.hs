@@ -31,7 +31,7 @@ import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
 import Config (ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..))
-import Runix.Runner (grepIO, bashIO, cmdIO, failLog, loggingIO)
+import Runix.Runner (grepIO, bashIO, cmdsIO, failLog, loggingIO)
 import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
@@ -43,7 +43,7 @@ import qualified Runix.FileSystem.Simple
 import qualified Runix.FileSystem.System
 import Runix.Grep (Grep)
 import Runix.Bash (Bash)
-import Runix.Cmd (Cmd)
+import Runix.Cmd (Cmd, Cmds)
 import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging (Logging(..), info, Level(..))
 import Runix.PromptStore (PromptStore, promptStoreIO)
@@ -379,7 +379,7 @@ interpretTUIEffects ::
   Sem
     ( Grep
         : Bash
-        : Cmd
+        : Cmds
         : PromptStore
         : ConfigEffect.Config RunixDataDir
         : HTTP
@@ -438,7 +438,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . httpIO (withRequestTimeout 300)
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
     . promptStoreIO
-    . cmdIO
+    . cmdsIO
     . bashIO
     . grepIO
 

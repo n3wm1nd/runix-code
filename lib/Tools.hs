@@ -96,7 +96,7 @@ import Runix.Logging
 import qualified Runix.Grep
 import Runix.Bash (Bash)
 import qualified Runix.Bash
-import Runix.Cmd (Cmd)
+import Runix.Cmd (Cmds)
 import qualified Runix.Cmd
 import UI.UserInput (UserInput, requestInput, ImplementsWidget)
 
@@ -608,7 +608,7 @@ grep (Pattern pattern) = do
 -- | Run unified diff between two files
 -- Fails if either file doesn't exist (uses Fail effect)
 diff
-  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.CmdSingle "diff", Fail] r
+  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.Cmd "diff", Fail] r
   => FilePath
   -> FilePath
   -> Sem r DiffResult
@@ -633,7 +633,7 @@ diff (FilePath file1) (FilePath file2) = do
 -- | Run unified diff between old content (via stdin) and a file
 -- The label is used for the "old" file name in the diff output
 diffContentVsFile
-  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.CmdSingle "diff", Fail] r
+  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.Cmd "diff", Fail] r
   => String           -- ^ Label for old content (e.g., "path/to/file.old")
   -> ByteString       -- ^ Old content
   -> FilePath         -- ^ Path to current file
@@ -673,7 +673,7 @@ bash (Command cmd) = do
 
 -- | Run cabal build in a specified directory
 cabalBuild
-  :: Member (Runix.Cmd.CmdSingle "cabal") r
+  :: Member (Runix.Cmd.Cmd "cabal") r
   => WorkingDirectory
   -> Sem r CabalBuildResult
 cabalBuild (WorkingDirectory workDir) = do
@@ -686,7 +686,7 @@ cabalBuild (WorkingDirectory workDir) = do
 -- | Generate a new tool by writing source code and compiling it
 -- Fails if file operations cannot be completed
 generateTool
-  :: forall project r. Members '[FileSystemRead project, FileSystemWrite project, Logging, Runix.Cmd.CmdSingle "cabal", Fail] r
+  :: forall project r. Members '[FileSystemRead project, FileSystemWrite project, Logging, Runix.Cmd.Cmd "cabal", Fail] r
   => FunctionName
   -> FunctionSignature  -- The required type signature (interface contract)
   -> FunctionBody       -- Complete function definition from LLM

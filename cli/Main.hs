@@ -16,7 +16,7 @@ import Polysemy
 import Polysemy.Error (runError)
 
 import Runix.LLM.Interpreter hiding (SystemPrompt)
-import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (grepIO, bashIO, cmdsIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem (fileWatcherNoop, fileSystemLocal)
 import Runix.FileSystem.Simple (filesystemIO)
 import Runix.PromptStore (promptStoreIO)
@@ -119,7 +119,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . ignoreChunks @BS.ByteString
                . httpIOStreaming (withRequestTimeout 300)
                . httpIO (withRequestTimeout 300)
-               . cmdIO
+               . cmdsIO
                . bashIO
                . fileWatcherNoop @ProjectFS       -- No-op file watcher for CLI
                . ConfigEffect.runConfig runixDataDir

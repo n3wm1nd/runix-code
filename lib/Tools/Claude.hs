@@ -34,7 +34,7 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, ProviderOf)
 import qualified UniversalLLM as ULL
 import Runix.LLM (LLM, queryLLM)
 import Runix.LLM.ToolInstances ()
-import Runix.Cmd (Cmd, cmdExec, CmdOutput(..))
+import Runix.Cmd (Cmds, cmdsExec, CmdOutput(..))
 import Runix.Logging (Logging)
 import Runix.LLM.ToolExecution (executeTool)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, glob, readFile)
@@ -271,7 +271,7 @@ parseSkillMarkdown basePath content =
 -- | Load script tools for a skill from its scripts/ directory
 loadSkillScripts
   :: forall r.
-     ( Member Cmd r
+     ( Member Cmds r
      , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
      )
   => ClaudeSkill
@@ -291,7 +291,7 @@ loadSkillScripts skill = do
           toolFn :: Text -> Sem (Fail ': r) Text
           toolFn argsText = do
             let args = map T.unpack $ T.words argsText
-            output <- raise $ cmdExec scriptPath args
+            output <- raise $ cmdsExec scriptPath args
             return $ stdout output
       in LLMTool $ mkTool toolName toolDesc toolFn
 
@@ -320,7 +320,7 @@ claudeSkillToTool
      ( Member (LLM model) r
      , Member Logging r
      , Member (State [Message model]) r
-     , Member Cmd r
+     , Member Cmds r
      , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)

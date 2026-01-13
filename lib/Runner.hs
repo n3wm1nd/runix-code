@@ -50,11 +50,11 @@ import Polysemy.Error
 import Polysemy.State (State, runState)
 import Polysemy.Reader (Reader, runReader)
 
-import Runix.Runner (grepIO, bashIO, cmdIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (grepIO, bashIO, cmdsIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
 import Runix.FileSystem.Simple (FileSystem, FileSystemRead, FileSystemWrite, filesystemIO, readFile, writeFile, fileExists)
 import Runix.Grep (Grep)
 import Runix.Bash (Bash)
-import Runix.Cmd (Cmd)
+import Runix.Cmd (Cmds)
 import Runix.HTTP (HTTP, HTTPStreaming)
 import Runix.Logging (Logging)
 import Runix.Cancellation (Cancellation, cancelNoop)
@@ -196,7 +196,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystem, FileSystemRead, FileSystemWrite, Grep, Bash, Cmd, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation, PromptStore] r
+               => (forall r. Members '[UserInput widget, FileSystem, FileSystemRead, FileSystemWrite, Grep, Bash, Cmds, HTTP, HTTPStreaming, Logging, Fail, Embed IO, Cancellation, PromptStore] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -209,7 +209,7 @@ runWithEffects action =
     . ignoreChunks @BS.ByteString
     . httpIOStreaming (withRequestTimeout 300)
     . httpIO (withRequestTimeout 300)
-    . cmdIO
+    . cmdsIO
     . bashIO
     . promptStoreIO
     . filesystemIO
