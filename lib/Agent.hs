@@ -26,34 +26,28 @@ module Agent
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.ByteString (ByteString)
-import Control.Monad (forM)
-import Polysemy (Member, Members, Sem)
-import Polysemy.State (State, runState, get, put)
-import Polysemy.Reader (Reader, ask, runReader)
-import Polysemy.Fail (Fail, runFail)
-import UniversalLLM (Message(..))
-import UniversalLLM.Tools (LLMTool(..), llmToolToDefinition, ToolFunction(..), ToolParameter(..))
-import UniversalLLM (HasTools, SupportsSystemPrompt)
-import qualified UniversalLLM as ULL
-import UniversalLLM (ProviderOf)
-import Runix.LLM (LLM, queryLLM)
-import Runix.LLM.ToolInstances ()
-import Runix.LLM.ToolExecution (executeTool)
+import Control.Monad
+import Polysemy 
+import Polysemy.State 
+import Polysemy.Reader 
+import Polysemy.Fail 
+import UniversalLLM
+import UniversalLLM.Tools
+import Runix.LLM 
 import qualified Tools
 import qualified Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
 import qualified GeneratedTools
-import Runix.Grep (Grep)
-import Runix.Cmd (Cmds, Cmd, interpretCmd)
-import Runix.Logging (Logging, info)
-import Runix.PromptStore (PromptStore)
-import Runix.Config (Config)
-import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher, getChangedFiles, interceptFileAccessRead, interceptFileAccessWrite)
-import qualified Config as AppConfig
-import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS)
-import UI.UserInput (UserInput, ImplementsWidget)
-import Autodocodec (HasCodec(..))
-import qualified Autodocodec
+import Runix.Grep
+import Runix.Cmd
+import Runix.Logging
+import Runix.PromptStore
+import Runix.Config
+import Runix.FileSystem
+import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS, RunixDataDir)
+import UI.UserInput
+import Autodocodec
+import Runix.LLM.ToolExecution (executeTool)
 
 --------------------------------------------------------------------------------
 -- Semantic Newtypes
@@ -142,28 +136,28 @@ runixCode
      , Member Cmds r
      , Member (FileWatcher ProjectFS) r
      , Member PromptStore r
-     , Member (Config AppConfig.RunixDataDir) r
+     , Member (Config RunixDataDir) r
      , Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
      , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
      , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
-     , Member (Reader [ULL.ModelConfig model]) r
+     , Member (Reader [ModelConfig model]) r
      , HasTools model
      , SupportsSystemPrompt (ProviderOf model)
      )
   => SystemPrompt
   -> UserPrompt
   -> Sem r (RunixCodeResult model)
-runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
-  baseConfigs <- ask @[ULL.ModelConfig model]
+runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
+  baseConfigs <- ask @[ModelConfig model]
   currentHistory <- get @[Message model]
 
   -- Load CLAUDE.md files and add as system prompts if they exist
   claudeInstructions <- Tools.Claude.loadClaudeMdConfigs
 
-  let claudeMdConfigs = map (\(Tools.Claude.ClaudeInstructions txt) -> ULL.SystemPrompt txt) claudeInstructions
-      configsWithSystem = ULL.SystemPrompt sysPrompt : claudeMdConfigs ++ baseConfigs
+  let claudeMdConfigs = map (\(Tools.Claude.ClaudeInstructions txt) -> Runix.LLM.SystemPrompt txt) claudeInstructions
+      configsWithSystem = Runix.LLM.SystemPrompt sysPrompt : claudeMdConfigs ++ baseConfigs
       newHistory = currentHistory ++ [UserText userPrompt]
 
   -- Add user prompt to history
@@ -209,13 +203,13 @@ runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   return result
 
 -- | Update config with new tool list
-setTools :: HasTools model => [LLMTool (Sem r)] -> [ULL.ModelConfig model] -> [ULL.ModelConfig model]
+setTools :: HasTools model => [LLMTool (Sem r)] -> [ModelConfig model] -> [ModelConfig model]
 setTools tools configs =
   let withoutTools = filter (not . isToolsConfig) configs
       toolDefs = map llmToolToDefinition tools
-  in withoutTools ++ [ULL.Tools toolDefs]
+  in withoutTools ++ [Tools toolDefs]
   where
-    isToolsConfig (ULL.Tools _) = True
+    isToolsConfig (Tools _) = True
     isToolsConfig _ = False
 
 -- | Agent loop - receives pre-built tools (loaded once, reused across iterations)
@@ -228,12 +222,12 @@ runixCodeAgentLoop
      , Members '[Cmd "cabal", Cmd "diff"] r
      , Member (FileWatcher ProjectFS) r
      , Member PromptStore r
-     , Member (Config AppConfig.RunixDataDir) r
+     , Member (Config RunixDataDir) r
      , Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
      , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
      , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , ImplementsWidget widget Text
-     , Member (Reader [ULL.ModelConfig model]) r
+     , Member (Reader [ModelConfig model]) r
      , Member (State [Message model]) r
      , Member (State [Tools.Todo]) r
      , HasTools model
@@ -242,7 +236,7 @@ runixCodeAgentLoop
   => [LLMTool (Sem (Fail ': r))]  -- ^ Pre-built tools with Fail effect (loaded once, reused)
   -> Sem r (RunixCodeResult model)
 runixCodeAgentLoop tools = do
-  baseConfigs <- ask @[ULL.ModelConfig model]
+  baseConfigs <- ask @[ModelConfig model]
   let configs = setTools tools baseConfigs
 
   -- Check for file changes and inject as system messages
