@@ -608,7 +608,7 @@ grep (Pattern pattern) = do
 -- | Run unified diff between two files
 -- Fails if either file doesn't exist (uses Fail effect)
 diff
-  :: forall project r. Members '[FileSystem project, FileSystemRead project, Cmd, Fail] r
+  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.CmdSingle "diff", Fail] r
   => FilePath
   -> FilePath
   -> Sem r DiffResult
@@ -624,7 +624,7 @@ diff (FilePath file1) (FilePath file2) = do
     else do
       -- Run diff command with unified format (-u)
       -- diff returns exit code 0 if files are same, 1 if different, 2 on error
-      output <- Runix.Cmd.cmdExec "diff" ["-u", T.unpack file1, T.unpack file2]
+      output <- Runix.Cmd.call @"diff" ["-u", T.unpack file1, T.unpack file2]
       -- Check if diff failed (exit code 2 means error)
       if Runix.Cmd.exitCode output == 2
         then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.stderr output)
@@ -633,7 +633,7 @@ diff (FilePath file1) (FilePath file2) = do
 -- | Run unified diff between old content (via stdin) and a file
 -- The label is used for the "old" file name in the diff output
 diffContentVsFile
-  :: forall project r. Members '[FileSystem project, FileSystemRead project, Cmd, Fail] r
+  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.CmdSingle "diff", Fail] r
   => String           -- ^ Label for old content (e.g., "path/to/file.old")
   -> ByteString       -- ^ Old content
   -> FilePath         -- ^ Path to current file
@@ -646,7 +646,7 @@ diffContentVsFile label oldContent (FilePath file) = do
     else do
       -- Run diff with old content via stdin
       -- Use --label to set the filename for stdin content, and - to read from stdin
-      output <- Runix.Cmd.cmdExecStdin "diff"
+      output <- Runix.Cmd.callStdin @"diff"
                   ["-u", "--label", label, "-", T.unpack file]
                   oldContent
       -- Check if diff failed (exit code 2 means error)
@@ -673,11 +673,11 @@ bash (Command cmd) = do
 
 -- | Run cabal build in a specified directory
 cabalBuild
-  :: Member Cmd r
+  :: Member (Runix.Cmd.CmdSingle "cabal") r
   => WorkingDirectory
   -> Sem r CabalBuildResult
 cabalBuild (WorkingDirectory workDir) = do
-  output <- Runix.Cmd.cmdExecIn (T.unpack workDir) "cabal" ["build", "all"]
+  output <- Runix.Cmd.callIn @"cabal" (T.unpack workDir) ["build", "all"]
   let success = Runix.Cmd.exitCode output == 0
       stdout = Runix.Cmd.stdout output
       stderr = Runix.Cmd.stderr output
@@ -686,7 +686,7 @@ cabalBuild (WorkingDirectory workDir) = do
 -- | Generate a new tool by writing source code and compiling it
 -- Fails if file operations cannot be completed
 generateTool
-  :: forall project r. Members '[FileSystemRead project, FileSystemWrite project, Logging, Cmd, Fail] r
+  :: forall project r. Members '[FileSystemRead project, FileSystemWrite project, Logging, Runix.Cmd.CmdSingle "cabal", Fail] r
   => FunctionName
   -> FunctionSignature  -- The required type signature (interface contract)
   -> FunctionBody       -- Complete function definition from LLM

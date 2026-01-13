@@ -44,7 +44,7 @@ import qualified Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
 import qualified GeneratedTools
 import Runix.Grep (Grep)
-import Runix.Cmd (Cmd)
+import Runix.Cmd (Cmd, CmdSingle, interpretCmdSingle)
 import Runix.Logging (Logging, info)
 import Runix.PromptStore (PromptStore)
 import Runix.Config (Config)
@@ -109,7 +109,7 @@ instance ToolFunction (RunixCodeResult model) where
 
 -- | Format file changes with diffs as a system message
 -- Diffs old content (via stdin) against current file
-formatFileChanges :: Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, Cmd, Fail] r
+formatFileChanges :: Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, CmdSingle "diff", Fail] r
                   => [(String, ByteString, ByteString)]
                   -> Sem r Text
 formatFileChanges changes = do
@@ -172,8 +172,8 @@ runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   -- Run agent loop with Reader for configs and State for todos locally
   -- Build tools once inside the effect stack, before entering the loop
   (_finalTodos, result) <-
-    runState ([] :: [Tools.Todo]) $
-      runReader configsWithSystem $ do
+    runState ([] :: [Tools.Todo]) . interpretCmdSingle @"cabal" . interpretCmdSingle @"diff"
+      . runReader configsWithSystem $ do
         -- Load Claude Code integrations (subagents and skills) - once, not per iteration
         subagents <- Tools.Claude.loadSubagents
         skills <- Tools.Claude.loadSkills
@@ -204,6 +204,7 @@ runixCode (SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
         -- Combine all tools once
         let tools = allBaseTools ++ subagentTools ++ skillTools ++ GeneratedTools.generatedTools
 
+        
         runixCodeAgentLoop @model @widget tools
   return result
 
@@ -224,7 +225,7 @@ runixCodeAgentLoop
      , Member Grep r
      , Member Logging r
      , Member (UserInput widget) r
-     , Member Cmd r
+     , Members '[CmdSingle "cabal", CmdSingle "diff"] r
      , Member (FileWatcher ProjectFS) r
      , Member PromptStore r
      , Member (Config AppConfig.RunixDataDir) r
