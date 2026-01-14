@@ -16,7 +16,8 @@ import Polysemy
 import Polysemy.Error (runError)
 
 import Runix.LLM.Interpreter hiding (SystemPrompt)
-import Runix.Runner (grepIO, bashIO, cmdsIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.Runner (bashIO, cmdsIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
+import Runix.Grep (grepForFilesystem)
 import Runix.FileSystem (fileWatcherNoop, fileSystemLocal)
 import Runix.FileSystem.Simple (filesystemIO)
 import Runix.PromptStore (promptStoreIO)
@@ -135,7 +136,10 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . fileSystemLocal (ProjectFS cwd)
                -- Simple filesystem (for session files to /tmp)
                . filesystemIO
-               . Runix.FileSystem.System.filesystemIO . grepIO
+               . Runix.FileSystem.System.filesystemIO
+               -- Grep for each filesystem
+               . grepForFilesystem @RunixToolsFS
+               . grepForFilesystem @ProjectFS
                . interpretModel
 
   runToIO' $ do

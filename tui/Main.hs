@@ -31,7 +31,9 @@ import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
 import Config (ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..))
-import Runix.Runner (grepIO, bashIO, cmdsIO, failLog, loggingIO)
+import Runix.Runner (bashIO, cmdsIO, failLog, loggingIO)
+import qualified Runix.Grep
+import Runix.Grep (grepForFilesystem)
 import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
@@ -377,7 +379,8 @@ interpretTUIEffects ::
   RunixDataDir ->
   UIVars msg ->
   Sem
-    ( Grep
+    ( Runix.Grep.Grep ProjectFS
+        : Runix.Grep.Grep RunixToolsFS
         : Bash
         : Cmds
         : PromptStore
@@ -440,7 +443,8 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . promptStoreIO
     . cmdsIO
     . bashIO
-    . grepIO
+    . grepForFilesystem @RunixToolsFS
+    . grepForFilesystem @ProjectFS
 
 --------------------------------------------------------------------------------
 -- Echo Agent (Placeholder)

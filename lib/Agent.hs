@@ -130,7 +130,8 @@ formatFileChanges changes = do
 runixCode
   :: forall model widget r.
      ( Member (LLM model) r
-     , Member Grep r
+     , Member (Grep ProjectFS) r
+     , Member (Grep RunixToolsFS) r
      , Member Logging r
      , Member (UserInput widget) r
      , Member Cmds r
@@ -174,7 +175,7 @@ runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
 
         let
             baseTools =
-              [ LLMTool Tools.grep
+              [ LLMTool (Tools.grep @ProjectFS)
               , LLMTool (Tools.glob @ProjectFS)
               , LLMTool (Tools.readFile @ProjectFS)
               , LLMTool (Tools.getCwd @ProjectFS)
@@ -216,7 +217,7 @@ setTools tools configs =
 runixCodeAgentLoop
   :: forall model widget r.
      ( Member (LLM model) r
-     , Member Grep r
+     , Member (Grep ProjectFS) r
      , Member Logging r
      , Member (UserInput widget) r
      , Members '[Cmd "cabal", Cmd "diff"] r

@@ -65,6 +65,7 @@ library generated-tools
                         TypeOperators
                         GADTs
                         DataKinds
+                        FlexibleContexts
 
 
 

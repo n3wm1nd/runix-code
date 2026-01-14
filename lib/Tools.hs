@@ -1,6 +1,7 @@
 {-# LANGUAGE Trustworthy #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE AllowAmbiguousTypes #-}
+{-# LANGUAGE TypeApplications #-}
 -- | Tools for Runix Code agent
 --
 -- Each tool is just a function in Sem r that the LLM can call.
@@ -591,13 +592,14 @@ glob (Pattern pattern) = do
   return $ GlobResult (map T.pack files)
 
 -- | Search file contents with regex
+-- Parameterized by filesystem/project to work with chrooted filesystems
 grep
-  :: Member Grep r
+  :: forall project r. Member (Runix.Grep.Grep project) r
   => Pattern
   -> Sem r GrepResult
 grep (Pattern pattern) = do
   -- Grep from current directory
-  matches <- Runix.Grep.grepSearch "." (T.unpack pattern)
+  matches <- Runix.Grep.grepSearch @project "." (T.unpack pattern)
   -- Format matches as text
   let formatted = T.intercalate "\n" $
         map (\m -> T.pack (Runix.Grep.matchFile m) <> ":" <>

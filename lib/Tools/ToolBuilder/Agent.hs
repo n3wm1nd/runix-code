@@ -57,7 +57,7 @@ buildTool
      , Member Logging r
      , Member Cmds r
      , Member Fail r
-     , Member Grep r
+     , Member (Grep RunixToolsFS) r
      , Member PromptStore r
      , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member (State [Message model]) r
@@ -74,9 +74,9 @@ buildTool toolName desc mode = do
   info $ "Tool builder using data directory: " <> T.pack dataDir
 
   -- Use relative paths for file operations (filesystem is chrooted)
-  let cabalFilePath = "runix-code.cabal"
-      registryFilePath = "generated-tools/GeneratedTools.hs"
-      toolModulesDir = "generated-tools/GeneratedTools"
+  let cabalFilePath = "/runix-code.cabal"
+      registryFilePath = "/generated-tools/GeneratedTools.hs"
+      toolModulesDir = "/generated-tools/GeneratedTools"
       -- Use absolute path for cabal build working directory (external command)
       build = interpretCmd @"cabal" $ Tools.cabalBuild (Tools.WorkingDirectory $ T.pack dataDir)
 
@@ -348,7 +348,7 @@ toolBuilderLoop
      , Member Logging r
      , Member Cmds r
      , Member Fail r
-     , Member Grep r
+     , Member (Grep RunixToolsFS) r
      , Member PromptStore r
      , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member (State [Message model]) r
@@ -367,7 +367,7 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
       builderTools =
         [ LLMTool (Tools.readFile @RunixToolsFS)
         , LLMTool (Tools.glob @RunixToolsFS)
-        , LLMTool Tools.grep
+        , LLMTool (Tools.grep @RunixToolsFS)
         , LLMTool (writeToolcodeAtomic cabalPath registryPath modulesDir (raise build))
         , LLMTool (raise build)
         ]
@@ -385,7 +385,7 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
       cabalSublibraryExcerpt = extractGeneratedToolsSublibrary cabalText
 
   -- Get list of existing generated tool files
-  generatedToolFiles <- Tools.glob @RunixToolsFS (Tools.Pattern "generated-tools/**/*.hs")
+  generatedToolFiles <- Tools.glob @RunixToolsFS (Tools.Pattern "/generated-tools/**/*.hs")
   let Tools.GlobResult fileList = generatedToolFiles
       fileTree = T.unlines $ map (\f -> "  - " <> f) fileList
 
