@@ -28,16 +28,15 @@ import qualified UniversalLLM as ULL
 import Runix.LLM (LLM, queryLLM)
 import Runix.LLM.ToolExecution (executeTool)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
-import Config (RunixToolsFS)
+import Config (RunixToolsFS(..))
 import Runix.Cmd (Cmds, interpretCmd)
 import Runix.Logging (Logging, info)
 import Runix.Grep (Grep)
 import Runix.PromptStore (PromptStore)
-import Runix.Config (Config, getConfig)
 import System.FilePath ((</>))
 import Tools.ToolBuilder.Types
+import Runix.FileSystem (getFileSystem)
 import Tools.ToolBuilder.Prompt (loadToolBuilderPrompt)
-import qualified Config as AppConfig
 import qualified Tools  -- Import base tools
 import Runix.LLM.ToolInstances ()
 import qualified Autodocodec
@@ -60,7 +59,6 @@ buildTool
      , Member Fail r
      , Member Grep r
      , Member PromptStore r
-     , Member (Config AppConfig.RunixDataDir) r
      , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member (State [Message model]) r
      , HasTools model
@@ -71,11 +69,13 @@ buildTool
   -> BuildMode
   -> Sem r BuildToolResult
 buildTool toolName desc mode = do
-  -- Get data directory and create build function for all operations
-  AppConfig.RunixDataDir dataDir <- getConfig
-  let cabalFilePath = dataDir </> "runix-code.cabal"
-      registryFilePath = dataDir </> "generated-tools/GeneratedTools.hs"
-      toolModulesDir = dataDir </> "generated-tools/GeneratedTools"
+  -- Get data directory from filesystem parameter
+  RunixToolsFS dataDir <- getFileSystem @RunixToolsFS
+  -- Use relative paths for file operations (filesystem is chrooted)
+  let cabalFilePath = "runix-code.cabal"
+      registryFilePath = "generated-tools/GeneratedTools.hs"
+      toolModulesDir = "generated-tools/GeneratedTools"
+      -- Use absolute path for cabal build working directory (external command)
       build = interpretCmd @"cabal" $ Tools.cabalBuild (Tools.WorkingDirectory $ T.pack dataDir)
 
   -- PRECONDITION: Verify current source tree compiles, abort otherwise
