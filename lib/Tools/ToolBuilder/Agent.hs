@@ -71,6 +71,8 @@ buildTool
 buildTool toolName desc mode = do
   -- Get data directory from filesystem parameter
   RunixToolsFS dataDir <- getFileSystem @RunixToolsFS
+  info $ "Tool builder using data directory: " <> T.pack dataDir
+
   -- Use relative paths for file operations (filesystem is chrooted)
   let cabalFilePath = "runix-code.cabal"
       registryFilePath = "generated-tools/GeneratedTools.hs"
@@ -81,7 +83,9 @@ buildTool toolName desc mode = do
   -- PRECONDITION: Verify current source tree compiles, abort otherwise
   -- The agent can't fix a broken codebase it didn't create
   info "Verifying codebase compiles before starting tool-builder..."
+  info $ "Running cabal build in directory: " <> T.pack dataDir
   baselineCompile <- build
+  info "Cabal build completed"
   case baselineCompile of
     Tools.CabalBuildResult False _stdout stderr -> do
       fail $ "Codebase does not compile. Fix these errors first:\n" <> T.unpack stderr
