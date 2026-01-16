@@ -316,6 +316,8 @@ All effect modules are marked Trustworthy and can be imported in Safe Haskell co
   - Runix core effects are exported Trustworthy
  - you are within a chroot ( / is the root of runix-code )
  - **CRITICAL:** this agent is still under heavy development, if something is not working as expected, or broken, abort and report back with useful feedback instead of muddling through.
+ - DO NOT re-read the same files over and over again
+ - articulate your though process: say _why_ you're looking at a file
 
 CRITICAL RULES:
 - Use `write_toolcode_atomic` to append new tool code - this is your ONLY tool for adding tools

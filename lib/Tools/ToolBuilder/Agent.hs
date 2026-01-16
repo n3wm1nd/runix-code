@@ -557,31 +557,17 @@ data ToolDef = ToolDef
   , toolDefDisabled :: Bool
   } deriving (Show, Eq)
 
--- | Complete registry state
-data RegistryState = RegistryState
-  { registryImports :: [Text]  -- ^ Module names (e.g., "Echo")
-  , registryExports :: [Text]  -- ^ Export names (e.g., "Echo.echoTool")
-  , registryTools :: [ToolDef]
-  } deriving (Show, Eq)
+-- | Derive unique module names from tools list
+deriveImports :: [ToolDef] -> [Text]
+deriveImports tools =
+  let modules = map toolDefModule tools
+      unique [] = []
+      unique (x:xs) = x : unique (filter (/= x) xs)
+  in unique modules
 
--- | Parse imports section into list of module names
-parseImports :: Text -> [Text]
-parseImports registryContent =
-  let contentLines = T.lines registryContent
-      (_, afterStart) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_START") contentLines
-      importLines = case afterStart of
-        (_:rest) -> takeWhile (not . T.isInfixOf "GENERATED_TOOL_IMPORTS_END") rest
-        [] -> []
-  in mapMaybe parseImportLine importLines
-  where
-    parseImportLine line
-      | "import qualified GeneratedTools." `T.isInfixOf` line =
-          -- Extract module name from "import qualified GeneratedTools.Foo as Foo"
-          let afterPrefix = T.breakOn "GeneratedTools." line
-              afterDot = T.drop (T.length "GeneratedTools.") (snd afterPrefix)
-              moduleName = T.takeWhile (/= ' ') afterDot
-          in if T.null moduleName then Nothing else Just (T.strip moduleName)
-      | otherwise = Nothing
+-- | Derive exports from tools list
+deriveExports :: [ToolDef] -> [Text]
+deriveExports tools = map (\t -> toolDefModule t <> "." <> toolDefFunction t) tools
 
 -- | Render imports section from list of module names
 renderImports :: [Text] -> Text
@@ -590,25 +576,6 @@ renderImports modules =
   where
     renderImport modName =
       "import qualified GeneratedTools." <> modName <> " as " <> modName
-
--- | Parse exports section into list of export names
-parseExports :: Text -> [Text]
-parseExports registryContent =
-  let contentLines = T.lines registryContent
-      (_, afterStart) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_START") contentLines
-      exportLines = case afterStart of
-        (_:rest) -> takeWhile (not . T.isInfixOf "GENERATED_TOOL_EXPORTS_END") rest
-        [] -> []
-  in mapMaybe parseExportLine exportLines
-  where
-    parseExportLine line
-      -- Look for ", Module.function" pattern
-      | "." `T.isInfixOf` line && not ("--" `T.isPrefixOf` T.strip line) =
-          let stripped = T.strip line
-              -- Remove leading comma and whitespace
-              withoutComma = T.stripStart $ T.dropWhile (== ',') stripped
-          in if T.null withoutComma then Nothing else Just withoutComma
-      | otherwise = Nothing
 
 -- | Render exports section from list of export names
 renderExports :: [Text] -> Text
@@ -655,106 +622,109 @@ renderToolsList tools =
         (t:ts) -> renderTool True t : map (renderTool False) ts
   in T.unlines rendered
 
--- | Parse entire registry into structured state
-parseRegistry :: Text -> RegistryState
-parseRegistry registryContent =
-  RegistryState
-    { registryImports = parseImports registryContent
-    , registryExports = parseExports registryContent
-    , registryTools = parseToolsList registryContent
-    }
-
--- | Replace entire registry with structured state
-setRegistry :: Text -> RegistryState -> Text
-setRegistry registryContent state =
-  let step1 = setImportsSection registryContent (registryImports state)
-      step2 = setExportsSection step1 (registryExports state)
-      step3 = setToolsList step2 (registryTools state)
+-- | Replace entire registry from tools list (derives imports and exports)
+setRegistryFromTools :: Text -> [ToolDef] -> Text
+setRegistryFromTools registryContent tools =
+  let imports = deriveImports tools
+      exports = deriveExports tools
+      step1 = setImportsSection registryContent imports
+      step2 = setExportsSection step1 exports
+      step3 = setToolsListSection step2 tools
   in step3
   where
-    setImportsSection content imports =
+    setImportsSection content importModules =
       let contentLines = T.lines content
           (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_START") contentLines
           (_, afterEnd) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_END") afterStart
       in case (afterStart, afterEnd) of
         (startMarker:_, endMarker:rest) ->
-          let renderedImports = T.lines $ renderImports imports
+          let renderedImports = T.lines $ renderImports importModules
           in T.unlines $ beforeStart ++ [startMarker] ++ renderedImports ++
                ["-- Tool module imports will be added here automatically"] ++
                ["-- Example: import qualified GeneratedTools.Echo as Echo"] ++
                [endMarker] ++ rest
         _ -> content
 
-    setExportsSection content exports =
+    setExportsSection content exportNames =
       let contentLines = T.lines content
           (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_START") contentLines
           (_, afterEnd) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_END") afterStart
       in case (afterStart, afterEnd) of
         (startMarker:_, endMarker:rest) ->
-          let renderedExports = T.lines $ renderExports exports
+          let renderedExports = T.lines $ renderExports exportNames
           in T.unlines $ beforeStart ++ [startMarker] ++ renderedExports ++
                ["    -- Tool exports will be added here automatically"] ++
                [endMarker] ++ rest
         _ -> content
 
-    setToolsList content tools =
+    setToolsListSection content toolsList =
       let contentLines = T.lines content
           (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOLS_LIST_START") contentLines
           (_, afterEnd) = break (T.isInfixOf "GENERATED_TOOLS_LIST_END") afterStart
       in case (afterStart, afterEnd) of
         (startMarker:_, endMarker:rest) ->
-          let renderedTools = T.lines $ renderToolsList tools
+          let renderedTools = T.lines $ renderToolsList toolsList
           in T.unlines $ beforeStart ++ [startMarker] ++ renderedTools ++
                ["    -- Tools will be added here automatically"] ++
                ["    -- Example: LLMTool Echo.echoTool"] ++
                [endMarker] ++ rest
         _ -> content
 
--- | Add tool to registry (import, export, and list entry)
+-- | Pure list operations on tool definitions
+
+-- | Add tool to list
+addToolToList :: Text -> Text -> [ToolDef] -> [ToolDef]
+addToolToList moduleName functionName tools =
+  tools ++ [ToolDef moduleName functionName False]
+
+-- | Remove tool from list
+removeToolFromList :: Text -> Text -> [ToolDef] -> [ToolDef]
+removeToolFromList moduleName functionName tools =
+  filter (\t -> not (toolDefModule t == moduleName && toolDefFunction t == functionName)) tools
+
+-- | Enable tool in list
+enableToolInList :: Text -> Text -> [ToolDef] -> [ToolDef]
+enableToolInList moduleName functionName tools =
+  map (\t -> if toolDefModule t == moduleName && toolDefFunction t == functionName
+             then t { toolDefDisabled = False }
+             else t) tools
+
+-- | Disable tool in list
+disableToolInList :: Text -> Text -> [ToolDef] -> [ToolDef]
+disableToolInList moduleName functionName tools =
+  map (\t -> if toolDefModule t == moduleName && toolDefFunction t == functionName
+             then t { toolDefDisabled = True }
+             else t) tools
+
+-- | File operations: read and write only
+
+-- | Add tool to registry (read → transform → write)
 addToolToRegistry :: Text -> Text -> Text -> Text -> Text
 addToolToRegistry moduleName _qualifiedModuleName functionName registryContent =
-  let state = parseRegistry registryContent
-      newImports = registryImports state ++ [moduleName]
-      newExports = registryExports state ++ [moduleName <> "." <> functionName]
-      newTools = registryTools state ++ [ToolDef moduleName functionName False]
-      updatedState = state { registryImports = newImports
-                           , registryExports = newExports
-                           , registryTools = newTools
-                           }
-  in setRegistry registryContent updatedState
+  let tools = parseToolsList registryContent
+      updatedTools = addToolToList moduleName functionName tools
+  in setRegistryFromTools registryContent updatedTools
 
--- | Remove tool from registry (import, export, and list entry)
+-- | Remove tool from registry (read → transform → write)
 removeToolFromRegistry :: Text -> Text -> Text -> Text
 removeToolFromRegistry moduleName functionName registryContent =
-  let state = parseRegistry registryContent
-      filteredImports = filter (/= moduleName) (registryImports state)
-      filteredExports = filter (/= (moduleName <> "." <> functionName)) (registryExports state)
-      filteredTools = filter (\t -> not (toolDefModule t == moduleName && toolDefFunction t == functionName)) (registryTools state)
-      updatedState = state { registryImports = filteredImports
-                           , registryExports = filteredExports
-                           , registryTools = filteredTools
-                           }
-  in setRegistry registryContent updatedState
+  let tools = parseToolsList registryContent
+      updatedTools = removeToolFromList moduleName functionName tools
+  in setRegistryFromTools registryContent updatedTools
 
--- | Enable tool (uncomment in tools list)
+-- | Enable tool (read → transform → write)
 enableToolInRegistry :: Text -> Text -> Text -> Text
 enableToolInRegistry moduleName functionName registryContent =
-  let state = parseRegistry registryContent
-      updatedTools = map (\t -> if toolDefModule t == moduleName && toolDefFunction t == functionName
-                                then t { toolDefDisabled = False }
-                                else t) (registryTools state)
-      updatedState = state { registryTools = updatedTools }
-  in setRegistry registryContent updatedState
+  let tools = parseToolsList registryContent
+      updatedTools = enableToolInList moduleName functionName tools
+  in setRegistryFromTools registryContent updatedTools
 
--- | Disable tool (comment in tools list)
+-- | Disable tool (read → transform → write)
 disableToolInRegistry :: Text -> Text -> Text -> Text
 disableToolInRegistry moduleName functionName registryContent =
-  let state = parseRegistry registryContent
-      updatedTools = map (\t -> if toolDefModule t == moduleName && toolDefFunction t == functionName
-                                then t { toolDefDisabled = True }
-                                else t) (registryTools state)
-      updatedState = state { registryTools = updatedTools }
-  in setRegistry registryContent updatedState
+  let tools = parseToolsList registryContent
+      updatedTools = disableToolInList moduleName functionName tools
+  in setRegistryFromTools registryContent updatedTools
 
 -- | Extract list of tools from registry with their enabled/disabled status
 extractToolsList :: Text -> Text

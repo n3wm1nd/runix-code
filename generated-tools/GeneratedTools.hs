@@ -1,5 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wno-unused-imports #-}
+{-# OPTIONS_GHC -Wno-missing-exported-signatures #-}
+{-# OPTIONS_GHC -Wno-missing-signatures #-}
 
 -- | Registry module for dynamically generated tools
 --
@@ -17,6 +19,9 @@ module GeneratedTools
 import Runix.Safe.Polysemy (Sem)
 import Runix.Safe.Polysemy.Fail (Fail)
 import Runix.LLM (LLMTool(..))
+import Runix.Cmd (Cmd)
+import Runix.Safe.Polysemy
+import Runix.FileSystem.Simple (FileSystem, FileSystemRead, FileSystemWrite)
 
 -- GENERATED_TOOL_IMPORTS_START
 import qualified GeneratedTools.Echo as Echo
@@ -30,7 +35,10 @@ import qualified GeneratedTools.Echo as Echo
 
 -- | All generated tools are registered here
 -- The tool-builder agent will add new tools to this list
-generatedTools :: forall r. [LLMTool (Sem (Fail ': r))]
+generatedTools :: forall r. (
+  Member (Cmd "cabal") r
+  , Members [FileSystem, FileSystemRead, FileSystemWrite] r
+  ) => [LLMTool (Sem (Fail ': r))]
 generatedTools =
   [ -- GENERATED_TOOLS_LIST_START
     LLMTool Echo.echoTool
@@ -38,3 +46,4 @@ generatedTools =
     -- Example: LLMTool Echo.echoTool
     -- GENERATED_TOOLS_LIST_END
   ]
+

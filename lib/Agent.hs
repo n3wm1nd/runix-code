@@ -48,6 +48,7 @@ import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS, RunixDataDir)
 import UI.UserInput
 import Autodocodec
 import Runix.LLM.ToolExecution (executeTool)
+import qualified Runix.FileSystem.Simple as Simple
 
 --------------------------------------------------------------------------------
 -- Semantic Newtypes
@@ -138,9 +139,10 @@ runixCode
      , Member (FileWatcher ProjectFS) r
      , Member PromptStore r
      , Member (Config RunixDataDir) r
-     , Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
-     , Members '[FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
-     , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Members [FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
+     , Members [FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
+     , Members [FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Members [Simple.FileSystem, Simple.FileSystemRead, Simple.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
      , Member (Reader [ModelConfig model]) r
