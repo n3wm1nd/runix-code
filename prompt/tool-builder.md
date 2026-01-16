@@ -18,8 +18,8 @@ Every tool must have:
 
 ## Module Structure
 
-- **GeneratedTools.hs** - Registry that imports and re-exports all generated tools
-- **GeneratedTools/{ToolName}.hs** - Individual module for each tool
+- **/generated_tools/GeneratedTools.hs** - Registry that imports and re-exports all generated tools
+- **/generated_tools/GeneratedTools/{ToolName}.hs** - Individual module for each tool
 
 ## Tool Module Organization
 
@@ -48,14 +48,13 @@ Even if your module compiles in isolation, it can still fail when integrated if 
 You are encouraged to explore the runix and runix-code codebase to find patterns, understand available effects, and see how existing tools work.
 
 **Recommended starting points:**
-- `lib/Tools.hs` - Reference implementation showing tool patterns
+- `/lib/Tools.hs` - Reference implementation showing tool patterns
   - **NOTE:** You CANNOT import this module (circular dependency)
   - Use it as inspiration to see how to structure tools and which Runix effects to call
   - The Tools module is just a thin wrapper around Runix effects - call those directly instead
-- `lib/Agent.hs` - Main agent loop and tool execution patterns
-- `GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
-- `../../runix/src/Runix/**/*.hs` - Core Runix effects and interpreters (these you CAN import)
-
+- `/lib/Agent.hs` - Main agent loop and tool execution patterns
+- `/generated_tools/GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
+-  read access to Core Runix effects and interpreters (these you CAN import) is planned, but not yet available to you (WIP)
 Use the `read_file`, `glob`, and `grep` tools to explore code and find relevant patterns.
 
 ## Workflow
@@ -155,9 +154,9 @@ instance ToolFunction ReadFileResult where
   toolFunctionDescription _ = "Read a file from the filesystem and return its contents"
 
 -- Implementation
-readFile :: Members '[FileSystemRead, Fail] r => FilePath -> Sem r ReadFileResult
+readFile :: Members '[FileSystemRead project, Fail] r => FilePath -> Sem r ReadFileResult
 readFile (FilePath path) = do
-  contents <- Runix.FileSystem.readFile (T.unpack path)
+  contents <- Runix.FileSystem.readFile @project (T.unpack path)
   return $ ReadFileResult (T.decodeUtf8 contents)
 ```
 
@@ -218,16 +217,16 @@ instance ToolFunction EditFileResult where
 
 -- Implementation
 editFile
-  :: Members '[FileSystemRead, FileSystemWrite, Fail] r
+  :: Members '[FileSystemRead project, FileSystemWrite project, Fail] r
   => FilePath
   -> OldString
   -> NewString
   -> Sem r EditFileResult
 editFile (FilePath path) (OldString old) (NewString new) = do
-  contents <- Runix.FileSystem.readFile (T.unpack path)
+  contents <- Runix.FileSystem.readFile @project (T.unpack path)
   let contentText = T.decodeUtf8 contents
       replaced = T.replace old new contentText
-  Runix.FileSystem.writeFile (T.unpack path) (T.encodeUtf8 replaced)
+  Runix.FileSystem.writeFile @project (T.unpack path) (T.encodeUtf8 replaced)
   return $ EditFileResult True ("Successfully replaced in " <> path)
 ```
 
@@ -306,6 +305,7 @@ All effect modules are marked Trustworthy and can be imported in Safe Haskell co
 - Use appropriate effects in function signatures
 - Always use newtype wrappers for semantic clarity
 - Import everything you need (don't assume imports are available)
+- you only have a limited numbers of iterations available, do NOT get stuck in loops and be efficient with your batched toolcalls.
 - Keep Safe Haskell constraints in mind
 - **CRITICAL: Use Safe Haskell reexports for all imports:**
   - `Runix.Safe.Polysemy` (NOT `Polysemy`)
@@ -313,6 +313,9 @@ All effect modules are marked Trustworthy and can be imported in Safe Haskell co
   - `Runix.Safe.Polysemy.State` (NOT `Polysemy.State`)
   - `Runix.Safe.Autodocodec` (NOT `Autodocodec`)
   - These reexports are required for Safe Haskell compilation
+  - Runix core effects are exported Trustworthy
+ - you are within a chroot ( / is the root of runix-code )
+ - **CRITICAL:** this agent is still under heavy development, if something is not working as expected, or broken, abort and report back with useful feedback instead of muddling through.
 
 CRITICAL RULES:
 - Use `write_toolcode_atomic` to append new tool code - this is your ONLY tool for adding tools

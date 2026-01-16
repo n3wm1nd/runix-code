@@ -232,6 +232,7 @@ test-suite runix-code-test
     default-language: Haskell2010
 
     build-depends:    base >=4.17 && <5
+                    , runix-code
                     , runix-code-tui-lib
                     , hspec >=2.11
                     , QuickCheck >=2.14
@@ -251,6 +252,7 @@ test-suite runix-code-test
                     , polysemy >=1.9
 
     other-modules:    OutputHistorySpec
+                    , RegistrySpec
 
 -- Vty version removed - brick provides better abstraction for our use case
 -- The raw vty exploration showed it doesn't offer advantages over brick:

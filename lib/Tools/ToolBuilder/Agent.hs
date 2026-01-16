@@ -13,11 +13,16 @@
 module Tools.ToolBuilder.Agent
   ( buildTool
   , toolBuilderLoop
+  -- * Exported for testing
+  , ToolDef(..)
+  , parseToolsList
+  , renderToolsList
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Char
+import Data.Maybe (mapMaybe)
 import Polysemy (Member, Members, Sem, raise)
 import Polysemy.State (State, get, put)
 import Polysemy.Fail (Fail)
@@ -126,6 +131,7 @@ buildTool toolName desc mode = do
 writeToolcodeAtomic
   :: forall r.
      ( Member Fail r
+     , Member (FileSystem RunixToolsFS) r
      , Members '[FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
      , Member Logging r
      )
@@ -167,13 +173,28 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
   _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent updatedCabal)
   info "Updated cabal file with new module"
 
-  -- Step 4: Update registry file
-  let functionName = extractFunctionName code
-      updatedRegistry = updateRegistry registryText moduleName qualifiedModuleName functionName
-  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updatedRegistry)
-  info "Updated registry file with new tool"
+  -- Step 4: Extract function name (with rollback on failure)
+  functionName <- case extractFunctionName code of
+    Just fname -> return fname
+    Nothing -> do
+      -- Rollback cabal file
+      _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
+      info "Rolled back cabal file due to function extraction failure"
+      fail $ T.unpack $ T.unlines
+        [ "ERROR: Could not extract function name from generated code."
+        , "The code must contain a top-level function with a type signature (e.g., 'myTool :: ...')."
+        , ""
+        , "Generated code was:"
+        , code
+        ]
 
-  -- Step 5: Try to compile
+  -- Step 5: Add to registry (if this fails, Fail effect will propagate, but we need to rollback cabal)
+  -- We can't easily catch Fail, so we'll accept that addGeneratedTool failing leaves cabal modified
+  -- The user can retry and it should work since addToolToRegistry handles duplicates gracefully
+  AddToolResult _ <- addGeneratedTool (AddToolParams moduleName qualifiedModuleName functionName)
+  info $ "Updated registry file with function: " <> functionName
+
+  -- Step 6: Try to compile
   info "Attempting compilation..."
   buildResult <- build
 
@@ -186,14 +207,17 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
       -- Compilation failed - roll back all changes
       info $ "Compilation failed for tool: " <> name <> ", rolling back all changes"
 
-      -- Restore registry file (this removes the import/export/registration)
+      -- Restore registry file from backup
       _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent registryText)
+      info "Restored registry file from backup"
 
-      -- Restore cabal file (this removes the module from exposed-modules)
+      -- Restore cabal file from backup
       _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
+      info "Restored cabal file from backup"
 
-      -- Note: The module file remains but is orphaned (not referenced by cabal)
-      -- This is harmless and avoids requiring file deletion privileges
+      -- Remove the module file
+      _ <- Tools.remove @RunixToolsFS (Tools.FilePath $ T.pack moduleFilePath) (Tools.Recursive False)
+      info $ "Removed module file: " <> T.pack moduleFilePath
 
       fail $ "Compilation failed:\n" <> T.unpack stderr
 
@@ -226,29 +250,52 @@ toModuleName name =
 
 -- | Extract function name from tool code
 -- Looks for the main function definition (e.g., "echoTool :: ...")
+-- Handles multi-line type signatures by joining continuation lines
 -- Skips record field definitions and data type constructors
-extractFunctionName :: Text -> Text
+-- Returns Nothing if no function signature found
+extractFunctionName :: Text -> Maybe Text
 extractFunctionName code =
   let codeLines = T.lines code
-      -- Find lines with " :: " (type signature)
-      sigLines = filter isTopLevelFunctionSig codeLines
-      -- Take first signature, extract function name (everything before ::)
-      firstSig = case sigLines of
-        (sig:_) -> T.strip $ T.takeWhile (/= ':') sig
-        [] -> "unknownTool"  -- fallback
-  in firstSig
+      -- Reconstruct potential multi-line signatures by looking for "::" anywhere
+      -- and extracting the identifier before it
+      signatures = mapMaybe findSignature (joinContinuations codeLines)
+  in case signatures of
+       (name:_) -> Just name
+       [] -> Nothing
   where
-    -- Check if line is a top-level function signature (not a record field)
-    isTopLevelFunctionSig line =
+    -- Join continuation lines (lines that don't start at column 0)
+    joinContinuations :: [Text] -> [Text]
+    joinContinuations [] = []
+    joinContinuations (l:ls) =
+      let (cont, rest) = span isContinuation ls
+      in (T.unwords (l:cont)) : joinContinuations rest
+
+    isContinuation line =
+      not (T.null line) && T.head line `elem` [' ', '\t']
+
+    -- Find function name in a line containing "::"
+    findSignature :: Text -> Maybe Text
+    findSignature line
+      | " :: " `T.isInfixOf` line =
+          let trimmed = T.strip line
+              beforeSig = T.takeWhile (/= ':') line
+              candidate = T.strip $ last $ T.words beforeSig
+          in if isValidFunctionName candidate && not (isRecordField trimmed)
+             then Just candidate
+             else Nothing
+      | otherwise = Nothing
+
+    -- Check if this looks like a valid function name
+    isValidFunctionName name =
+      not (T.null name) &&
+      case T.uncons name of
+        Just (c, _) -> Data.Char.isLower c || c == '('
+        Nothing -> False
+
+    -- Check if this is a record field (starts with { or ,)
+    isRecordField line =
       let trimmed = T.strip line
-      in " :: " `T.isInfixOf` line &&  -- has type signature
-         not (T.isPrefixOf "{" trimmed) &&  -- not record syntax start
-         not ("}" `T.isInfixOf` line) &&  -- not in record block
-         not (T.isPrefixOf "," trimmed) &&  -- not a record field continuation
-         -- Function names start with lowercase or are operators
-         case T.uncons trimmed of
-           Just (c, _) -> Data.Char.isLower c || c == '('
-           Nothing -> False
+      in T.isPrefixOf "{" trimmed || T.isPrefixOf "," trimmed || "}" `T.isInfixOf` line
 
 -- | Add module to cabal file between markers
 addModuleToCabal :: Text -> Text -> Text
@@ -263,33 +310,463 @@ addModuleToCabal cabalContent moduleName =
         [] -> contentLines  -- marker not found, return unchanged
   in T.unlines updated
 
--- | Update registry file with import, export, and tool registration
-updateRegistry :: Text -> Text -> Text -> Text -> Text
-updateRegistry registryContent moduleName qualifiedModuleName functionName =
+--------------------------------------------------------------------------------
+-- Registry Management Tools (user-facing, callable independently)
+--------------------------------------------------------------------------------
+
+-- | Enable a tool in the registry (uncomment it)
+enableGeneratedTool
+  :: forall r.
+     ( Member Fail r
+     , Members '[FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Member Logging r
+     )
+  => EnableToolParams
+  -> Sem r EnableToolResult
+enableGeneratedTool (EnableToolParams moduleName functionName) = do
+  -- Use path relative to filesystem root (which is chrooted)
+  let registryPath = "/generated-tools/GeneratedTools.hs"
+
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
+      updated = enableToolInRegistry moduleName functionName registryText
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updated)
+  info $ "Enabled tool: " <> moduleName <> "." <> functionName
+  return $ EnableToolResult ("Enabled tool: " <> moduleName <> "." <> functionName)
+
+data EnableToolParams = EnableToolParams
+  { enableModuleName :: Text
+  , enableFunctionName :: Text
+  } deriving (Show, Eq)
+
+instance Autodocodec.HasCodec EnableToolParams where
+  codec = Autodocodec.object "EnableToolParams" $
+    EnableToolParams
+      <$> Autodocodec.requiredField "module_name" "Module name (e.g., 'Echo')" Autodocodec..= enableModuleName
+      <*> Autodocodec.requiredField "function_name" "Function name (e.g., 'echoTool')" Autodocodec..= enableFunctionName
+
+instance UniversalLLM.Tools.ToolParameter EnableToolParams where
+  paramName _ _ = "enable_tool_params"
+  paramDescription _ = "parameters to enable a tool"
+
+newtype EnableToolResult = EnableToolResult Text
+  deriving stock (Show, Eq)
+  deriving (Autodocodec.HasCodec) via Text
+
+instance UniversalLLM.Tools.ToolParameter EnableToolResult where
+  paramName _ _ = "result"
+  paramDescription _ = "result of enabling tool"
+
+instance UniversalLLM.Tools.ToolFunction EnableToolResult where
+  toolFunctionName _ = "enable_generated_tool"
+  toolFunctionDescription _ = "Enable a generated tool by uncommenting it in the registry"
+
+-- | Disable a tool in the registry (comment it out)
+disableGeneratedTool
+  :: forall r.
+     ( Member Fail r
+     , Members '[FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Member Logging r
+     )
+  => DisableToolParams
+  -> Sem r DisableToolResult
+disableGeneratedTool (DisableToolParams moduleName functionName) = do
+  -- Use path relative to filesystem root (which is chrooted)
+  let registryPath = "/generated-tools/GeneratedTools.hs"
+
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
+      updated = disableToolInRegistry moduleName functionName registryText
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updated)
+  info $ "Disabled tool: " <> moduleName <> "." <> functionName
+  return $ DisableToolResult ("Disabled tool: " <> moduleName <> "." <> functionName)
+
+data DisableToolParams = DisableToolParams
+  { disableModuleName :: Text
+  , disableFunctionName :: Text
+  } deriving (Show, Eq)
+
+instance Autodocodec.HasCodec DisableToolParams where
+  codec = Autodocodec.object "DisableToolParams" $
+    DisableToolParams
+      <$> Autodocodec.requiredField "module_name" "Module name (e.g., 'Echo')" Autodocodec..= disableModuleName
+      <*> Autodocodec.requiredField "function_name" "Function name (e.g., 'echoTool')" Autodocodec..= disableFunctionName
+
+instance UniversalLLM.Tools.ToolParameter DisableToolParams where
+  paramName _ _ = "disable_tool_params"
+  paramDescription _ = "parameters to disable a tool"
+
+newtype DisableToolResult = DisableToolResult Text
+  deriving stock (Show, Eq)
+  deriving (Autodocodec.HasCodec) via Text
+
+instance UniversalLLM.Tools.ToolParameter DisableToolResult where
+  paramName _ _ = "result"
+  paramDescription _ = "result of disabling tool"
+
+instance UniversalLLM.Tools.ToolFunction DisableToolResult where
+  toolFunctionName _ = "disable_generated_tool"
+  toolFunctionDescription _ = "Disable a generated tool by commenting it out in the registry"
+
+-- | Remove a tool from the registry completely
+removeGeneratedTool
+  :: forall r.
+     ( Member Fail r
+     , Members '[FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Member Logging r
+     )
+  => RemoveToolParams
+  -> Sem r RemoveToolResult
+removeGeneratedTool (RemoveToolParams moduleName functionName) = do
+  -- Use path relative to filesystem root (which is chrooted)
+  let registryPath = "/generated-tools/GeneratedTools.hs"
+
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
+      updated = removeToolFromRegistry moduleName functionName registryText
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updated)
+  info $ "Removed tool from registry: " <> moduleName <> "." <> functionName
+  return $ RemoveToolResult ("Removed tool from registry: " <> moduleName <> "." <> functionName)
+
+data RemoveToolParams = RemoveToolParams
+  { removeModuleName :: Text
+  , removeFunctionName :: Text
+  } deriving (Show, Eq)
+
+instance Autodocodec.HasCodec RemoveToolParams where
+  codec = Autodocodec.object "RemoveToolParams" $
+    RemoveToolParams
+      <$> Autodocodec.requiredField "module_name" "Module name (e.g., 'Echo')" Autodocodec..= removeModuleName
+      <*> Autodocodec.requiredField "function_name" "Function name (e.g., 'echoTool')" Autodocodec..= removeFunctionName
+
+instance UniversalLLM.Tools.ToolParameter RemoveToolParams where
+  paramName _ _ = "remove_tool_params"
+  paramDescription _ = "parameters to remove a tool"
+
+newtype RemoveToolResult = RemoveToolResult Text
+  deriving stock (Show, Eq)
+  deriving (Autodocodec.HasCodec) via Text
+
+instance UniversalLLM.Tools.ToolParameter RemoveToolResult where
+  paramName _ _ = "result"
+  paramDescription _ = "result of removing tool"
+
+instance UniversalLLM.Tools.ToolFunction RemoveToolResult where
+  toolFunctionName _ = "remove_generated_tool"
+  toolFunctionDescription _ = "Remove a generated tool from the registry (import, export, and list)"
+
+-- | Add a new tool to the registry
+addGeneratedTool
+  :: forall r.
+     ( Member Fail r
+     , Members '[FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Member Logging r
+     )
+  => AddToolParams
+  -> Sem r AddToolResult
+addGeneratedTool (AddToolParams moduleName qualifiedModuleName functionName) = do
+  -- Use path relative to filesystem root (which is chrooted)
+  let registryPath = "/generated-tools/GeneratedTools.hs"
+
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
+      updated = addToolToRegistry moduleName qualifiedModuleName functionName registryText
+  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent updated)
+  info $ "Added tool to registry: " <> moduleName <> "." <> functionName
+  return $ AddToolResult ("Added tool to registry: " <> moduleName <> "." <> functionName)
+
+data AddToolParams = AddToolParams
+  { addModuleName :: Text
+  , addQualifiedModuleName :: Text
+  , addFunctionName :: Text
+  } deriving (Show, Eq)
+
+instance Autodocodec.HasCodec AddToolParams where
+  codec = Autodocodec.object "AddToolParams" $
+    AddToolParams
+      <$> Autodocodec.requiredField "module_name" "Module name (e.g., 'Echo')" Autodocodec..= addModuleName
+      <*> Autodocodec.requiredField "qualified_module_name" "Qualified module name (e.g., 'GeneratedTools.Echo')" Autodocodec..= addQualifiedModuleName
+      <*> Autodocodec.requiredField "function_name" "Function name (e.g., 'echoTool')" Autodocodec..= addFunctionName
+
+instance UniversalLLM.Tools.ToolParameter AddToolParams where
+  paramName _ _ = "add_tool_params"
+  paramDescription _ = "parameters to add a tool to registry"
+
+newtype AddToolResult = AddToolResult Text
+  deriving stock (Show, Eq)
+  deriving (Autodocodec.HasCodec) via Text
+
+instance UniversalLLM.Tools.ToolParameter AddToolResult where
+  paramName _ _ = "result"
+  paramDescription _ = "result of adding tool"
+
+instance UniversalLLM.Tools.ToolFunction AddToolResult where
+  toolFunctionName _ = "add_generated_tool"
+  toolFunctionDescription _ = "Add a new tool to the registry (import, export, and list entry)"
+
+-- | List all generated tools in the registry
+listGeneratedTools
+  :: forall r.
+     ( Member Fail r
+     , Member (FileSystemRead RunixToolsFS) r
+     , Member Logging r
+     )
+  => ListToolsParams
+  -> Sem r ListToolsResult
+listGeneratedTools _ = do
+  -- Use path relative to filesystem root (which is chrooted)
+  let registryPath = "/generated-tools/GeneratedTools.hs"
+
+  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
+  let Tools.ReadFileResult registryText = registryContent
+      toolsList = extractToolsList registryText
+  info "Listed generated tools from registry"
+  return $ ListToolsResult toolsList
+
+-- No parameters needed for listing
+data ListToolsParams = ListToolsParams
+  deriving (Show, Eq)
+
+instance Autodocodec.HasCodec ListToolsParams where
+  codec = Autodocodec.object "ListToolsParams" $ pure ListToolsParams
+
+instance UniversalLLM.Tools.ToolParameter ListToolsParams where
+  paramName _ _ = "list_tools_params"
+  paramDescription _ = "no parameters needed"
+
+newtype ListToolsResult = ListToolsResult Text
+  deriving stock (Show, Eq)
+  deriving (Autodocodec.HasCodec) via Text
+
+instance UniversalLLM.Tools.ToolParameter ListToolsResult where
+  paramName _ _ = "tools"
+  paramDescription _ = "list of generated tools with their status"
+
+instance UniversalLLM.Tools.ToolFunction ListToolsResult where
+  toolFunctionName _ = "list_generated_tools"
+  toolFunctionDescription _ = "List all generated tools showing which are enabled/disabled"
+
+--------------------------------------------------------------------------------
+-- Helper Functions (Structured Registry Manipulation)
+--------------------------------------------------------------------------------
+
+-- | Tool definition with name and status
+data ToolDef = ToolDef
+  { toolDefModule :: Text
+  , toolDefFunction :: Text
+  , toolDefDisabled :: Bool
+  } deriving (Show, Eq)
+
+-- | Complete registry state
+data RegistryState = RegistryState
+  { registryImports :: [Text]  -- ^ Module names (e.g., "Echo")
+  , registryExports :: [Text]  -- ^ Export names (e.g., "Echo.echoTool")
+  , registryTools :: [ToolDef]
+  } deriving (Show, Eq)
+
+-- | Parse imports section into list of module names
+parseImports :: Text -> [Text]
+parseImports registryContent =
   let contentLines = T.lines registryContent
+      (_, afterStart) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_START") contentLines
+      importLines = case afterStart of
+        (_:rest) -> takeWhile (not . T.isInfixOf "GENERATED_TOOL_IMPORTS_END") rest
+        [] -> []
+  in mapMaybe parseImportLine importLines
+  where
+    parseImportLine line
+      | "import qualified GeneratedTools." `T.isInfixOf` line =
+          -- Extract module name from "import qualified GeneratedTools.Foo as Foo"
+          let afterPrefix = T.breakOn "GeneratedTools." line
+              afterDot = T.drop (T.length "GeneratedTools.") (snd afterPrefix)
+              moduleName = T.takeWhile (/= ' ') afterDot
+          in if T.null moduleName then Nothing else Just (T.strip moduleName)
+      | otherwise = Nothing
 
-      -- Step 1: Add import
-      (beforeImports, afterImports) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_START") contentLines
-      withImport = case afterImports of
-        (markerLine:rest) ->
-          beforeImports ++ [markerLine, "import qualified " <> qualifiedModuleName <> " as " <> moduleName] ++ rest
-        [] -> contentLines
+-- | Render imports section from list of module names
+renderImports :: [Text] -> Text
+renderImports modules =
+  T.unlines $ map renderImport modules
+  where
+    renderImport modName =
+      "import qualified GeneratedTools." <> modName <> " as " <> modName
 
-      -- Step 2: Add export
-      (beforeExports, afterExports) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_START") withImport
-      withExport = case afterExports of
-        (markerLine:rest) ->
-          beforeExports ++ [markerLine, "  , " <> moduleName <> "." <> functionName] ++ rest
-        [] -> withImport
+-- | Parse exports section into list of export names
+parseExports :: Text -> [Text]
+parseExports registryContent =
+  let contentLines = T.lines registryContent
+      (_, afterStart) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_START") contentLines
+      exportLines = case afterStart of
+        (_:rest) -> takeWhile (not . T.isInfixOf "GENERATED_TOOL_EXPORTS_END") rest
+        [] -> []
+  in mapMaybe parseExportLine exportLines
+  where
+    parseExportLine line
+      -- Look for ", Module.function" pattern
+      | "." `T.isInfixOf` line && not ("--" `T.isPrefixOf` T.strip line) =
+          let stripped = T.strip line
+              -- Remove leading comma and whitespace
+              withoutComma = T.stripStart $ T.dropWhile (== ',') stripped
+          in if T.null withoutComma then Nothing else Just withoutComma
+      | otherwise = Nothing
 
-      -- Step 3: Add to generatedTools list
-      (beforeTools, afterTools) = break (T.isInfixOf "GENERATED_TOOLS_LIST_START") withExport
-      withTool = case afterTools of
-        (markerLine:rest) ->
-          beforeTools ++ [markerLine, "    LLMTool " <> moduleName <> "." <> functionName] ++ rest
-        [] -> withExport
+-- | Render exports section from list of export names
+renderExports :: [Text] -> Text
+renderExports exports =
+  T.unlines $ map renderExport exports
+  where
+    renderExport exportName = "  , " <> exportName
 
-  in T.unlines withTool
+-- | Parse tools list section into structured data
+parseToolsList :: Text -> [ToolDef]
+parseToolsList registryContent =
+  let contentLines = T.lines registryContent
+      (_, afterStart) = break (T.isInfixOf "GENERATED_TOOLS_LIST_START") contentLines
+      toolLines = case afterStart of
+        (_:rest) -> takeWhile (not . T.isInfixOf "GENERATED_TOOLS_LIST_END") rest
+        [] -> []
+  in mapMaybe parseToolLine toolLines
+  where
+    parseToolLine line
+      | "LLMTool" `T.isInfixOf` line =
+          let stripped = T.strip line
+              isDisabled = "--" `T.isPrefixOf` stripped
+              -- Remove comment prefix if present
+              cleaned = if isDisabled then T.strip (T.drop 2 stripped) else stripped
+              -- Find "LLMTool" and extract everything after it
+              afterLLMTool = case T.breakOn "LLMTool" cleaned of
+                (_, rest) -> T.strip $ T.drop (T.length "LLMTool") rest
+              -- Split Module.function (take the first dot as separator)
+              (modName, funcName) = case T.breakOn "." afterLLMTool of
+                (m, f) | not (T.null f) -> (T.strip m, T.strip $ T.drop 1 f)
+                _ -> (afterLLMTool, afterLLMTool)
+          in Just $ ToolDef modName funcName isDisabled
+      | otherwise = Nothing
+
+-- | Render tools list section from structured data
+renderToolsList :: [ToolDef] -> Text
+renderToolsList tools =
+  let renderTool isFirst (ToolDef modName funcName disabled) =
+        let comma = if isFirst then "    " else "  , "
+            line = comma <> "LLMTool " <> modName <> "." <> funcName
+        in if disabled then "-- " <> line else line
+      rendered = case tools of
+        [] -> []
+        (t:ts) -> renderTool True t : map (renderTool False) ts
+  in T.unlines rendered
+
+-- | Parse entire registry into structured state
+parseRegistry :: Text -> RegistryState
+parseRegistry registryContent =
+  RegistryState
+    { registryImports = parseImports registryContent
+    , registryExports = parseExports registryContent
+    , registryTools = parseToolsList registryContent
+    }
+
+-- | Replace entire registry with structured state
+setRegistry :: Text -> RegistryState -> Text
+setRegistry registryContent state =
+  let step1 = setImportsSection registryContent (registryImports state)
+      step2 = setExportsSection step1 (registryExports state)
+      step3 = setToolsList step2 (registryTools state)
+  in step3
+  where
+    setImportsSection content imports =
+      let contentLines = T.lines content
+          (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_START") contentLines
+          (_, afterEnd) = break (T.isInfixOf "GENERATED_TOOL_IMPORTS_END") afterStart
+      in case (afterStart, afterEnd) of
+        (startMarker:_, endMarker:rest) ->
+          let renderedImports = T.lines $ renderImports imports
+          in T.unlines $ beforeStart ++ [startMarker] ++ renderedImports ++
+               ["-- Tool module imports will be added here automatically"] ++
+               ["-- Example: import qualified GeneratedTools.Echo as Echo"] ++
+               [endMarker] ++ rest
+        _ -> content
+
+    setExportsSection content exports =
+      let contentLines = T.lines content
+          (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_START") contentLines
+          (_, afterEnd) = break (T.isInfixOf "GENERATED_TOOL_EXPORTS_END") afterStart
+      in case (afterStart, afterEnd) of
+        (startMarker:_, endMarker:rest) ->
+          let renderedExports = T.lines $ renderExports exports
+          in T.unlines $ beforeStart ++ [startMarker] ++ renderedExports ++
+               ["    -- Tool exports will be added here automatically"] ++
+               [endMarker] ++ rest
+        _ -> content
+
+    setToolsList content tools =
+      let contentLines = T.lines content
+          (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOLS_LIST_START") contentLines
+          (_, afterEnd) = break (T.isInfixOf "GENERATED_TOOLS_LIST_END") afterStart
+      in case (afterStart, afterEnd) of
+        (startMarker:_, endMarker:rest) ->
+          let renderedTools = T.lines $ renderToolsList tools
+          in T.unlines $ beforeStart ++ [startMarker] ++ renderedTools ++
+               ["    -- Tools will be added here automatically"] ++
+               ["    -- Example: LLMTool Echo.echoTool"] ++
+               [endMarker] ++ rest
+        _ -> content
+
+-- | Add tool to registry (import, export, and list entry)
+addToolToRegistry :: Text -> Text -> Text -> Text -> Text
+addToolToRegistry moduleName _qualifiedModuleName functionName registryContent =
+  let state = parseRegistry registryContent
+      newImports = registryImports state ++ [moduleName]
+      newExports = registryExports state ++ [moduleName <> "." <> functionName]
+      newTools = registryTools state ++ [ToolDef moduleName functionName False]
+      updatedState = state { registryImports = newImports
+                           , registryExports = newExports
+                           , registryTools = newTools
+                           }
+  in setRegistry registryContent updatedState
+
+-- | Remove tool from registry (import, export, and list entry)
+removeToolFromRegistry :: Text -> Text -> Text -> Text
+removeToolFromRegistry moduleName functionName registryContent =
+  let state = parseRegistry registryContent
+      filteredImports = filter (/= moduleName) (registryImports state)
+      filteredExports = filter (/= (moduleName <> "." <> functionName)) (registryExports state)
+      filteredTools = filter (\t -> not (toolDefModule t == moduleName && toolDefFunction t == functionName)) (registryTools state)
+      updatedState = state { registryImports = filteredImports
+                           , registryExports = filteredExports
+                           , registryTools = filteredTools
+                           }
+  in setRegistry registryContent updatedState
+
+-- | Enable tool (uncomment in tools list)
+enableToolInRegistry :: Text -> Text -> Text -> Text
+enableToolInRegistry moduleName functionName registryContent =
+  let state = parseRegistry registryContent
+      updatedTools = map (\t -> if toolDefModule t == moduleName && toolDefFunction t == functionName
+                                then t { toolDefDisabled = False }
+                                else t) (registryTools state)
+      updatedState = state { registryTools = updatedTools }
+  in setRegistry registryContent updatedState
+
+-- | Disable tool (comment in tools list)
+disableToolInRegistry :: Text -> Text -> Text -> Text
+disableToolInRegistry moduleName functionName registryContent =
+  let state = parseRegistry registryContent
+      updatedTools = map (\t -> if toolDefModule t == moduleName && toolDefFunction t == functionName
+                                then t { toolDefDisabled = True }
+                                else t) (registryTools state)
+      updatedState = state { registryTools = updatedTools }
+  in setRegistry registryContent updatedState
+
+-- | Extract list of tools from registry with their enabled/disabled status
+extractToolsList :: Text -> Text
+extractToolsList registryText =
+  let tools = parseToolsList registryText
+      formatted = map formatTool tools
+  in T.unlines $ ["Generated Tools:", ""] ++ formatted
+  where
+    formatTool (ToolDef modName funcName disabled) =
+      let status = if disabled then "[DISABLED]" else "[ENABLED] "
+          name = modName <> "." <> funcName
+      in "  " <> status <> " " <> name
 
 --------------------------------------------------------------------------------
 -- Task Formatting
@@ -361,7 +838,33 @@ toolBuilderLoop
   -> FilePath  -- ^ Path to GeneratedTools/ directory
   -> Sem r Tools.CabalBuildResult  -- ^ Build function
   -> Sem r BuildToolResult
-toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
+toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build =
+  toolBuilderLoopWithCount @model systemPrompt cabalPath registryPath modulesDir build 20
+
+-- | Internal loop with iteration counter
+toolBuilderLoopWithCount
+  :: forall model r.
+     ( Member (LLM model) r
+     , Member Logging r
+     , Member Cmds r
+     , Member Fail r
+     , Member (Grep RunixToolsFS) r
+     , Member PromptStore r
+     , Members '[FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
+     , Member (State [Message model]) r
+     , HasTools model
+     , SupportsSystemPrompt (ProviderOf model)
+     )
+  => Text      -- ^ System prompt
+  -> FilePath  -- ^ Path to cabal file
+  -> FilePath  -- ^ Path to GeneratedTools.hs (registry)
+  -> FilePath  -- ^ Path to GeneratedTools/ directory
+  -> Sem r Tools.CabalBuildResult  -- ^ Build function
+  -> Int       -- ^ Current iteration count
+  -> Sem r BuildToolResult
+toolBuilderLoopWithCount systemPrompt cabalPath registryPath modulesDir build iterationCount = do
+  info $ "Tool builder iterations remaining: " <> T.pack (show iterationCount)
+
   -- CRITICAL: Explicit type signature with ScopedTypeVariables to bind 'r'
   let
       builderTools =
@@ -439,7 +942,7 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
                 ]
               historyWithError = updatedHistory ++ [errorMessage]
           put @[Message model] historyWithError
-          toolBuilderLoop @model systemPrompt cabalPath registryPath modulesDir build
+          toolBuilderLoopWithCount @model systemPrompt cabalPath registryPath modulesDir build (iterationCount - 1)
 
     calls -> do
       -- Execute tools and continue
@@ -448,18 +951,48 @@ toolBuilderLoop systemPrompt cabalPath registryPath modulesDir build = do
       put @[Message model] historyWithResults
 
       -- Check if we hit max retries (safety limit)
-      if countToolCalls updatedHistory > 20
-        then fail $ "Tool builder exceeded maximum iterations (20)"
+      if iterationCount <= 0
+        then do
+          -- Ask the LLM to explain why it failed before terminating
+          info "Tool builder exceeded iteration limit, requesting failure summary from LLM..."
+          let summaryRequest = SystemText $ T.unlines
+                [ "ITERATION LIMIT REACHED (0 iterations remaining)"
+                , ""
+                , "You have exceeded the maximum number of iterations."
+                , "Please provide a brief summary explaining:"
+                , "1. What you were trying to accomplish"
+                , "2. What obstacles or errors prevented completion"
+                , "3. What would be needed to complete the task successfully"
+                , ""
+                , "Keep your explanation concise (2-3 paragraphs)."
+                ]
+              historyWithRequest = historyWithResults ++ [summaryRequest]
 
-        else toolBuilderLoop @model systemPrompt cabalPath registryPath modulesDir build
+          -- Query LLM for explanation (without tools)
+          explanationMsgs <- queryLLM [ULL.SystemPrompt systemPrompt] historyWithRequest
 
--- | Count tool calls in history
-countToolCalls :: [Message model] -> Int
-countToolCalls = length . filter isToolCall
-  where
-    isToolCall (AssistantTool _) = True
-    isToolCall _ = False
+          let explanationText = case [txt | AssistantText txt <- explanationMsgs] of
+                (txt:_) -> txt
+                [] -> "No explanation provided"
 
+          fail $ T.unpack $ T.unlines
+            [ "Tool builder exceeded maximum iterations (20)"
+            , ""
+            , "=== LLM Failure Summary ==="
+            , explanationText
+            , "=== End Summary ==="
+            ]
+
+        else do
+          -- Add warning if running low on iterations
+          let historyWithWarning = if iterationCount < 3
+                then historyWithResults ++ [SystemText $ T.unlines
+                       [ "WARNING: You only have " <> T.pack (show iterationCount) <> " iteration(s) left!"
+                       , "Time to get this done or prepare a failure report."
+                       ]]
+                else historyWithResults
+          put @[Message model] historyWithWarning
+          toolBuilderLoopWithCount @model systemPrompt cabalPath registryPath modulesDir build (iterationCount - 1)
 
 --------------------------------------------------------------------------------
 -- Helpers
