@@ -142,7 +142,6 @@ runixCode
      , Members [FileSystem ProjectFS, FileSystemRead ProjectFS, FileSystemWrite ProjectFS] r
      , Members [FileSystem ClaudeConfigFS, FileSystemRead ClaudeConfigFS] r
      , Members [FileSystem RunixToolsFS, FileSystemRead RunixToolsFS, FileSystemWrite RunixToolsFS] r
-     , Members [Simple.FileSystem, Simple.FileSystemRead, Simple.FileSystemWrite] r
      , ImplementsWidget widget Text
      , Member (State [Message model]) r
      , Member (Reader [ModelConfig model]) r
@@ -170,6 +169,10 @@ runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   -- Build tools once inside the effect stack, before entering the loop
   (_finalTodos, result) <-
     runState ([] :: [Tools.Todo]) . interpretCmd @"cabal" . interpretCmd @"diff"
+      -- as the default filesystem
+      . Simple.withDefaultFileSystem @ProjectFS
+      . Simple.withDefaultFileSystemRead @ProjectFS
+      . Simple.withDefaultFileSystemWrite @ProjectFS
       . runReader configsWithSystem $ do
         -- Load Claude Code integrations (subagents and skills) - once, not per iteration
         subagents <- Tools.Claude.loadSubagents

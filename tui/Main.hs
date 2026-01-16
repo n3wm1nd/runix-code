@@ -395,9 +395,6 @@ interpretTUIEffects ::
         : FileSystemWrite ClaudeConfigFS
         : FileSystemRead ClaudeConfigFS
         : FileSystem ClaudeConfigFS
-        : Runix.FileSystem.Simple.FileSystemWrite
-        : Runix.FileSystem.Simple.FileSystemRead
-        : Runix.FileSystem.Simple.FileSystem
         : FileWatcher ProjectFS
         : FileSystemWrite ProjectFS
         : FileSystemRead ProjectFS
@@ -430,10 +427,6 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . filterWrite @ProjectFS (hideClaude <> hideGit)
     . filterRead @ProjectFS (hideGit)
     . filterFileSystem @ProjectFS (hideGit)
-    -- as the default filesystem
-    . Runix.FileSystem.Simple.withDefaultFileSystem @ProjectFS
-    . Runix.FileSystem.Simple.withDefaultFileSystemRead @ProjectFS
-    . Runix.FileSystem.Simple.withDefaultFileSystemWrite @ProjectFS
     -- ClaudeConfigFS: access to .claude directories (read-only)
     . fileSystemLocal (ClaudeConfigFS cwd)
     . filterFileSystem @ClaudeConfigFS (onlyClaude)
