@@ -52,6 +52,7 @@ import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
 import Runix.Cancellation (Cancellation(..))
 import Runix.Streaming (StreamChunk)
+import Runix.Streaming.SSE (StreamingContent(..))
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
@@ -66,6 +67,7 @@ import qualified Data.ByteString as BS
 import qualified UI
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
 import UI.UserInterface (interpretAsWidget)
+import UI.AgentWidgets (AgentWidgets(..))
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
@@ -279,7 +281,7 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
         (_result, newHistory) <- withLLMCancellation
                                . runConfig runtimeConfigs
                                . runHistory currentHistory
-                               . interpretAsWidget uiVars
+                               . interpretAsWidget @(Message model)
                                $ runixCode @model @TUIWidget sysPrompt (UserPrompt userTxt)
         return newHistory
       ) userText
@@ -363,6 +365,31 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
 -- Runner Creation
 --------------------------------------------------------------------------------
 
+-- | Interpret AgentWidgets by sending events to UIVars
+--
+-- This interpreter bridges the abstract AgentWidgets effect to the concrete
+-- TUI event system. Each AgentWidgets operation is translated to an AgentEvent
+-- and sent to the UI thread via UIVars.
+interpretAgentWidgets :: forall msg r a. Member (Embed IO) r
+                      => UIVars msg
+                      -> Sem (AgentWidgets msg : r) a
+                      -> Sem r a
+interpretAgentWidgets uiVars = interpret $ \case
+  EmitLog level text ->
+    embed $ sendAgentEvent uiVars (LogEvent level text)
+
+  EmitStreamChunk content ->
+    embed $ sendAgentEvent uiVars (toAgentEvent content)
+    where
+      toAgentEvent (StreamingText text) = StreamChunkEvent text
+      toAgentEvent (StreamingReasoning reasoning) = StreamReasoningEvent reasoning
+
+  EmitError text ->
+    embed $ sendAgentEvent uiVars (AgentErrorEvent text)
+
+  EmitCompletion msgs ->
+    embed $ sendAgentEvent uiVars (AgentCompleteEvent msgs)
+
 -- | Interpret all base effects for TUI agents
 --
 -- This builds the effect interpretation stack from the bottom up:
@@ -407,6 +434,7 @@ interpretTUIEffects ::
         : Logging
         : UserInput TUIWidget
         : UI.ForegroundCmd.ForegroundCmd
+        : AgentWidgets msg
         : UI.UI
         : r
     )
@@ -414,6 +442,7 @@ interpretTUIEffects ::
   Sem r a
 interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
   interpretUI uiVars
+    . interpretAgentWidgets uiVars
     . interpretForegroundCmd uiVars
     . interpretUserInput uiVars
     . interpretLoggingToUI
