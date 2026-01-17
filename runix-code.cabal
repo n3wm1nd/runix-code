@@ -107,6 +107,7 @@ library
                     , Tools.Claude
                     , Tools.ToolBuilder.Types
                     , Tools.ToolBuilder.Agent
+                    , Tools.ToolBuilder.Registry
                     , Tools.ToolBuilder.Prompt
                     , Models
                     , Config
