@@ -149,6 +149,7 @@ library runix-code-tui-lib
                     , UI.Streaming
                     , UI.UserInput.InputWidget
                     , UI.UserInput.Interpreter
+                    , UI.UserInterface
                     , UI.ForegroundCmd
                     , UI.ForegroundCmdInterpreter
                     , UI.MessageFormat

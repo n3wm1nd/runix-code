@@ -65,6 +65,7 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified UI
 import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
+import UI.UserInterface (interpretAsWidget)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
@@ -274,10 +275,11 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
             configsWithoutStreaming = filter (not . isStreaming) baseConfigs
             runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming settings)]
 
-        -- Run agent and return new history
+        -- Run agent and return new history (with widget isolation via interpretAsWidget)
         (_result, newHistory) <- withLLMCancellation
                                . runConfig runtimeConfigs
                                . runHistory currentHistory
+                               . interpretAsWidget uiVars
                                $ runixCode @model @TUIWidget sysPrompt (UserPrompt userTxt)
         return newHistory
       ) userText
