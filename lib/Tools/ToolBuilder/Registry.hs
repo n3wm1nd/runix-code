@@ -102,10 +102,15 @@ modifyRegistry transform = do
 -- Pure Transformations (Composable)
 --------------------------------------------------------------------------------
 
--- | Add tool to list
+-- | Add tool to list (idempotent - replaces if already exists)
 addTool :: Text -> Text -> [ToolDef] -> [ToolDef]
 addTool moduleName functionName tools =
-  tools ++ [ToolDef moduleName functionName False]
+  let newTool = ToolDef moduleName functionName False
+      -- Check if tool already exists
+      exists = any (\t -> toolDefModule t == moduleName && toolDefFunction t == functionName) tools
+  in if exists
+     then tools  -- Already exists, don't add duplicate
+     else tools ++ [newTool]
 
 -- | Remove tool from list
 removeTool :: Text -> Text -> [ToolDef] -> [ToolDef]

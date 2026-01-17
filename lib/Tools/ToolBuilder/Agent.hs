@@ -297,17 +297,55 @@ extractFunctionName code =
       in T.isPrefixOf "{" trimmed || T.isPrefixOf "," trimmed || "}" `T.isInfixOf` line
 
 -- | Add module to cabal file between markers
+-- Parses the entire block between START and END markers, adds module if not present,
+-- and re-serializes the complete list
 addModuleToCabal :: Text -> Text -> Text
 addModuleToCabal cabalContent moduleName =
   let contentLines = T.lines cabalContent
-      -- Find the marker line
-      (beforeMarker, afterMarker) = break (T.isInfixOf "GENERATED_TOOLS_MODULES_START") contentLines
-      -- Insert new module after the marker
-      updated = case afterMarker of
-        (markerLine:rest) ->
-          beforeMarker ++ [markerLine, "                    , " <> moduleName] ++ rest
-        [] -> contentLines  -- marker not found, return unchanged
-  in T.unlines updated
+      -- Find the start marker
+      (beforeStart, afterStart) = break (T.isInfixOf "GENERATED_TOOLS_MODULES_START") contentLines
+  in case afterStart of
+    [] -> cabalContent  -- Start marker not found, return unchanged
+    (startMarker:rest) ->
+      -- Find the end marker
+      let (moduleBlock, afterEnd) = break (T.isInfixOf "GENERATED_TOOLS_MODULES_END") rest
+      in case afterEnd of
+        [] -> cabalContent  -- End marker not found, return unchanged
+        (endMarker:remaining) ->
+          -- Parse existing modules from the block
+          let existingModules = parseModuleList moduleBlock
+              -- Add new module if not already present
+              updatedModules = if moduleName `elem` existingModules
+                               then existingModules
+                               else existingModules ++ [moduleName]
+              -- Re-serialize the module list
+              serializedBlock = serializeModuleList updatedModules
+              -- Reconstruct the cabal file
+              updated = beforeStart ++ [startMarker] ++ serializedBlock ++ [endMarker] ++ remaining
+          in T.unlines updated
+  where
+    -- Parse module names from the block (lines starting with comma or whitespace+comma)
+    parseModuleList :: [Text] -> [Text]
+    parseModuleList moduleLines =
+      mapMaybe extractModuleName moduleLines
+
+    extractModuleName :: Text -> Maybe Text
+    extractModuleName line =
+      let trimmed = T.strip line
+      in if T.null trimmed
+         then Nothing
+         else
+           -- Remove leading comma and whitespace
+           let withoutComma = T.strip $ T.dropWhile (\c -> c == ',' || c == ' ') trimmed
+           in if T.null withoutComma || T.isPrefixOf "--" withoutComma
+              then Nothing  -- Skip empty lines and comments
+              else Just withoutComma
+
+    -- Serialize module list back to cabal format
+    serializeModuleList :: [Text] -> [Text]
+    serializeModuleList [] = []
+    serializeModuleList modules =
+      map (\m -> "                    , " <> m) modules
 
 --------------------------------------------------------------------------------
 -- Task Formatting
