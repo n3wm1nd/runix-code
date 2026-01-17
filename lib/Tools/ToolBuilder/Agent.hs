@@ -52,7 +52,7 @@ import Tools.ToolBuilder.Registry (ToolDef(..), parseToolsList, renderToolsList,
 -- Main Entry Point
 --------------------------------------------------------------------------------
 
--- | Build or modify a tool using the tool-builder agent
+-- | Create a new tool using the tool-builder agent
 --
 -- This is the main entry point called by the runix-code agent.
 -- It captures the calling agent's history for context, runs the tool-builder
@@ -72,9 +72,8 @@ buildTool
      )
   => ToolName
   -> ToolDescription
-  -> BuildMode
   -> Sem r BuildToolResult
-buildTool toolName desc mode = do
+buildTool toolName desc = do
   -- Get data directory from filesystem parameter
   RunixToolsFS dataDir <- getFileSystem @RunixToolsFS
   info $ "Tool builder using data directory: " <> T.pack dataDir
@@ -105,7 +104,7 @@ buildTool toolName desc mode = do
   toolBuilderPrompt <- loadToolBuilderPrompt
 
   -- Step 3: Construct task message for tool-builder
-  let taskText = formatToolBuildTask toolName desc mode
+  let taskText = formatToolBuildTask toolName desc
       toolBuilderHistory = callerHistory ++ [UserText taskText]
 
   info $ "Starting tool-builder for: " <> getToolName toolName
@@ -315,41 +314,23 @@ addModuleToCabal cabalContent moduleName =
 --------------------------------------------------------------------------------
 
 -- | Format the task description for the tool-builder
-formatToolBuildTask :: ToolName -> ToolDescription -> BuildMode -> Text
-formatToolBuildTask (ToolName name) (ToolDescription desc) mode =
-  case mode of
-    CreateNew ->
-      T.unlines
-        [ "BUILD NEW TOOL: " <> name
-        , ""
-        , "Description: " <> desc
-        , ""
-        , "Requirements:"
-        , "- Read GeneratedTools.hs registry to understand the structure"
-        , "- Create complete implementation with type signature and instances"
-        , "- Use write_toolcode_atomic to create the new tool module"
-        , "  (This will create GeneratedTools/{ModuleName}.hs, update the registry, and update the cabal file)"
-        , "- The tool will be automatically registered in the generatedTools list"
-        , "- Compilation is validated automatically"
-        , "- If compilation fails, fix errors and retry with write_toolcode_atomic"
-        , "- When successful, report what you built"
-        ]
-
-    ModifyExisting (ToolName existingName) ->
-      T.unlines
-        [ "MODIFY EXISTING TOOL: " <> existingName
-        , ""
-        , "New specification: " <> desc
-        , ""
-        , "Requirements:"
-        , "- Read the existing tool module file (GeneratedTools/{ModuleName}.hs)"
-        , "- Modify ONLY that tool's implementation"
-        , "- Preserve the module structure"
-        , "- Use write_file to update the module"
-        , "- Run cabal_build to validate"
-        , "- If compilation fails, fix errors and retry"
-        , "- When successful, report what changed"
-        ]
+formatToolBuildTask :: ToolName -> ToolDescription -> Text
+formatToolBuildTask (ToolName name) (ToolDescription desc) =
+  T.unlines
+    [ "CREATE NEW TOOL: " <> name
+    , ""
+    , "Description: " <> desc
+    , ""
+    , "Requirements:"
+    , "- Read GeneratedTools.hs registry to understand the structure"
+    , "- Create complete implementation with type signature and instances"
+    , "- Use write_toolcode_atomic to create the new tool module"
+    , "  (This will create GeneratedTools/{ModuleName}.hs, update the registry, and update the cabal file)"
+    , "- The tool will be automatically registered in the generatedTools list"
+    , "- Compilation is validated automatically"
+    , "- If compilation fails, fix errors and retry with write_toolcode_atomic"
+    , "- When successful, report what you built"
+    ]
 
 --------------------------------------------------------------------------------
 -- Agent Loop
