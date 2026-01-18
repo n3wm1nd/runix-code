@@ -29,9 +29,7 @@ import UniversalLLM (ProviderOf)
 import Config
 import Models
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
-import Config (ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..))
 import Runix.Runner (bashIO, cmdsIO, failLog, loggingIO)
-import qualified Runix.Grep
 import Runix.Grep (grepForFilesystem)
 import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
@@ -44,7 +42,7 @@ import qualified Runix.FileSystem.Simple
 import qualified Runix.FileSystem.System
 import Runix.Grep (Grep)
 import Runix.Bash (Bash)
-import Runix.Cmd (Cmd, Cmds)
+import Runix.Cmd (Cmds)
 import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging (Logging(..), info, Level(..))
 import Runix.PromptStore (PromptStore, promptStoreIO)
@@ -69,7 +67,7 @@ import UI.UserInterface (interpretAsWidget)
 import UI.AgentWidgets (AgentWidgets(..))
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
-import Runix.FileSystem (loggingWrite, limitToSubpath, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
+import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 
 
 --------------------------------------------------------------------------------
