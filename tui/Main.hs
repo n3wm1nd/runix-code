@@ -12,7 +12,6 @@
 module Main (main) where
 
 import qualified Data.Text as T
-import Data.IORef
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad (forever, when)
@@ -113,18 +112,6 @@ main = do
 -- Agent Loop
 --------------------------------------------------------------------------------
 
--- | Agent loop that processes user input from the UI
--- | Update history ref (completion event is sent by runOneIteration)
-updateHistory :: forall model.
-                 UIVars (Message model)
-              -> IORef [Message model]
-              -> [Message model]
-              -> IO ()
-updateHistory _uiVars historyRef newHistory = do
-  -- Update historyRef (source of truth)
-  -- Note: AgentCompleteEvent is sent by runOneIteration after command completes
-  writeIORef historyRef newHistory
-
 agentLoop :: forall model.
              ( HasTools model
              , SupportsSystemPrompt (ProviderOf model)
@@ -134,14 +121,13 @@ agentLoop :: forall model.
           => FilePath  -- CWD for security restrictions
           -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
-          -> IORef [Message model]
           -> SystemPrompt
           -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
           -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
-agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime = do
+agentLoop cwd dataDir uiVars sysPrompt modelInterpreter miSaveSession exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
   let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars . modelInterpreter
 
@@ -156,35 +142,36 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
 
   where
     runOneIteration = do
-      -- Wait for user request (includes text + settings)
-      UserRequest{userText, requestSettings} <- embed $ atomically $ waitForUserInput (userInputQueue uiVars)
+      -- Wait for user request (includes text + settings + history)
+      UserRequest{userText, currentHistory, requestSettings} <- embed $ atomically $ waitForUserInput (userInputQueue uiVars)
 
       -- Clear any previous cancellation flag before starting new request
       embed $ clearCancellationFlag uiVars
 
-      -- Build command set with current settings
+      -- Build command set with current settings and history
       let cmdSet = CommandSet
-            { slashCommands = [echoCommand, viewCommand, historyCommand]
-            , defaultCommand = runDefaultAgentCommand requestSettings
+            { slashCommands = [ echoCommand
+                              , let (name, fn) = ViewCmd.viewCommand currentHistory uiVars
+                                in SlashCommand { commandName = name, commandFn = fn }
+                              , let (name, fn) = HistoryCmd.historyCommand currentHistory uiVars
+                                in SlashCommand { commandName = name, commandFn = fn }
+                              ]
+            , defaultCommand = runDefaultAgentCommand currentHistory requestSettings
             }
 
-      -- Dispatch to appropriate command (commands are responsible for adding to history)
+      -- Dispatch to appropriate command
+      -- Note: commands send their own completion events (e.g., interpretAsWidget sends AgentCompleteEvent)
       dispatchCommand cmdSet userText
-
-      -- After any command completes, send completion event with current history
-      -- (This clears "processing" status in the UI)
-      currentHistory <- embed $ readIORef historyRef
-      embed $ sendAgentEvent uiVars (AgentCompleteEvent currentHistory)
 
       -- Always clear cancellation flag after request completes (whether success or error)
       embed $ clearCancellationFlag uiVars
 
       -- Check if executable has been modified and reload if necessary
-      embed $ checkAndReloadOnChange
+      embed $ checkAndReloadOnChange currentHistory
 
     -- | Check if executable has changed and reload if so
-    checkAndReloadOnChange :: IO ()
-    checkAndReloadOnChange = do
+    checkAndReloadOnChange :: [Message model] -> IO ()
+    checkAndReloadOnChange history = do
       -- Get current mtime of executable
       stat <- getFileStatus exePath
       let currentMTime = fromIntegral $ fromEnum $ modificationTime stat
@@ -192,13 +179,14 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
       -- Check if executable has been modified (compare to initial mtime from startup)
       when (currentMTime /= initialMTime) $ do
         -- Save current session
-        currentHistory <- readIORef historyRef
+        -- TODO: This is lossy - should save full OutputHistory (with tool calls, streaming state, etc)
+        -- not just Message history. For now, reload only preserves conversation messages.
         let sessionFile = "/tmp/runix-code-session.json"
 
         -- Use the effect stack to save session
         let runSave = runM . runError @String . loggingIO . failLog
                     . Runix.FileSystem.Simple.filesystemIO
-        result <- runSave $ miSaveSession sessionFile currentHistory
+        result <- runSave $ miSaveSession sessionFile history
 
         case result of
           Left err -> do
@@ -226,28 +214,6 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
                Just cmd -> cmd cmdArg  -- Found matching slash command
                Nothing -> defaultCommand userText  -- No match, use default
 
-    -- | Wrapper that converts a history-manipulating function into a command
-    -- | Takes a function that receives current history and returns new history,
-    -- | and handles:
-    -- | - Sending user message to UI/history
-    -- | - Reading current history
-    -- | - Running the function
-    -- | - Updating history with the result
-    -- | - Error handling
-    withHistoryUpdate :: Members '[Error String, Embed IO] r
-                      => ([Message model] -> T.Text -> Sem r [Message model])
-                      -> T.Text
-                      -> Sem r ()
-    withHistoryUpdate fn userText = do
-      -- Send user message to UI immediately (adds to history)
-      embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
-
-      currentHistory <- embed $ readIORef historyRef
-      catch
-        (do newHistory <- fn currentHistory userText
-            embed $ updateHistory uiVars historyRef newHistory)
-        (\err -> embed $ sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Command error: " ++ err)))
-
     -- | Echo command: logs the input text
     echoCommand :: Member Logging r => SlashCommand r
     echoCommand = SlashCommand
@@ -255,36 +221,29 @@ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession
       , commandFn = \text -> info $ "Echo: " <> text
       }
 
-    -- | View command: open conversation history in $PAGER
-    viewCommand :: Members '[Embed IO, Logging] r => SlashCommand r
-    viewCommand =
-      let (name, fn) = ViewCmd.viewCommand historyRef uiVars
-      in SlashCommand { commandName = name, commandFn = fn }
-
-    -- | History command: edit conversation history in $EDITOR
-    historyCommand :: Members '[Embed IO, Logging] r => SlashCommand r
-    historyCommand =
-      let (name, fn) = HistoryCmd.historyCommand historyRef uiVars
-      in SlashCommand { commandName = name, commandFn = fn }
-
     -- | The default agent command: run runixCode with the user's input
-    runDefaultAgentCommand settings userText =
-      withHistoryUpdate (\currentHistory userTxt -> do
-        -- Build configs using settings from the request
-        let isStreaming (Streaming _) = True
-            isStreaming _ = False
-            baseConfigs = defaultConfigs @model
-            configsWithoutStreaming = filter (not . isStreaming) baseConfigs
-            runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming settings)]
+    runDefaultAgentCommand history settings userText = do
+      -- Send user message to UI immediately (adds to history)
+      embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
 
-        -- Run agent and return new history (with widget isolation via interpretAsWidget)
-        (_result, newHistory) <- withLLMCancellation
-                               . runConfig runtimeConfigs
-                               . runHistory currentHistory
-                               . interpretAsWidget @(Message model)
-                               $ runixCode @model @TUIWidget sysPrompt (UserPrompt userTxt)
-        return newHistory
-      ) userText
+      catch
+        (do -- Build configs using settings from the request
+            let isStreaming (Streaming _) = True
+                isStreaming _ = False
+                baseConfigs = defaultConfigs @model
+                configsWithoutStreaming = filter (not . isStreaming) baseConfigs
+                runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming settings)]
+
+            -- Run agent (with widget isolation via interpretAsWidget)
+            -- Note: interpretAsWidget sends AgentCompleteEvent automatically with final history
+            _result <- withLLMCancellation
+                     . runConfig runtimeConfigs
+                     . runHistory history
+                     . interpretAsWidget @(Message model)
+                     $ runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+            return ()
+        )
+        (\err -> embed $ sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Command error: " ++ err)))
 
 --------------------------------------------------------------------------------
 -- UI Runner Builder
@@ -313,10 +272,9 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   cwd <- Dir.getCurrentDirectory
 
   uiVars <- newUIVars @(Message model) refreshCallback
-  historyRef <- newIORef ([] :: [Message model])
 
-  -- Load session if resuming
-  initialHistory <- case maybeSessionPath of
+  -- Load session if resuming and send to UI
+  case maybeSessionPath of
     Just path -> do
       let runToIO' = runM . runError @String . loggingIO . failLog
                    . Runix.FileSystem.Simple.filesystemIO
@@ -325,18 +283,12 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
         Right msgs -> do
           -- Log successful reload
           sendAgentEvent uiVars (LogEvent Info (T.pack $ "Code reloaded - session restored with " ++ show (length msgs) ++ " messages"))
-          return msgs
+          -- Send loaded history to UI so it displays the messages
+          when (not $ null msgs) $
+            sendAgentEvent uiVars (AgentCompleteEvent msgs)
         Left err -> do
           sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Failed to load session: " ++ err))
-          return []
-    Nothing -> return []
-
-  -- Initialize historyRef with loaded or empty history
-  writeIORef historyRef initialHistory
-
-  -- Send loaded history to UI so it displays the messages
-  when (not $ null initialHistory) $
-    sendAgentEvent uiVars (AgentCompleteEvent initialHistory)
+    Nothing -> return ()
 
   -- Get data file path for the system prompt
   promptPath <- getDataFileName "prompt/runix-code.md"
@@ -358,7 +310,7 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   stat <- getFileStatus exePath
   let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
 
-  _ <- forkIO $ agentLoop cwd dataDir uiVars historyRef sysPrompt modelInterpreter miSaveSession exePath initialMTime
+  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt modelInterpreter miSaveSession exePath initialMTime
   return uiVars
 
 --------------------------------------------------------------------------------

@@ -7,7 +7,6 @@ module UI.Commands.History
   ) where
 
 import qualified Data.Text.IO as TIO
-import Data.IORef
 import Data.Text (Text)
 import System.Environment (lookupEnv)
 import System.IO (hClose)
@@ -20,22 +19,21 @@ import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 import UI.MessageFormat (formatEditableMessages, parseEditableMessages, isEditableMessage)
 
 -- | /history slash command
-historyCommand :: forall model msg r. Members '[Embed IO, Logging] r
-               => IORef [Message model]
-               -> UIVars msg
+historyCommand :: forall model r. Members '[Embed IO, Logging] r
+               => [Message model]
+               -> UIVars (Message model)
                -> (Text, Text -> Sem r ())
-historyCommand historyRef uiVars = ("history", \_ -> do
-  currentHistory <- embed $ readIORef historyRef
-
+historyCommand history uiVars = ("history", \_ -> do
   -- Edit history in $EDITOR (blocks until editor exits)
-  embed $ sendAgentEvent uiVars (RunExternalCommandEvent (editHistoryInEditor currentHistory historyRef))
+  -- Sends AgentCompleteEvent with updated history if successful
+  embed $ sendAgentEvent uiVars (RunExternalCommandEvent (editHistoryInEditor history uiVars))
 
   info "History editing complete")
 
 -- | Edit conversation history in $EDITOR (blocks until editor exits)
--- Replaces the history ref with edited messages
-editHistoryInEditor :: [Message model] -> IORef [Message model] -> IO ()
-editHistoryInEditor currentHistory historyRef = do
+-- Sends AgentCompleteEvent with edited messages
+editHistoryInEditor :: [Message model] -> UIVars (Message model) -> IO ()
+editHistoryInEditor currentHistory uiVars = do
   -- Get editor from environment, default to 'vi'
   maybeEditor <- lookupEnv "EDITOR"
   let editor = maybe "vi" id maybeEditor
@@ -67,7 +65,8 @@ editHistoryInEditor currentHistory historyRef = do
         -- Merge edited messages back into full history
         -- Strategy: Replace only the editable messages, keep everything else
         let newHistory = mergeEditedHistory editedMessages currentHistory
-        writeIORef historyRef newHistory
+        -- Send event with updated history to UI
+        sendAgentEvent uiVars (AgentCompleteEvent newHistory)
 
 -- | Merge edited messages back into full history
 -- Preserves non-editable messages and their relative positions

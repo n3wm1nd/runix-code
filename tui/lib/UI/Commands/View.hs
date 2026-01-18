@@ -8,7 +8,6 @@ module UI.Commands.View
 
 import qualified Data.Text as T
 import qualified Data.Text.IO as TIO
-import Data.IORef
 import System.Environment (lookupEnv)
 import System.IO (hClose)
 import System.IO.Temp (withSystemTempFile)
@@ -20,12 +19,11 @@ import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 
 -- | /view slash command
 viewCommand :: forall model msg r. Members '[Embed IO, Logging] r
-            => IORef [Message model]
+            => [Message model]
             -> UIVars msg
             -> (T.Text, T.Text -> Sem r ())
-viewCommand historyRef uiVars = ("view", \_ -> do
-  currentHistory <- embed $ readIORef historyRef
-  embed $ sendAgentEvent uiVars (RunExternalCommandEvent (viewHistoryInPager currentHistory))
+viewCommand history uiVars = ("view", \_ -> do
+  embed $ sendAgentEvent uiVars (RunExternalCommandEvent (viewHistoryInPager history))
   info "Opened history in pager")
 
 -- | View conversation history in $PAGER (blocks until pager exits)

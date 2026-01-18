@@ -40,7 +40,7 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
-import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, addCompletedToolItems)
+import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, zipperToList, listToZipper, mergeOutputMessages, addCompletedToolItems, extractMessages)
 import UniversalLLM (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
@@ -613,15 +613,17 @@ sendMessage = do
   if null (filter (/= ' ') content)
     then return ()  -- Don't send empty messages
     else do
-      -- Get the UI vars and current settings
+      -- Get the UI vars, current settings, and history
       vars <- use uiVarsL
       settings <- use llmSettingsL
+      zipper <- use outputZipperL
+      let history = extractMessages zipper
 
       -- Set status to Processing immediately
       statusL .= Text.pack "Processing..."
 
-      -- Send user request (text + settings) to the agent
-      let request = UserRequest { userText = Text.pack content, requestSettings = settings }
+      -- Send user request (text + settings + history) to the agent
+      let request = UserRequest { userText = Text.pack content, currentHistory = history, requestSettings = settings }
       liftIO $ atomically $ provideUserInput (userInputQueue vars) request
 
       -- Clear input

@@ -92,9 +92,10 @@ data LLMSettings = LLMSettings
   { llmStreaming :: Bool
   } deriving stock (Eq, Show)
 
--- | User request containing input text and LLM settings
-data UserRequest = UserRequest
+-- | User request containing input text, history, and LLM settings
+data UserRequest msg = UserRequest
   { userText :: Text
+  , currentHistory :: [msg]
   , requestSettings :: LLMSettings
   } deriving stock (Eq, Show)
 
@@ -102,7 +103,7 @@ data UserRequest = UserRequest
 -- Parametrized over message type to work with typed events
 data UIVars msg = UIVars
   { agentEventChan :: AgentEvent msg -> IO ()  -- ^ Callback to send events to UI
-  , userInputQueue :: TQueue UserRequest  -- ^ User input queue (UI writes, agent reads)
+  , userInputQueue :: TQueue (UserRequest msg)  -- ^ User input queue (UI writes, agent reads)
   , cancellationFlag :: TVar Bool         -- ^ Cancellation flag (UI writes, agent reads)
   }
 
@@ -127,11 +128,11 @@ sendAgentEvent vars event =
   agentEventChan vars event
 
 -- | Block until user provides input
-waitForUserInput :: TQueue UserRequest -> STM UserRequest
+waitForUserInput :: TQueue (UserRequest msg) -> STM (UserRequest msg)
 waitForUserInput = readTQueue
 
 -- | Provide user input (from UI thread)
-provideUserInput :: TQueue UserRequest -> UserRequest -> STM ()
+provideUserInput :: TQueue (UserRequest msg) -> UserRequest msg -> STM ()
 provideUserInput = writeTQueue
 
 -- | Request cancellation from the UI thread (sets flag)
