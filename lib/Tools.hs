@@ -469,7 +469,7 @@ instance ToolFunction GenerateToolResult where
 
 instance ToolFunction AskResult where
   toolFunctionName _ = "ask"
-  toolFunctionDescription _ = "Ask the user for input - use this to get confirmation, ask questions, or request information from the user"
+  toolFunctionDescription _ = "Ask the user for small mid-task clarifications (e.g., 'how many retries maximum?', 'what should the timeout be?'). NOT for architectural or strategic decisions - use regular text response for those."
 
 instance ToolFunction TodoWriteResult where
   toolFunctionName _ = "todo_write"
@@ -763,7 +763,9 @@ appendToolToModule currentContent newToolCode = currentContent <> "\n" <> newToo
 -- User Interaction
 --------------------------------------------------------------------------------
 
--- | Ask the user for text input
+-- | Ask the user for text input during task execution
+-- Use for small mid-task clarifications (e.g., "how many retries?", "timeout value?")
+-- NOT for architectural or strategic decisions - use regular text response for those
 -- Polymorphic over widget system - works with any UI that implements ImplementsWidget
 -- The widget system determines how the input is displayed (TUI widget, CLI prompt, etc.)
 -- Fails (using Fail effect) if the user cancels by pressing Esc
