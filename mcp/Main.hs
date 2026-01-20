@@ -8,14 +8,51 @@ import Prelude hiding (readFile, writeFile)
 import Data.Text (Text)
 import qualified Data.Text as T
 import Control.Exception (catch, SomeException)
-import System.IO (hPutStrLn, stderr)
 import System.Exit (exitSuccess)
+import qualified System.Directory as Dir
+import Data.IORef (IORef, newIORef, readIORef)
 
 -- MCP Server imports
 import qualified MCP.Server as MCP
-import MCP.Server.Types (McpServerInfo(..), McpServerHandlers(..), ServerCapabilities(..)
-                        , ToolDefinition(..), InputSchemaDefinition(..), InputSchemaDefinitionProperty(..)
+import MCP.Server.Types (McpServerInfo(..), McpServerHandlers(..)
+                        , InputSchemaDefinition(..)
                         , Content(..), Error(..))
+import qualified MCP.Server.Types as MCPTypes
+
+-- Runix Code imports
+import Config (RunixDataDir(..), ProjectFS(..))
+
+-- Tools and LLM
+import UniversalLLM (ToolDefinition(..), ToolCall(..), ToolResult(..))
+import UniversalLLM.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList)
+import qualified Tools
+
+-- Polysemy and effects
+import Polysemy (Sem, runM, Member)
+import Polysemy.Error (runError)
+import Polysemy.Fail (Fail)
+import Runix.Runner (loggingIO, failLog)
+import Runix.FileSystem (FileSystem, fileSystemLocal)
+import qualified Runix.FileSystem.System
+import UI.UserInput (ImplementsWidget(..), RenderRequest)
+import qualified Paths_runix_code
+import Data.Aeson (Value)
+import qualified Data.Aeson as Aeson
+import qualified Data.Aeson.Key
+
+--------------------------------------------------------------------------------
+-- MCP Widget Type (for UserInput effect)
+--------------------------------------------------------------------------------
+
+-- | Phantom type for MCP widget system (non-interactive, like CLI)
+data MCPWidget
+
+-- | RenderRequest for MCP (never actually used since we always fail)
+data instance RenderRequest MCPWidget a = MCPRenderRequest Text a
+
+-- | ImplementsWidget instance for Text
+instance ImplementsWidget MCPWidget Text where
+  askWidget prompt defaultValue = MCPRenderRequest prompt defaultValue
 
 --------------------------------------------------------------------------------
 -- Main Entry Point
@@ -27,57 +64,132 @@ import MCP.Server.Types (McpServerInfo(..), McpServerHandlers(..), ServerCapabil
 -- Uses STDIO transport for integration with Claude Desktop and other MCP clients
 main :: IO ()
 main = do
+  -- Get current working directory for filesystem chroot
+  cwd <- Dir.getCurrentDirectory
+
+  -- Get runix data directory
+  runixDataDir <- RunixDataDir <$> Paths_runix_code.getDataDir
+
+  -- Build the tool list and interpreter
+  (toolsRef, runner) <- buildToolsWithInterpreter runixDataDir cwd
+
   let serverInfo = McpServerInfo
         { serverName = "runix-code-mcp"
         , serverVersion = "0.1.0"
         , serverInstructions = "Runix Code MCP Server - AI coding assistant tools"
         }
 
-      -- Create handlers - for now just tools, no resources or prompts
+      -- Create handlers that use the tools
       handlers = McpServerHandlers
         { prompts = Nothing
         , resources = Nothing
-        , tools = Just (listTools, callTool)
+        , tools = Just (listTools toolsRef, callTool toolsRef runner)
         }
 
   -- Run the MCP server over STDIO with graceful shutdown on EOF/exceptions
   MCP.runMcpServerStdio serverInfo handlers `catch` handleShutdown
   where
     handleShutdown :: SomeException -> IO ()
-    handleShutdown _e = do
-      -- Exit cleanly - EOF from stdin is normal termination
-      exitSuccess
+    handleShutdown _e = exitSuccess
 
 --------------------------------------------------------------------------------
--- Tool Handlers
+-- Tool Configuration
 --------------------------------------------------------------------------------
+
+-- | Available tools exposed via MCP
+-- Add or remove tools here to customize what's available to MCP clients
+availableTools :: (Member Fail r, Member (FileSystem ProjectFS) r) => [LLMTool (Sem r)]
+availableTools =
+  [ LLMTool (Tools.getCwd @ProjectFS)
+  -- Add more tools here:
+  -- , LLMTool (Tools.readFile @ProjectFS)
+  -- , LLMTool (Tools.glob @ProjectFS)
+  -- , LLMTool (Tools.grep @ProjectFS)
+  ]
+
+--------------------------------------------------------------------------------
+-- Tool Building and Conversion
+--------------------------------------------------------------------------------
+
+-- | Newtype wrapper for the interpreter runner to avoid ImpredicativeTypes
+newtype InterpreterRunner r = InterpreterRunner
+  { runInterpreter :: forall a. Sem r a -> IO a
+  }
+
+-- | Build the list of LLMTools and the interpreter runner
+-- Returns both the tools (in Sem) and a function to run them in IO
+buildToolsWithInterpreter runixDataDir cwd = do
+  -- Build the interpreter runner (just like in tui/Main.hs)
+  let runner = InterpreterRunner $ \sem -> do
+        result <- runM
+                . runError
+                . loggingIO
+                . failLog
+                . Runix.FileSystem.System.filesystemIO
+                . fileSystemLocal (ProjectFS cwd)
+                $ sem
+        case result of
+          Left err -> error $ "Effect failed: " <> err
+          Right val -> return val
+
+  toolsRef <- newIORef availableTools
+  return (toolsRef, runner)
 
 -- | List all available tools
-listTools :: IO [ToolDefinition]
-listTools = do
-  -- For now, return a simple echo tool as a test
-  let echoTool = ToolDefinition
-        "echo"
-        "Echo back the input message"
-        (InputSchemaDefinitionObject
-          [("message", InputSchemaDefinitionProperty "string" "The message to echo")]
-          ["message"])
-        Nothing
+listTools :: IORef [LLMTool (Sem r)] -> IO [MCPTypes.ToolDefinition]
+listTools toolsRef = do
+  tools <- readIORef toolsRef
+  -- Convert each LLMTool to MCP ToolDefinition
+  return $ map convertLLMToolToMCP tools
 
-  return [echoTool]
+-- | Convert an LLMTool to an MCP ToolDefinition
+convertLLMToolToMCP :: LLMTool (Sem r) -> MCPTypes.ToolDefinition
+convertLLMToolToMCP llmTool =
+  let def = llmToolToDefinition llmTool
+  in MCPTypes.ToolDefinition
+       (toolDefName def)
+       (toolDefDescription def)
+       (convertSchemaToMCP (toolDefParameters def))
+       Nothing
+
+-- | Convert JSON schema Value to MCP InputSchemaDefinition
+-- This is simplified - in reality we'd parse the JSON schema properly
+convertSchemaToMCP :: Value -> InputSchemaDefinition
+convertSchemaToMCP _schema =
+  -- TODO: Parse the actual JSON schema and convert properties
+  InputSchemaDefinitionObject [] []
 
 -- | Execute a tool call
---
--- Proper error handling: tool calls can fail for various reasons:
--- - Missing required parameters -> MissingRequiredParams
--- - Unknown tool name -> UnknownTool
--- - Tool execution failures -> InternalError
-callTool :: Text -> [(Text, Text)] -> IO (Either Error Content)
-callTool toolName args = do
-  case toolName of
-    "echo" -> do
-      let message = lookup "message" args
-      case message of
-        Nothing -> return $ Left $ MissingRequiredParams "Missing required parameter 'message'"
-        Just msg -> return $ Right $ ContentText $ "Echo: " <> msg
-    _ -> return $ Left $ UnknownTool toolName
+callTool :: IORef [LLMTool (Sem r)]
+         -> InterpreterRunner r
+         -> Text
+         -> [(Text, Text)]
+         -> IO (Either Error Content)
+callTool toolsRef (InterpreterRunner runToIO) toolName args = do
+  tools <- readIORef toolsRef
+
+  -- Convert MCP args to JSON object for executeToolCall
+  let argsObject = Aeson.object [ (Data.Aeson.Key.fromText k, Aeson.String v) | (k, v) <- args ]
+      toolCall = ToolCall "mcp-call" toolName argsObject
+
+  -- Execute the tool using UniversalLLM's executeToolCallFromList
+  toolResult <- runToIO $ executeToolCallFromList tools toolCall
+
+  -- Convert ToolResult to MCP Content
+  case toolResult of
+    ToolResult _ (Right value) ->
+      -- Success - convert JSON value to text
+      return $ Right $ ContentText $ T.pack $ show value
+    ToolResult _ (Left err) ->
+      -- Error from tool execution
+      return $ Left $ InternalError err
+
+-- | Find a tool by name in the tool list
+findToolByName :: [LLMTool (Sem r)] -> Text -> Maybe (LLMTool (Sem r))
+findToolByName tools name =
+  let matches = filter (\t ->
+        let def = llmToolToDefinition t
+        in toolDefName def == name) tools
+  in case matches of
+       (t:_) -> Just t
+       [] -> Nothing
