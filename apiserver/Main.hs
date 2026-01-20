@@ -8,10 +8,7 @@
 module Main where
 
 import Data.Text (Text)
-import qualified Data.Text as T
-import Data.Aeson (ToJSON, FromJSON, Value, (.=), object, toJSON)
-import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key
+import Data.Aeson (ToJSON, Value, (.=), object, toJSON)
 import GHC.Generics (Generic)
 import Control.Monad.IO.Class (liftIO)
 import Network.Wai.Handler.Warp (run)
