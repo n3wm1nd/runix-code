@@ -227,6 +227,27 @@ executable runix-code-tui
     hs-source-dirs:   tui
     default-language: Haskell2010
 
+executable runix-code-mcp
+    import:           warnings, extensions
+    main-is:          Main.hs
+    other-modules:    Paths_runix_code
+    autogen-modules:  Paths_runix_code
+
+    build-depends:    base >=4.17 && <5
+                    , runix-code
+                    , generated-tools
+                    , runix
+                    , universal-llm
+                    , polysemy >=1.9
+                    , text >=2.0
+                    , aeson
+                    , bytestring
+                    , mcp-server
+                    , directory
+
+    hs-source-dirs:   mcp
+    default-language: Haskell2010
+
 test-suite runix-code-test
     import:           warnings, extensions
     type:             exitcode-stdio-1.0
