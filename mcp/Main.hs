@@ -39,6 +39,8 @@ import qualified Paths_runix_code
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key
+import qualified Data.ByteString.Lazy as BSL
+import qualified Data.Text.Encoding as T
 
 --------------------------------------------------------------------------------
 -- MCP Widget Type (for UserInput effect)
@@ -177,9 +179,13 @@ callTool toolsRef (InterpreterRunner runToIO) toolName args = do
 
   -- Convert ToolResult to MCP Content
   case toolResult of
-    ToolResult _ (Right value) ->
+    ToolResult _ (Right value) -> do
       -- Success - convert JSON value to text
-      return $ Right $ ContentText $ T.pack $ show value
+      -- If it's a JSON string, unwrap it; otherwise encode as JSON
+      let textContent = case value of
+            Aeson.String txt -> txt
+            _ -> T.decodeUtf8 $ BSL.toStrict $ Aeson.encode value
+      return $ Right $ ContentText textContent
     ToolResult _ (Left err) ->
       -- Error from tool execution
       return $ Left $ InternalError err
