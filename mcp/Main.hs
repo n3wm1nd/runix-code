@@ -15,7 +15,7 @@ import Data.IORef (IORef, newIORef, readIORef)
 -- MCP Server imports
 import qualified MCP.Server as MCP
 import MCP.Server.Types (McpServerInfo(..), McpServerHandlers(..)
-                        , InputSchemaDefinition(..)
+                        , InputSchemaDefinition(..), InputSchemaDefinitionProperty(..)
                         , Content(..), Error(..))
 import qualified MCP.Server.Types as MCPTypes
 
@@ -38,9 +38,11 @@ import UI.UserInput (ImplementsWidget(..), RenderRequest)
 import qualified Paths_runix_code
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
-import qualified Data.Aeson.Key
+import qualified Data.Aeson.Key as AesonKey
+import qualified Data.Aeson.KeyMap as KeyMap
 import qualified Data.ByteString.Lazy as BSL
 import qualified Data.Text.Encoding as T
+import qualified Data.Vector as V
 
 --------------------------------------------------------------------------------
 -- MCP Widget Type (for UserInput effect)
@@ -155,11 +157,32 @@ convertLLMToolToMCP llmTool =
        Nothing
 
 -- | Convert JSON schema Value to MCP InputSchemaDefinition
--- This is simplified - in reality we'd parse the JSON schema properly
 convertSchemaToMCP :: Value -> InputSchemaDefinition
-convertSchemaToMCP _schema =
-  -- TODO: Parse the actual JSON schema and convert properties
-  InputSchemaDefinitionObject [] []
+convertSchemaToMCP schema = case schema of
+  Aeson.Object obj ->
+    let props = case KeyMap.lookup "properties" obj of
+          Just (Aeson.Object propsObj) ->
+            [ (AesonKey.toText key, convertProperty val)
+            | (key, val) <- KeyMap.toList propsObj
+            ]
+          _ -> []
+        required = case KeyMap.lookup "required" obj of
+          Just (Aeson.Array arr) ->
+            [txt | Aeson.String txt <- V.toList arr]
+          _ -> []
+    in InputSchemaDefinitionObject props required
+  _ -> InputSchemaDefinitionObject [] []
+  where
+    convertProperty :: Value -> InputSchemaDefinitionProperty
+    convertProperty (Aeson.Object propObj) =
+      let typ = case KeyMap.lookup "type" propObj of
+            Just (Aeson.String t) -> t
+            _ -> "string"
+          desc = case KeyMap.lookup "description" propObj of
+            Just (Aeson.String d) -> d
+            _ -> ""
+      in InputSchemaDefinitionProperty typ desc
+    convertProperty _ = InputSchemaDefinitionProperty "string" ""
 
 -- | Execute a tool call
 callTool :: IORef [LLMTool (Sem r)]
@@ -171,7 +194,7 @@ callTool toolsRef (InterpreterRunner runToIO) toolName args = do
   tools <- readIORef toolsRef
 
   -- Convert MCP args to JSON object for executeToolCall
-  let argsObject = Aeson.object [ (Data.Aeson.Key.fromText k, Aeson.String v) | (k, v) <- args ]
+  let argsObject = Aeson.object [ (AesonKey.fromText k, Aeson.String v) | (k, v) <- args ]
       toolCall = ToolCall "mcp-call" toolName argsObject
 
   -- Execute the tool using UniversalLLM's executeToolCallFromList
