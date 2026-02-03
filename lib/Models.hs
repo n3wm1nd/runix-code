@@ -28,6 +28,7 @@ module Models
   , ModelDefaults(..)
     -- * Composable Providers
   , claudeSonnet45ComposableProvider
+  , claudeSonnet45OAuthComposableProvider
   , glm45AirComposableProvider
   , qwen3CoderComposableProvider
   , universalComposableProvider
@@ -42,7 +43,7 @@ import GHC.Generics (Generic)
 import UniversalLLM
 import UniversalLLM.Settings
 import qualified UniversalLLM.Providers.Anthropic as AnthropicProvider
-import UniversalLLM.Providers.Anthropic (Anthropic(..))
+import UniversalLLM.Providers.Anthropic (Anthropic(..), AnthropicOAuth(..), OAuthToolsState)
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import UniversalLLM.Providers.XMLToolCalls (xmlResponseParser)
@@ -167,6 +168,33 @@ instance ModelDefaults (Model ClaudeSonnet45 Anthropic) where
     [ Streaming True    -- Enable streaming for real-time feedback
     , Reasoning True    -- Enable extended thinking
     ]
+
+-- OAuth version with tool name workarounds
+instance ModelName (Model ClaudeSonnet45 AnthropicOAuth) where
+  modelName (Model _ _) = "claude-sonnet-4-5-20250929"
+
+instance HasTools (Model ClaudeSonnet45 AnthropicOAuth) where
+  type ToolState (Model ClaudeSonnet45 AnthropicOAuth) = OAuthToolsState
+  withTools = AnthropicProvider.anthropicOAuthTools
+
+instance HasReasoning (Model ClaudeSonnet45 AnthropicOAuth) where
+  type ReasoningState (Model ClaudeSonnet45 AnthropicOAuth) = AnthropicProvider.AnthropicReasoningState
+  withReasoning = AnthropicProvider.anthropicReasoning
+
+instance BaseComposableProvider (Model ClaudeSonnet45 AnthropicOAuth) where
+  baseProvider = AnthropicProvider.baseComposableProvider
+
+instance ModelDefaults (Model ClaudeSonnet45 AnthropicOAuth) where
+  defaultConfigs :: [ModelConfig (Model ClaudeSonnet45 AnthropicOAuth)]
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable extended thinking
+    ]
+
+-- OAuth composable provider (with tool name workarounds)
+claudeSonnet45OAuthComposableProvider ::
+  ComposableProvider (Model ClaudeSonnet45 AnthropicOAuth) (AnthropicProvider.AnthropicReasoningState, (OAuthToolsState, ()))
+claudeSonnet45OAuthComposableProvider = withReasoning `chainProviders` withTools `chainProviders` baseProvider
 
 --------------------------------------------------------------------------------
 -- LlamaCpp Models

@@ -67,14 +67,14 @@ import Data.Default (Default, def)
 
 import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig)
 import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt, SupportsStreaming)
-import UniversalLLM.Providers.Anthropic (Anthropic(..))
+import UniversalLLM.Providers.Anthropic (Anthropic(..), AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, interpretZAI)
 import Runix.Secret (runSecret)
 import Runix.Streaming (ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), GLM45Air_ZAI(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45ComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider, glm45AirZAIComposableProvider, glm46ComposableProvider, glm47ComposableProvider)
+import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), Universal(..), GLM45Air_ZAI(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45ComposableProvider, claudeSonnet45OAuthComposableProvider, glm45AirComposableProvider, qwen3CoderComposableProvider, universalComposableProvider, glm45AirZAIComposableProvider, glm46ComposableProvider, glm47ComposableProvider)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -247,9 +247,9 @@ createModelInterpreter UseClaudeSonnet45 = do
       return $ ModelInterpreter
         { interpretModel =
             runSecret (pure tokenStr)
-              . interpretAnthropicOAuth claudeSonnet45ComposableProvider (Model ClaudeSonnet45 Anthropic) . raiseUnder
-        , miLoadSession = loadSession claudeSonnet45ComposableProvider
-        , miSaveSession = saveSession claudeSonnet45ComposableProvider
+              . interpretAnthropicOAuth claudeSonnet45OAuthComposableProvider (Model ClaudeSonnet45 AnthropicOAuth) . raiseUnder
+        , miLoadSession = loadSession claudeSonnet45OAuthComposableProvider
+        , miSaveSession = saveSession claudeSonnet45OAuthComposableProvider
         }
 
 createModelInterpreter UseGLM45Air = do
