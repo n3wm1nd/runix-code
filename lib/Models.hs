@@ -169,20 +169,21 @@ instance ModelDefaults (Model ClaudeSonnet45 Anthropic) where
     , Reasoning True    -- Enable extended thinking
     ]
 
--- OAuth version with tool name workarounds
+-- OAuth version with tool name workarounds and magic system prompt
 instance ModelName (Model ClaudeSonnet45 AnthropicOAuth) where
   modelName (Model _ _) = "claude-sonnet-4-5-20250929"
 
 instance HasTools (Model ClaudeSonnet45 AnthropicOAuth) where
   type ToolState (Model ClaudeSonnet45 AnthropicOAuth) = OAuthToolsState
-  withTools = AnthropicProvider.anthropicOAuthTools
+  withTools = AnthropicProvider.anthropicOAuthBlacklistedTools
 
 instance HasReasoning (Model ClaudeSonnet45 AnthropicOAuth) where
   type ReasoningState (Model ClaudeSonnet45 AnthropicOAuth) = AnthropicProvider.AnthropicReasoningState
   withReasoning = AnthropicProvider.anthropicReasoning
 
 instance BaseComposableProvider (Model ClaudeSonnet45 AnthropicOAuth) where
-  baseProvider = AnthropicProvider.baseComposableProvider
+  type BaseState (Model ClaudeSonnet45 AnthropicOAuth) = ((), ())
+  baseProvider = AnthropicProvider.anthropicOAuthMagicPrompt `chainProviders` AnthropicProvider.baseComposableProvider
 
 instance ModelDefaults (Model ClaudeSonnet45 AnthropicOAuth) where
   defaultConfigs :: [ModelConfig (Model ClaudeSonnet45 AnthropicOAuth)]
@@ -191,9 +192,9 @@ instance ModelDefaults (Model ClaudeSonnet45 AnthropicOAuth) where
     , Reasoning True    -- Enable extended thinking
     ]
 
--- OAuth composable provider (with tool name workarounds)
+-- OAuth composable provider (with tool name workarounds and magic system prompt)
 claudeSonnet45OAuthComposableProvider ::
-  ComposableProvider (Model ClaudeSonnet45 AnthropicOAuth) (AnthropicProvider.AnthropicReasoningState, (OAuthToolsState, ()))
+  ComposableProvider (Model ClaudeSonnet45 AnthropicOAuth) (AnthropicProvider.AnthropicReasoningState, (OAuthToolsState, ((), ())))
 claudeSonnet45OAuthComposableProvider = withReasoning `chainProviders` withTools `chainProviders` baseProvider
 
 --------------------------------------------------------------------------------
