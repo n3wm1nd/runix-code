@@ -43,6 +43,8 @@ import Runix.FileSystem (HasProjectPath(..))
 -- | Model selection
 data ModelSelection
   = UseClaudeSonnet45
+  | UseClaudeHaiku45
+  | UseClaudeOpus46
   | UseGLM45Air
   | UseQwen3Coder
   | UseOpenRouter
@@ -99,7 +101,7 @@ instance HasProjectPath RunixToolsFS where
 -- | Load configuration from CLI args and environment variables
 --
 -- Environment variables:
--- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai")
+-- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "claude-haiku-45", "claude-opus-46", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai")
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional, legacy)
@@ -139,6 +141,12 @@ getModelSelection = do
       "claude-sonnet-45" -> return UseClaudeSonnet45
       "claude-sonnet-4-5" -> return UseClaudeSonnet45
       "claude" -> return UseClaudeSonnet45
+      "claude-haiku-45" -> return UseClaudeHaiku45
+      "claude-haiku-4-5" -> return UseClaudeHaiku45
+      "haiku" -> return UseClaudeHaiku45
+      "claude-opus-46" -> return UseClaudeOpus46
+      "claude-opus-4-6" -> return UseClaudeOpus46
+      "opus" -> return UseClaudeOpus46
       "glm-45-air" -> return UseGLM45Air
       "glm-4.5-air" -> return UseGLM45Air
       "glm45air" -> return UseGLM45Air

@@ -74,7 +74,7 @@ import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interp
 import Runix.Secret (runSecret)
 import Runix.Streaming (ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -250,6 +250,36 @@ createModelInterpreter UseClaudeSonnet45 = do
               . interpretAnthropicOAuth claudeSonnet45OAuth (Model ClaudeSonnet45 AnthropicOAuth) . raiseUnder
         , miLoadSession = loadSession claudeSonnet45OAuth
         , miSaveSession = saveSession claudeSonnet45OAuth
+        }
+
+createModelInterpreter UseClaudeHaiku45 = do
+  maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
+  case maybeToken of
+    Nothing -> do
+      hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
+      error "Missing ANTHROPIC_OAUTH_TOKEN"
+    Just tokenStr ->
+      return $ ModelInterpreter
+        { interpretModel =
+            runSecret (pure tokenStr)
+              . interpretAnthropicOAuth claudeHaiku45OAuth (Model ClaudeHaiku45 AnthropicOAuth) . raiseUnder
+        , miLoadSession = loadSession claudeHaiku45OAuth
+        , miSaveSession = saveSession claudeHaiku45OAuth
+        }
+
+createModelInterpreter UseClaudeOpus46 = do
+  maybeToken <- lookupEnv "ANTHROPIC_OAUTH_TOKEN"
+  case maybeToken of
+    Nothing -> do
+      hPutStr IO.stderr "Error: ANTHROPIC_OAUTH_TOKEN environment variable is not set\n"
+      error "Missing ANTHROPIC_OAUTH_TOKEN"
+    Just tokenStr ->
+      return $ ModelInterpreter
+        { interpretModel =
+            runSecret (pure tokenStr)
+              . interpretAnthropicOAuth claudeOpus46OAuth (Model ClaudeOpus46 AnthropicOAuth) . raiseUnder
+        , miLoadSession = loadSession claudeOpus46OAuth
+        , miSaveSession = saveSession claudeOpus46OAuth
         }
 
 createModelInterpreter UseGLM45Air = do
