@@ -12,8 +12,7 @@
 -- runix-code-specific configuration defaults.
 module Models
   ( -- * Re-exported from UniversalLLM.Models
-    ClaudeSonnet45WithReasoning(..)
-  , ClaudeSonnet45  -- Type alias for backward compat
+    ClaudeSonnet45(..)
   , GLM45Air(..)
   , GLM46(..)
   , GLM47(..)
@@ -21,7 +20,7 @@ module Models
   , Qwen3Coder(..)
   , Universal(..)
     -- * Tested providers from universal-llm
-  , claudeSonnet45ReasoningOAuth
+  , claudeSonnet45OAuth
   , glm45AirLlamaCpp
   , glm45AirZAI
   , glm46
@@ -44,17 +43,10 @@ import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
-import UniversalLLM.Models.Anthropic (ClaudeSonnet45WithReasoning(..), claudeSonnet45ReasoningOAuth)
+import UniversalLLM.Models.Anthropic (ClaudeSonnet45(..), claudeSonnet45OAuth)
 import UniversalLLM.Models.GLM (GLM45Air(..), GLM46(..), GLM47(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47)
 import UniversalLLM.Models.Qwen (Qwen3Coder(..), qwen3Coder)
 import UniversalLLM.Models.OpenRouter (Universal(..))
-
---------------------------------------------------------------------------------
--- Type Aliases for Backward Compatibility
---------------------------------------------------------------------------------
-
--- | Claude Sonnet 4.5 with reasoning - type alias for backward compatibility
-type ClaudeSonnet45 = ClaudeSonnet45WithReasoning
 
 --------------------------------------------------------------------------------
 -- Runix-Code Specific Providers

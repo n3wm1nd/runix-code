@@ -74,7 +74,7 @@ import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interp
 import Runix.Secret (runSecret)
 import Runix.Streaming (ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), ClaudeSonnet45WithReasoning(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45ReasoningOAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47)
+import Models (ClaudeSonnet45(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -247,9 +247,9 @@ createModelInterpreter UseClaudeSonnet45 = do
       return $ ModelInterpreter
         { interpretModel =
             runSecret (pure tokenStr)
-              . interpretAnthropicOAuth claudeSonnet45ReasoningOAuth (Model ClaudeSonnet45WithReasoning AnthropicOAuth) . raiseUnder
-        , miLoadSession = loadSession claudeSonnet45ReasoningOAuth
-        , miSaveSession = saveSession claudeSonnet45ReasoningOAuth
+              . interpretAnthropicOAuth claudeSonnet45OAuth (Model ClaudeSonnet45 AnthropicOAuth) . raiseUnder
+        , miLoadSession = loadSession claudeSonnet45OAuth
+        , miSaveSession = saveSession claudeSonnet45OAuth
         }
 
 createModelInterpreter UseGLM45Air = do
