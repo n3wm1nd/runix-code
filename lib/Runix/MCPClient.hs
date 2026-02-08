@@ -45,12 +45,12 @@ module Runix.MCPClient
 
 import Polysemy
 import Polysemy.Fail (Fail)
-import Polysemy.State (State, get, put, runState)
+import Polysemy.State (State, get, runState)
 import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Aeson (ToJSON(..), FromJSON(..), (.:), (.:?), (.=), (.!=), Value, Object)
+import Data.Aeson (ToJSON(..), FromJSON(..), (.:), (.:?), (.=), (.!=), Value)
 import qualified Data.Aeson as Aeson
 import qualified Data.Aeson.Key as AesonKey
 import qualified Data.Aeson.KeyMap as KeyMap
@@ -63,17 +63,15 @@ import System.IO (Handle, hFlush)
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy as BSL
 
-import UniversalLLM.Tools (LLMTool(..), mkTool, ToolParameter(..), ToolWrapped, Callable(..))
+import UniversalLLM.Tools (LLMTool(..), mkTool, ToolParameter(..))
 import Runix.LLM.ToolInstances ()  -- Import orphan instances for Sem
 import Autodocodec (HasCodec)
 import qualified Autodocodec
 import MCP.Server.Types (InputSchemaDefinition(..), Content(..))
 import qualified MCP.Server.Types as MCP
-import Runix.RestAPI (RestAPI, RestEndpoint(..), Endpoint(..), post)
-import qualified Runix.RestAPI
+import Runix.RestAPI (RestEndpoint(..))
 import Runix.HTTP (HTTP)
 import qualified Runix.HTTP
-import Runix.Logging (Logging)
 
 --------------------------------------------------------------------------------
 -- Tool Result Types (defined before effect for scoping)
@@ -133,12 +131,22 @@ instance FromJSON result => FromJSON (JSONRPCResponse result) where
 -- | MCP Client effect parameterized by server identifier
 data MCPClient (server :: Type) (m :: Type -> Type) a where
   -- | List all available tools from the MCP server
-  ListMCPTools :: MCPClient server m (Either String [MCP.ToolDefinition])
+  ListMCPTools :: MCPClient server m (Either Text [MCP.ToolDefinition])
 
   -- | Call an MCP tool by name with JSON arguments
-  CallMCPTool :: Text -> Value -> MCPClient server m (Either String MCPToolCallResult)
+  CallMCPTool :: Text -> Value -> MCPClient server m (Either Text Value)
 
-makeSem ''MCPClient
+-- | Manual smart constructors that convert Either to Fail
+
+-- | List all available tools from the MCP server
+listMCPTools :: forall server r. (Member (MCPClient server) r, Member Fail r)
+             => Sem r [MCP.ToolDefinition]
+listMCPTools = send @(MCPClient server) ListMCPTools >>= either (fail . T.unpack) return
+
+-- | Call an MCP tool by name with JSON arguments
+callMCPTool :: forall server r. (Member (MCPClient server) r, Member Fail r)
+            => Text -> Value -> Sem r Value
+callMCPTool name args = send @(MCPClient server) (CallMCPTool name args) >>= either (fail . T.unpack) return
 
 -- | Configuration for MCP client
 data MCPConfig = MCPConfig
@@ -156,10 +164,8 @@ getMCPTools :: forall server r. (Member (MCPClient server) r, Member Fail r)
             => Maybe Text  -- ^ Optional namespace prefix
             -> Sem r [LLMTool (Sem (Fail : r))]
 getMCPTools namespacePrefix = do
-  toolDefsResult <- listMCPTools @server
-  case toolDefsResult of
-    Left err -> fail $ "Failed to list MCP tools: " <> err
-    Right toolDefs -> return $ map (mcpToolDefToLLMTool @server namespacePrefix) toolDefs
+  toolDefs <- listMCPTools @server
+  return $ map (mcpToolDefToLLMTool @server namespacePrefix) toolDefs
 
 -- | Convert MCP ToolDefinition to LLMTool
 mcpToolDefToLLMTool :: forall server r. (Member (MCPClient server) r, Member Fail r)
@@ -170,13 +176,13 @@ mcpToolDefToLLMTool namespacePrefix (MCP.ToolDefinition name desc _schema _extra
         Just prefix -> prefix <> name
       toolFn :: MCPToolArgs -> Sem (Fail : r) MCPToolResult
       toolFn (MCPToolArgs args) = do
-        result <- raise $ callMCPTool @server name args
-        case result of
-          Left err -> fail $ "MCP tool call failed: " <> err
-          Right callResult -> do
-            -- Extract text from Content list
-            let texts = [txt | ContentText txt <- content callResult]
-            return $ MCPToolResult $ T.intercalate "\n" texts
+        resultValue <- raise $ callMCPTool @server name args
+        -- Convert Value to Text for the result
+        -- If it's a JSON string, extract it; otherwise encode the whole value as JSON
+        let resultText = case resultValue of
+              Aeson.String txt -> txt
+              other -> TE.decodeUtf8 $ BSL.toStrict $ Aeson.encode other
+        return $ MCPToolResult resultText
   in LLMTool $ mkTool toolNameWithNS desc toolFn
 
 --------------------------------------------------------------------------------
@@ -276,6 +282,19 @@ instance ToJSON MCPToolCallParams where
 -- Interpreters
 --------------------------------------------------------------------------------
 
+-- | Extract text content from MCPToolCallResult and parse as JSON
+extractContentAsJSON :: MCPToolCallResult -> Either Text Value
+extractContentAsJSON callResult =
+  let texts = [txt | ContentText txt <- content callResult]
+      combinedText = T.concat texts
+  in if T.null combinedText
+     then Left "MCP tool returned empty content"
+     else case Aeson.decode (BSL.fromStrict $ TE.encodeUtf8 combinedText) of
+            Nothing ->
+              -- If it's not valid JSON, wrap the text in a JSON string
+              Right $ Aeson.String combinedText
+            Just val -> Right val
+
 -- | State held by the stdio interpreter
 data MCPStdioState = MCPStdioState
   { stateHandleIn :: Handle
@@ -312,11 +331,11 @@ interpretMCPStdio
   -> [String]  -- ^ Arguments
   -> Sem (MCPClient server : r) a
   -> Sem r a
-interpretMCPStdio _config executable args program = do
+interpretMCPStdio _config executable procArgs program = do
   -- Initialize connection
   initResult <- embed $ do
     -- Create process with pipes for stdin/stdout
-    (Just hIn, Just hOut, Just _hErr, ph) <- createProcess (proc executable args)
+    (Just hIn, Just hOut, Just _hErr, ph) <- createProcess (proc executable procArgs)
       { std_in = CreatePipe
       , std_out = CreatePipe
       , std_err = CreatePipe
@@ -328,11 +347,11 @@ interpretMCPStdio _config executable args program = do
     -- Initialize MCP connection
     initResult <- mcpInitialize hIn hOut reqIdVar
     case initResult of
-      Left err -> return $ Left $ "MCP initialization failed: " <> T.unpack err
+      Left err -> return $ Left $ "MCP initialization failed: " <> err
       Right _ -> return $ Right $ MCPStdioState hIn hOut reqIdVar ph
 
   case initResult of
-    Left err -> fail err
+    Left err -> fail $ T.unpack err
     Right initialState -> do
       -- Run the program with state
       (_finalState, result) <- runState initialState $ reinterpret handleMCP program
@@ -344,15 +363,15 @@ interpretMCPStdio _config executable args program = do
         MCPStdioState{stateHandleIn, stateHandleOut, stateReqIdVar} <- get
         result <- embed $ mcpToolsList stateHandleIn stateHandleOut stateReqIdVar
         return $ case result of
-          Left err -> Left $ "Failed to list MCP tools: " <> T.unpack err
+          Left err -> Left $ "Failed to list MCP tools: " <> err
           Right toolsList -> Right (tools toolsList)
 
       CallMCPTool toolName args -> do
         MCPStdioState{stateHandleIn, stateHandleOut, stateReqIdVar} <- get
         result <- embed $ mcpToolCallExec stateHandleIn stateHandleOut stateReqIdVar toolName args
         return $ case result of
-          Left err -> Left $ "MCP tool call failed: " <> T.unpack err
-          Right res -> Right res
+          Left err -> Left $ "MCP tool call failed: " <> err
+          Right callResult -> extractContentAsJSON callResult
 
 -- | MCP tools/call request
 mcpToolCallExec :: Handle -> Handle -> TMVar Int -> Text -> Value -> IO (Either Text MCPToolCallResult)
@@ -374,15 +393,15 @@ interpretMCPHttp
   -> String  -- ^ Base URL (e.g., "http://localhost:5056")
   -> Sem (MCPClient server : r) a
   -> Sem r a
-interpretMCPHttp _config baseUrl program = do
+interpretMCPHttp _config baseUrl' program = do
   -- Initialize connection
   reqIdVar <- embed $ newTMVarIO (0 :: Int)
-  let initialState = MCPHttpState baseUrl reqIdVar Nothing
+  let initialState = MCPHttpState baseUrl' reqIdVar Nothing
 
   -- Initialize MCP connection
-  initResult <- mcpInitializeHttp baseUrl reqIdVar
+  initResult <- mcpInitializeHttp baseUrl' reqIdVar
   case initResult of
-    Left err -> fail $ "MCP HTTP initialization failed: " <> T.unpack err
+    Left err -> fail $ T.unpack $ "MCP HTTP initialization failed: " <> err
     Right (_initResponse, mSessionId) -> do
       -- Store session ID in state
       let stateWithSession = initialState { httpSessionId = mSessionId }
@@ -393,18 +412,18 @@ interpretMCPHttp _config baseUrl program = do
     handleMCP :: MCPClient server m x -> Sem (State MCPHttpState : r) x
     handleMCP = \case
       ListMCPTools -> do
-        MCPHttpState{httpBaseUrl = baseUrl', httpSessionId = sessionId, httpReqIdVar = reqIdVar} <- get @MCPHttpState
-        result <- raise $ mcpToolsListHttp baseUrl' sessionId reqIdVar
+        MCPHttpState{httpBaseUrl = url, httpSessionId = sessionId, httpReqIdVar = reqIdVar} <- get @MCPHttpState
+        result <- raise $ mcpToolsListHttp url sessionId reqIdVar
         return $ case result of
-          Left err -> Left $ "Failed to list MCP tools: " <> T.unpack err
+          Left err -> Left $ "Failed to list MCP tools: " <> err
           Right toolsList -> Right (tools toolsList)
 
-      CallMCPTool toolName args -> do
-        MCPHttpState{httpBaseUrl = baseUrl', httpSessionId = sessionId, httpReqIdVar = reqIdVar} <- get @MCPHttpState
-        result <- raise $ mcpToolCallHttp baseUrl' sessionId reqIdVar toolName args
+      CallMCPTool toolName toolArgs -> do
+        MCPHttpState{httpBaseUrl = url, httpSessionId = sessionId, httpReqIdVar = reqIdVar} <- get @MCPHttpState
+        result <- raise $ mcpToolCallHttp url sessionId reqIdVar toolName toolArgs
         return $ case result of
-          Left err -> Left $ "MCP tool call failed: " <> T.unpack err
-          Right res -> Right res
+          Left err -> Left $ "MCP tool call failed: " <> err
+          Right callResult -> extractContentAsJSON callResult
 
 --------------------------------------------------------------------------------
 -- JSON-RPC Helpers (stdio transport)

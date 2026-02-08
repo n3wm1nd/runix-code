@@ -143,9 +143,8 @@ spec = do
       let result = MCPToolResult "test output"
       mcpResult result `shouldBe` "test output"
 
-    it "MCPToolCallResult contains content list" $ do
-      let result = MCPToolCallResult []
-      content result `shouldBe` []
+    -- MCPToolCallResult is now internal to the interpreter, not exposed in public API
+    -- Tools now return Aeson.Value directly
 
     it "MCPToolArgs wraps JSON value" $ do
       let args = MCPToolArgs (Aeson.toJSON ("test" :: Text))
@@ -169,8 +168,8 @@ spec = do
                       serverPath
                       []
                   $ do
-                    -- List tools from the server and unwrap Either
-                    toolsList <- listMCPTools @TestMCPServer >>= either (throw @String) return
+                    -- List tools from the server (errors handled via Fail)
+                    toolsList <- listMCPTools @TestMCPServer
                     -- Verify we got at least one tool (getcwd)
                     embed $ putStrLn $ "Found " <> show (length toolsList) <> " tools"
                     return toolsList
@@ -200,8 +199,8 @@ spec = do
                       serverPath
                       []
                   $ do
-                    -- Call getcwd tool with empty arguments
-                    callRes <- callMCPTool @TestMCPServer "getcwd" (Aeson.object []) >>= either (throw @String) return
+                    -- Call getcwd tool with empty arguments (returns Value now)
+                    callRes <- callMCPTool @TestMCPServer "getcwd" (Aeson.object [])
                     embed $ putStrLn $ "getcwd result: " <> show callRes
                     return callRes
 
@@ -209,8 +208,8 @@ spec = do
             Left err -> expectationFailure $ "Test failed: " <> err
             Right (Left _) -> expectationFailure "Test failed: runFail"
             Right (Right callRes) -> do
-              -- Verify we got content back
-              (content callRes) `shouldSatisfy` (not . null)
+              -- Verify we got a result (Value should not be Null)
+              callRes `shouldNotBe` Aeson.Null
 
   describe "MCP HTTP Transport" $ do
     it "connects to HTTP MCP server and lists tools" $ do
@@ -218,7 +217,7 @@ spec = do
 
       result <- runM $ runError @String $ loggingIO $ cancelNoop $ failToError @String id $ mockMCPHttpIO $ interpretMCPHttp @TestMCPServer (MCPConfig "test-http-mcp" Nothing) baseUrl $ do
         -- List tools from the HTTP server
-        toolsList <- listMCPTools @TestMCPServer >>= either (throw @String) return
+        toolsList <- listMCPTools @TestMCPServer
         embed $ putStrLn $ "Found " <> show (length toolsList) <> " tools via HTTP (mock)"
         return toolsList
 
@@ -233,7 +232,7 @@ spec = do
 
       result <- runM $ runError @String $ loggingIO $ cancelNoop $ failToError @String id $ mockMCPHttpIO $ interpretMCPHttp @TestMCPServer (MCPConfig "test-http-mcp" Nothing) baseUrl $ do
         -- First list tools to see what's available
-        toolsList <- listMCPTools @TestMCPServer >>= either (throw @String) return
+        toolsList <- listMCPTools @TestMCPServer
         embed $ putStrLn $ "Available tools: " <> show [MCP.toolDefinitionName t | t <- toolsList]
 
         -- Call the first tool with empty args (as a basic test)
@@ -242,11 +241,12 @@ spec = do
           (tool:_) -> do
             let toolName = MCP.toolDefinitionName tool
             embed $ putStrLn $ "Calling tool: " <> T.unpack toolName
-            callRes <- callMCPTool @TestMCPServer toolName (Aeson.object []) >>= either (throw @String) return
+            callRes <- callMCPTool @TestMCPServer toolName (Aeson.object [])
             embed $ putStrLn $ "Tool result: " <> show callRes
             return callRes
 
       case result of
         Left err -> expectationFailure $ "HTTP tool call failed: " <> err
         Right callRes -> do
-          (content callRes) `shouldSatisfy` (not . null)
+          -- Verify we got a result (Value should not be Null)
+          callRes `shouldNotBe` Aeson.Null
