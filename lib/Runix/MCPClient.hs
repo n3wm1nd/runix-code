@@ -72,6 +72,7 @@ import qualified MCP.Server.Types as MCP
 import Runix.RestAPI (RestEndpoint(..))
 import Runix.HTTP (HTTP)
 import qualified Runix.HTTP
+import Runix.SSE (SSEEvent(..), parseSSEComplete)
 
 --------------------------------------------------------------------------------
 -- Tool Result Types (defined before effect for scoping)
@@ -510,21 +511,21 @@ mcpToolsList hIn hOut reqIdVar = sendJSONRPC hIn hOut reqIdVar "tools/list" empt
 -- JSON-RPC Helpers (HTTP transport)
 --------------------------------------------------------------------------------
 
--- | Parse SSE response to extract JSON data, or parse as plain JSON if not SSE
+-- | Parse SSE response to extract JSON data
+-- MCP over HTTP uses SSE (text/event-stream) format
 parseSSEResponse :: BSL.ByteString -> Either Text Value
 parseSSEResponse body =
-  let bodyText = TE.decodeUtf8 $ BSL.toStrict body
-      lines' = T.lines bodyText
-      -- Find the "data:" line and extract JSON
-      dataLines = [T.drop 6 line | line <- lines', T.isPrefixOf "data: " line]
-  in case dataLines of
-       (jsonText:_) -> case Aeson.decode (BSL.fromStrict $ TE.encodeUtf8 jsonText) of
-         Nothing -> Left $ "Failed to parse JSON from SSE data: " <> jsonText
-         Just val -> Right val
-       -- If no SSE data line, try parsing the whole response as JSON
-       [] -> case Aeson.decode body of
-         Nothing -> Left $ "Failed to parse response as JSON or SSE: " <> bodyText
-         Just val -> Right val
+  let strictBody = BSL.toStrict body
+      sseEvents = parseSSEComplete strictBody
+  in case sseEvents of
+       (event:_) ->
+         let jsonText = eventData event
+         in if T.null jsonText
+            then Left "SSE event has no data"
+            else case Aeson.decode (BSL.fromStrict $ TE.encodeUtf8 jsonText) of
+                   Nothing -> Left $ "Failed to parse JSON from SSE data: " <> jsonText
+                   Just val -> Right val
+       [] -> Left "No SSE events in response"
 
 -- | Send JSON-RPC request via HTTP POST, handling SSE responses
 sendJSONRPCHttp :: forall params result r.

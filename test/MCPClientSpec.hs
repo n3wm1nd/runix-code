@@ -113,15 +113,17 @@ mockMCPHttpIO = interpret $ \case
                               ]
                           ]
 
-                let responseBody = Aeson.encode response
+                -- Format as SSE (Server-Sent Events)
+                let jsonResponse = Aeson.encode response
+                let sseBody = "data: " <> jsonResponse <> "\n\n"
                 let sessionId = if methodName == "initialize"
                                 then [("mcp-session-id", "mock-session-123")]
                                 else []
 
                 return $ HTTPResponse
                   200
-                  ([("content-type", "application/json")] ++ sessionId)
-                  responseBody
+                  ([("content-type", "text/event-stream")] ++ sessionId)
+                  sseBody
 
       _ -> fail $ "Unexpected HTTP request: " ++ reqMethod ++ " " ++ reqUri
 

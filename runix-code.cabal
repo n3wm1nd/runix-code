@@ -114,6 +114,7 @@ library
                     , Runner
                     , Runix.PromptStore
                     , Runix.MCPClient
+                    , Runix.SSE
                     , UI.UserInput
     other-modules:    Paths_runix_code
     autogen-modules:  Paths_runix_code
@@ -135,6 +136,7 @@ library
                     , process
                     , stm
                     , containers
+                    , conduit
 
     hs-source-dirs:   lib
     default-language: Haskell2010
