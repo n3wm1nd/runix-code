@@ -40,11 +40,12 @@ module Runix.MCPClient
   , MCPToolResult(..)
   , MCPToolArgs(..)
   , MCPToolCallResult(..)
+  , MCPHttpEndpoint(..)
   ) where
 
 import Polysemy
 import Polysemy.Fail (Fail)
-import Polysemy.State (State, get, runState)
+import Polysemy.State (State, get, put, runState)
 import Data.Kind (Type)
 import Data.Text (Text)
 import qualified Data.Text as T
@@ -68,6 +69,11 @@ import Autodocodec (HasCodec)
 import qualified Autodocodec
 import MCP.Server.Types (InputSchemaDefinition(..), Content(..))
 import qualified MCP.Server.Types as MCP
+import Runix.RestAPI (RestAPI, RestEndpoint(..), Endpoint(..), post)
+import qualified Runix.RestAPI
+import Runix.HTTP (HTTP)
+import qualified Runix.HTTP
+import Runix.Logging (Logging)
 
 --------------------------------------------------------------------------------
 -- Tool Result Types (defined before effect for scoping)
@@ -103,6 +109,22 @@ newtype MCPToolCallResult = MCPToolCallResult
 instance FromJSON MCPToolCallResult where
   parseJSON = Aeson.withObject "MCPToolCallResult" $ \v -> MCPToolCallResult
     <$> v .: "content"
+
+-- | JSON-RPC response wrapper
+data JSONRPCResponse result = JSONRPCResponse
+  { rpcId :: Int
+  , rpcResult :: result
+  } deriving (Show, Generic)
+
+instance FromJSON result => FromJSON (JSONRPCResponse result) where
+  parseJSON = Aeson.withObject "JSONRPCResponse" $ \v -> do
+    -- Check for error first
+    mError <- v .:? "error"
+    case mError of
+      Just (err :: Value) -> fail $ "JSON-RPC error: " <> show err
+      Nothing -> JSONRPCResponse
+        <$> v .: "id"
+        <*> v .: "result"
 
 --------------------------------------------------------------------------------
 -- Effect Definition
@@ -262,6 +284,22 @@ data MCPStdioState = MCPStdioState
   , stateProcessHandle :: ProcessHandle
   }
 
+-- | State held by the HTTP interpreter
+data MCPHttpState = MCPHttpState
+  { httpBaseUrl :: String
+  , httpReqIdVar :: TMVar Int
+  , httpSessionId :: Maybe Text  -- MCP session ID from Mcp-Session-Id header
+  }
+
+-- | RestEndpoint instance for MCP HTTP transport
+newtype MCPHttpEndpoint = MCPHttpEndpoint String
+
+instance RestEndpoint MCPHttpEndpoint where
+  apiroot (MCPHttpEndpoint base) = base
+  authheaders _ =
+    [ ("Accept", "application/json, text/event-stream")  -- MCP requires both content types
+    ]
+
 -- | Interpret MCP client via stdio process
 -- Maintains a persistent connection to the MCP server process
 interpretMCPStdio
@@ -328,14 +366,45 @@ mcpToolCallExec hIn hOut reqIdVar toolName args = sendJSONRPC hIn hOut reqIdVar 
 -- | Interpret MCP client via HTTP
 interpretMCPHttp
   :: forall server r a.
-     Member (Embed IO) r
+     ( Member (Embed IO) r
+     , Member Fail r
+     , Member HTTP r
+     )
   => MCPConfig
-  -> String  -- ^ Base URL
+  -> String  -- ^ Base URL (e.g., "http://localhost:5056")
   -> Sem (MCPClient server : r) a
   -> Sem r a
-interpretMCPHttp _config _baseUrl = interpret $ \case
-  ListMCPTools -> return $ Left "HTTP MCP client not yet implemented"
-  CallMCPTool _ _ -> return $ Left "HTTP MCP client not yet implemented"
+interpretMCPHttp _config baseUrl program = do
+  -- Initialize connection
+  reqIdVar <- embed $ newTMVarIO (0 :: Int)
+  let initialState = MCPHttpState baseUrl reqIdVar Nothing
+
+  -- Initialize MCP connection
+  initResult <- mcpInitializeHttp baseUrl reqIdVar
+  case initResult of
+    Left err -> fail $ "MCP HTTP initialization failed: " <> T.unpack err
+    Right (_initResponse, mSessionId) -> do
+      -- Store session ID in state
+      let stateWithSession = initialState { httpSessionId = mSessionId }
+      -- Reinterpret MCPClient with State
+      (_, result) <- runState stateWithSession $ reinterpret handleMCP program
+      return result
+  where
+    handleMCP :: MCPClient server m x -> Sem (State MCPHttpState : r) x
+    handleMCP = \case
+      ListMCPTools -> do
+        MCPHttpState{httpBaseUrl = baseUrl', httpSessionId = sessionId, httpReqIdVar = reqIdVar} <- get @MCPHttpState
+        result <- raise $ mcpToolsListHttp baseUrl' sessionId reqIdVar
+        return $ case result of
+          Left err -> Left $ "Failed to list MCP tools: " <> T.unpack err
+          Right toolsList -> Right (tools toolsList)
+
+      CallMCPTool toolName args -> do
+        MCPHttpState{httpBaseUrl = baseUrl', httpSessionId = sessionId, httpReqIdVar = reqIdVar} <- get @MCPHttpState
+        result <- raise $ mcpToolCallHttp baseUrl' sessionId reqIdVar toolName args
+        return $ case result of
+          Left err -> Left $ "MCP tool call failed: " <> T.unpack err
+          Right res -> Right res
 
 --------------------------------------------------------------------------------
 -- JSON-RPC Helpers (stdio transport)
@@ -417,3 +486,151 @@ mcpToolsList :: Handle -> Handle -> TMVar Int -> IO (Either Text MCPToolsListRes
 mcpToolsList hIn hOut reqIdVar = sendJSONRPC hIn hOut reqIdVar "tools/list" emptyParams
   where
     emptyParams = Aeson.object []
+
+--------------------------------------------------------------------------------
+-- JSON-RPC Helpers (HTTP transport)
+--------------------------------------------------------------------------------
+
+-- | Parse SSE response to extract JSON data, or parse as plain JSON if not SSE
+parseSSEResponse :: BSL.ByteString -> Either Text Value
+parseSSEResponse body =
+  let bodyText = TE.decodeUtf8 $ BSL.toStrict body
+      lines' = T.lines bodyText
+      -- Find the "data:" line and extract JSON
+      dataLines = [T.drop 6 line | line <- lines', T.isPrefixOf "data: " line]
+  in case dataLines of
+       (jsonText:_) -> case Aeson.decode (BSL.fromStrict $ TE.encodeUtf8 jsonText) of
+         Nothing -> Left $ "Failed to parse JSON from SSE data: " <> jsonText
+         Just val -> Right val
+       -- If no SSE data line, try parsing the whole response as JSON
+       [] -> case Aeson.decode body of
+         Nothing -> Left $ "Failed to parse response as JSON or SSE: " <> bodyText
+         Just val -> Right val
+
+-- | Send JSON-RPC request via HTTP POST, handling SSE responses
+sendJSONRPCHttp :: forall params result r.
+                   (ToJSON params, FromJSON result, Members [HTTP, Fail, Embed IO] r)
+                => String  -- ^ Base URL
+                -> Maybe Text  -- ^ Optional session ID
+                -> TMVar Int
+                -> Text
+                -> params
+                -> Sem r (Either Text result)
+sendJSONRPCHttp baseUrl mSessionId reqIdVar method params = do
+  -- Get next request ID
+  reqId <- embed $ atomically $ do
+    currentId <- takeTMVar reqIdVar
+    putTMVar reqIdVar (currentId + 1)
+    return currentId
+
+  -- Build JSON-RPC request
+  let requestBody = Aeson.object
+        [ "jsonrpc" .= ("2.0" :: Text)
+        , "id" .= reqId
+        , "method" .= method
+        , "params" .= toJSON params
+        ]
+
+  -- Build HTTP request manually
+  let sessionHeaders = case mSessionId of
+        Nothing -> []
+        Just sessionId -> [("Mcp-Session-Id", T.unpack sessionId)]
+      httpReq = Runix.HTTP.HTTPRequest
+        { Runix.HTTP.method = "POST"
+        , Runix.HTTP.uri = baseUrl ++ "/mcp"  -- MCP endpoint
+        , Runix.HTTP.headers =
+            [ ("Content-Type", "application/json")
+            , ("Accept", "application/json, text/event-stream")
+            ] ++ sessionHeaders
+        , Runix.HTTP.body = Just $ Aeson.encode requestBody
+        }
+
+  -- Send request and get raw response
+  Runix.HTTP.HTTPResponse{Runix.HTTP.body = responseBody} <- Runix.HTTP.httpRequest httpReq
+
+  -- Parse SSE response to extract JSON
+  case parseSSEResponse responseBody of
+    Left err -> return $ Left err
+    Right responseJson -> return $ parseJSONRPCResponse responseJson
+
+-- | MCP initialize handshake via HTTP, returns (result, sessionId)
+mcpInitializeHttp :: Members [HTTP, Fail, Embed IO] r
+                  => String  -- ^ Base URL
+                  -> TMVar Int
+                  -> Sem r (Either Text (MCPInitializeResult, Maybe Text))
+mcpInitializeHttp baseUrl reqIdVar = do
+  -- Get next request ID
+  reqId <- embed $ atomically $ do
+    currentId <- takeTMVar reqIdVar
+    putTMVar reqIdVar (currentId + 1)
+    return currentId
+
+  -- Build JSON-RPC request
+  let requestBody = Aeson.object
+        [ "jsonrpc" .= ("2.0" :: Text)
+        , "id" .= reqId
+        , "method" .= ("initialize" :: Text)
+        , "params" .= toJSON params
+        ]
+
+  -- Build HTTP request manually (no session ID for initialize)
+  let httpReq = Runix.HTTP.HTTPRequest
+        { Runix.HTTP.method = "POST"
+        , Runix.HTTP.uri = baseUrl ++ "/mcp"
+        , Runix.HTTP.headers =
+            [ ("Content-Type", "application/json")
+            , ("Accept", "application/json, text/event-stream")
+            ]
+        , Runix.HTTP.body = Just $ Aeson.encode requestBody
+        }
+
+  -- Send request and get raw response
+  Runix.HTTP.HTTPResponse{Runix.HTTP.body = responseBody, Runix.HTTP.headers = responseHeaders} <- Runix.HTTP.httpRequest httpReq
+
+  -- Extract session ID from headers (case-insensitive lookup, strip quotes)
+  let sessionId = lookupHeader "mcp-session-id" responseHeaders
+      lookupHeader name headers =
+        let stripQuotes s = T.strip $ T.dropAround (== '"') $ T.pack s
+            headerMap = [(T.toLower $ stripQuotes k, stripQuotes v) | (k, v) <- headers]
+        in lookup name headerMap
+
+  -- Parse SSE response to extract JSON
+  case parseSSEResponse responseBody of
+    Left err -> return $ Left err
+    Right responseJson -> case parseJSONRPCResponse responseJson of
+      Left err -> return $ Left err
+      Right result -> return $ Right (result, sessionId)
+  where
+    params = MCPInitializeParams
+      { protocolVersion = "2025-06-18"
+      , clientCapabilities = Aeson.object []
+      , clientInfo = MCPClientInfo
+          { name = "runix-code"
+          , version = "0.1.0"
+          }
+      }
+
+-- | MCP tools/list via HTTP
+mcpToolsListHttp :: Members [HTTP, Fail, Embed IO] r
+                 => String  -- ^ Base URL
+                 -> Maybe Text  -- ^ Session ID
+                 -> TMVar Int
+                 -> Sem r (Either Text MCPToolsListResult)
+mcpToolsListHttp baseUrl sessionId reqIdVar = sendJSONRPCHttp baseUrl sessionId reqIdVar "tools/list" emptyParams
+  where
+    emptyParams = Aeson.object []
+
+-- | MCP tools/call via HTTP
+mcpToolCallHttp :: Members [HTTP, Fail, Embed IO] r
+                => String  -- ^ Base URL
+                -> Maybe Text  -- ^ Session ID
+                -> TMVar Int
+                -> Text
+                -> Value
+                -> Sem r (Either Text MCPToolCallResult)
+mcpToolCallHttp baseUrl sessionId reqIdVar toolName args = sendJSONRPCHttp baseUrl sessionId reqIdVar "tools/call" params
+  where
+    params = MCPToolCallParams
+      { toolName = toolName
+      , arguments = args
+      }

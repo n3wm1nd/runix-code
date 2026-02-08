@@ -306,6 +306,7 @@ test-suite runix-code-test
                     , mcp-server
                     , aeson
                     , directory
+                    , vector
 
     other-modules:    OutputHistorySpec
                     , RegistrySpec
