@@ -120,7 +120,7 @@ agentLoop :: forall model.
           -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
           -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
@@ -259,7 +259,7 @@ buildUIRunner :: forall model.
                  , ModelDefaults model
                  , SupportsStreaming (ProviderOf model)
                  )
-              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
@@ -364,10 +364,10 @@ interpretTUIEffects ::
         : Cmds
         : PromptStore
         : ConfigEffect.Config RunixDataDir
-        : HTTP
-        : HTTPStreaming
         : StreamChunk BS.ByteString
         : Cancellation
+        : HTTPStreaming
+        : HTTP
         : FileSystemWrite RunixToolsFS
         : FileSystemRead RunixToolsFS
         : FileSystem RunixToolsFS
@@ -415,11 +415,11 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     -- RunixToolsFS: runix-code source directory
     . fileSystemLocal (RunixToolsFS runixCodeDir)
     . loggingWrite @RunixToolsFS "runix-tools"
+    . httpIO (withRequestTimeout 300)
+    . httpIOStreaming (withRequestTimeout 300)
     . interpretCancellation uiVars
     . interpretStreamChunkToUI uiVars
     . reinterpretSSEChunks
-    . httpIOStreaming (withRequestTimeout 300)
-    . httpIO (withRequestTimeout 300)
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
     . promptStoreIO
     . cmdsIO

@@ -117,12 +117,12 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . loggingIO
                . failLog
                . interpretUserInputFail @CLIWidget
-               . cancelNoop
                . ignoreChunks @BS.ByteString
-               . httpIOStreaming (withRequestTimeout 300)
-               . withFullHTTPStreamingLogging
+               . cancelNoop
                . httpIO (withRequestTimeout 300)
                . withFullHTTPLogging
+               . httpIOStreaming (withRequestTimeout 300)
+               . withFullHTTPStreamingLogging
                . cmdsIO
                . bashIO
                . fileWatcherNoop @ProjectFS       -- No-op file watcher for CLI

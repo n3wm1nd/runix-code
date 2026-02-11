@@ -72,7 +72,7 @@ import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interpretOpenRouter, interpretZAI)
 import Runix.Secret (runSecret)
-import Runix.Streaming (ignoreChunks)
+import Runix.Streaming (StreamChunk, ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
@@ -206,9 +206,9 @@ runWithEffects action =
     . failLog
     . cancelNoop
     . interpretUserInputFail @widget
-    . ignoreChunks @BS.ByteString
-    . httpIOStreaming (withRequestTimeout 300)
     . httpIO (withRequestTimeout 300)
+    . httpIOStreaming (withRequestTimeout 300)
+    . ignoreChunks @BS.ByteString
     . cmdsIO
     . bashIO
     . promptStoreIO
@@ -230,7 +230,7 @@ data ModelInterpreter where
     , ModelDefaults model
     , SupportsStreaming (ProviderOf model)
     ) =>
-    { interpretModel :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming] r => Sem (LLM model : r) a -> Sem r a
+    { interpretModel :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a
     , miLoadSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , miSaveSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreter
