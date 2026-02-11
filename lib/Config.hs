@@ -51,6 +51,7 @@ data ModelSelection
   | UseGLM45AirZAI
   | UseGLM46ZAI
   | UseGLM47ZAI
+  | UseGLM5ZAI
   deriving stock (Show, Eq)
 
 -- | Path to the runix-code data directory (apps/runix-code during development)
@@ -101,7 +102,7 @@ instance HasProjectPath RunixToolsFS where
 -- | Load configuration from CLI args and environment variables
 --
 -- Environment variables:
--- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "claude-haiku-45", "claude-opus-46", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai")
+-- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "claude-haiku-45", "claude-opus-46", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai", "glm-5-zai")
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional, legacy)
@@ -168,7 +169,13 @@ getModelSelection = do
       "glm-4.7-zai" -> return UseGLM47ZAI
       "glm47zai" -> return UseGLM47ZAI
       "zai-glm47" -> return UseGLM47ZAI
-      "zai" -> return UseGLM47ZAI  -- Default to latest GLM
+      "glm-5-zai" -> return UseGLM5ZAI
+      "glm5-zai" -> return UseGLM5ZAI
+      "glm5zai" -> return UseGLM5ZAI
+      "zai-glm5" -> return UseGLM5ZAI
+      "glm-5" -> return UseGLM5ZAI
+      "glm5" -> return UseGLM5ZAI
+      "zai" -> return UseGLM47ZAI  -- Default to latest generally-available GLM
       unknown -> do
         hPutStr IO.stderr $ "warn: Unknown model '" <> T.unpack unknown <> "', using claude-sonnet-45\n"
         return UseClaudeSonnet45

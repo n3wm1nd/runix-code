@@ -18,6 +18,7 @@ module Models
   , GLM45Air(..)
   , GLM46(..)
   , GLM47(..)
+  , GLM5(..)
   , ZAI(..)
   , Qwen3Coder(..)
   , Universal(..)
@@ -29,6 +30,7 @@ module Models
   , glm45AirZAI
   , glm46
   , glm47
+  , glm5
   , qwen3Coder
   , universal
     -- * Runix-code specific models
@@ -48,7 +50,7 @@ import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
 import UniversalLLM.Models.Anthropic (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
-import UniversalLLM.Models.GLM (GLM45Air(..), GLM46(..), GLM47(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47)
+import UniversalLLM.Models.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
 import UniversalLLM.Models.Qwen (Qwen3Coder(..), qwen3Coder)
 import UniversalLLM.Models.OpenRouter (Universal(..))
 
@@ -152,6 +154,12 @@ instance ModelDefaults (Model GLM47 ZAI) where
     , Reasoning True    -- Enable reasoning extraction
     ]
 
+instance ModelDefaults (Model GLM5 ZAI) where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
+    ]
+
 --------------------------------------------------------------------------------
 -- Model Configuration Types
 --------------------------------------------------------------------------------
@@ -167,6 +175,7 @@ type instance ConfigFor (Model UniversalWithTools OpenRouter) = UniversalWithToo
 type instance ConfigFor (Model GLM45Air ZAI) = GLM45AirZAIConfig
 type instance ConfigFor (Model GLM46 ZAI) = GLM46Config
 type instance ConfigFor (Model GLM47 ZAI) = GLM47Config
+type instance ConfigFor (Model GLM5 ZAI) = GLM5Config
 
 -- Claude Sonnet 4.5 configuration
 data ClaudeSonnet45Config = ClaudeSonnet45Config
@@ -239,6 +248,14 @@ data GLM46Config = GLM46Config
 
 -- GLM-4.7 configuration
 data GLM47Config = GLM47Config
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- GLM-5 configuration
+data GLM5Config = GLM5Config
   { streaming :: StreamingSetting
   , reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting

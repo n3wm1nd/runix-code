@@ -74,7 +74,7 @@ import Runix.LLM.Interpreter (interpretAnthropicOAuth, interpretLlamaCpp, interp
 import Runix.Secret (runSecret)
 import Runix.Streaming (StreamChunk, ignoreChunks)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -339,6 +339,16 @@ createModelInterpreter UseGLM47ZAI = do
           . interpretZAI glm47 (Model GLM47 ZAI) . raiseUnder
     , miLoadSession = loadSession glm47
     , miSaveSession = saveSession glm47
+    }
+
+createModelInterpreter UseGLM5ZAI = do
+  apiKey <- getZAIApiKey
+  return $ ModelInterpreter
+    { interpretModel =
+        runSecret (pure apiKey)
+          . interpretZAI glm5 (Model GLM5 ZAI) . raiseUnder
+    , miLoadSession = loadSession glm5
+    , miSaveSession = saveSession glm5
     }
 
 --------------------------------------------------------------------------------
