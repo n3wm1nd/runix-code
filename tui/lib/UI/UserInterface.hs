@@ -1,10 +1,17 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DataKinds #-}
 
 -- | Widget isolation interpreter for TUI
 --
--- This module provides an interpreter that captures UI effects (Logging, StreamChunk)
--- and routes them to a widget for display, while observing message history.
+-- 'interpretAsWidget' acts as a viewport: it locally provides a streaming LLM
+-- interpreter, captures chunks for display, and routes all output to 'AgentWidgets'.
+-- Agent code only needs @Member (LLM model) r@ and @Member Logging r@ —
+-- the streaming plumbing is entirely contained within this interpreter.
 module UI.UserInterface
   ( interpretAsWidget
   ) where
@@ -12,48 +19,69 @@ module UI.UserInterface
 import Polysemy
 import Polysemy.State (State(..), get)
 import Polysemy.Fail (Fail(..))
-import Runix.Logging (Logging(..))
-import Runix.Streaming (StreamChunk(..))
-import Runix.Streaming.SSE (StreamingContent(..))
-import UI.AgentWidgets (AgentWidgets, emitLog, emitStreamChunk, emitError, emitCompletion)
+import qualified Data.ByteString as BS
 import qualified Data.Text as T
 
--- | Interpreter that routes UI effects to a widget
+import Runix.LLM (LLM)
+import Runix.Logging (Logging(..))
+import Runix.Streaming (StreamChunk(..))
+import Runix.Streaming.SSE (extractContentFromChunk)
+import Runix.HTTP (HTTP, HTTPStreaming)
+import Runix.Cancellation (Cancellation)
+import UniversalLLM (Message)
+import UI.AgentWidgets (AgentWidgets, emitLog, emitStreamChunk, emitError, emitCompletion)
+
+-- | Widget viewport interpreter.
 --
--- This interpreter:
--- - Observes State [msg] (message history) to capture messages
--- - Swallows Logging and routes to AgentWidgets
--- - Swallows StreamChunk and routes to AgentWidgets
--- - Observes Fail (intercepts but passes through) to send error events
--- - Uses AgentWidgets effect to output (no direct IO)
--- - Return value passes through unchanged
-interpretAsWidget :: forall msg r a. (Member (State [msg]) r, Member (AgentWidgets msg) r, Member Fail r)
-                  => Sem (Logging : StreamChunk StreamingContent : r) a
-                  -> Sem r a
-interpretAsWidget action = do
-  -- Run action with intercepted effects
+-- Takes a pre-built streaming LLM interpreter and wraps agent code so that:
+--
+-- 1. @Logging@ is routed to 'AgentWidgets'
+-- 2. @LLM model@ is interpreted via the streaming path (emitting raw SSE chunks)
+-- 3. Raw @StreamChunk BS.ByteString@ chunks are parsed and routed to 'AgentWidgets'
+-- 4. @Fail@ is intercepted (observed + re-raised) to send error events
+-- 5. On completion, final history is read from @State@ and emitted
+--
+-- The streaming interpreter is pre-applied at construction time (see 'ModelInterpreter'),
+-- so call sites just pass this function directly without knowing about streaming details.
+interpretAsWidget
+  :: forall model r a.
+     ( Member (AgentWidgets (Message model)) r
+     , Member (State [Message model]) r
+     , Member Fail r
+     , Member HTTP r
+     , Member HTTPStreaming r
+     , Member Cancellation r
+     , Member (Embed IO) r
+     )
+  => (forall r' a'. Members '[Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r'
+      => Sem (LLM model : r') a' -> Sem r' a')
+  -> Sem (Logging : LLM model : r) a
+  -> Sem r a
+interpretAsWidget streamingInterp action = do
   result <- intercept (\case
-              -- Observe Fail - send error event but pass through
               Fail msg -> do
-                emitError @msg (T.pack msg)
-                send (Fail msg)  -- Re-send to propagate error
+                emitError @(Message model) (T.pack msg)
+                send (Fail msg)
             )
+          . captureSSEToWidgets @model
+          . streamingInterp
+          . raiseUnder @(StreamChunk BS.ByteString)
           . interpret (\case
-              -- Swallow StreamChunk - route to widget
-              EmitChunk content ->
-                emitStreamChunk @msg content
-            )
-          . interpret (\case
-              -- Swallow Logging - route to widget
               Log level _ msg ->
-                emitLog @msg level msg
+                emitLog @(Message model) level msg
             )
           $ action
 
-  -- Get final message history after action completes
-  finalHistory <- get @[msg]
-
-  -- Send completion event with final messages
-  emitCompletion @msg finalHistory
-
+  finalHistory <- get @[Message model]
+  emitCompletion @(Message model) finalHistory
   return result
+
+-- | Capture raw SSE byte chunks and route parsed content to AgentWidgets
+captureSSEToWidgets
+  :: forall model r a.
+     Member (AgentWidgets (Message model)) r
+  => Sem (StreamChunk BS.ByteString : r) a
+  -> Sem r a
+captureSSEToWidgets = interpret $ \case
+  EmitChunk chunk ->
+    mapM_ (emitStreamChunk @(Message model)) (extractContentFromChunk chunk)

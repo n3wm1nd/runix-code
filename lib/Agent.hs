@@ -33,7 +33,7 @@ import Polysemy.Reader
 import Polysemy.Fail 
 import UniversalLLM
 import UniversalLLM.Tools
-import Runix.LLM 
+import Runix.LLM
 import qualified Tools
 import qualified Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder

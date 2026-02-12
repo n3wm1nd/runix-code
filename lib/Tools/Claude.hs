@@ -37,7 +37,7 @@ import Runix.LLM.ToolInstances ()
 import Runix.Cmd (Cmds, cmdsExec, CmdOutput(..))
 import Runix.Logging (Logging)
 import Runix.LLM.ToolExecution (executeTool)
-import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, glob, readFile)
+import Runix.FileSystem (FileSystem, FileSystemRead, glob, readFile)
 import Config (ClaudeConfigFS)
 import Autodocodec (HasCodec, codec)
 import qualified Autodocodec

@@ -15,17 +15,13 @@ import qualified System.IO as IO
 import Polysemy
 import Polysemy.Error (runError)
 
-import Runix.LLM.Interpreter hiding (SystemPrompt)
-import Runix.Runner (bashIO, cmdsIO, httpIO, httpIOStreaming, withRequestTimeout, loggingIO, failLog)
-import Runix.HTTP (withFullHTTPLogging, withFullHTTPStreamingLogging)
+import Runix.Runner (bashIO, cmdsIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.HTTP (withFullHTTPLogging)
 import Runix.Grep (grepForFilesystem)
 import Runix.FileSystem (fileWatcherNoop, fileSystemLocal)
 import Runix.FileSystem.Simple (filesystemIO)
 import Runix.PromptStore (promptStoreIO)
 import qualified Runix.Config as ConfigEffect
-import Runix.Cancellation (cancelNoop)
-import Runix.Streaming (ignoreChunks)
-import qualified Data.ByteString as BS
 import qualified System.Directory as Dir
 
 import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
@@ -99,7 +95,7 @@ main = do
 --
 -- This composes the model interpreter with CLI effects (no streaming, simple I/O)
 runAgent :: ModelInterpreter -> Config.Config -> Text -> IO (Either String Text)
-runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg userInput = do
+runAgent (ModelInterpreter @model _streaming interpretModelNonStreaming miLoadSess miSaveSess) cfg userInput = do
   -- Get current working directory for filesystem chroot
   cwd <- Dir.getCurrentDirectory
 
@@ -117,12 +113,8 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                . loggingIO
                . failLog
                . interpretUserInputFail @CLIWidget
-               . ignoreChunks @BS.ByteString
-               . cancelNoop
                . httpIO (withRequestTimeout 300)
                . withFullHTTPLogging
-               . httpIOStreaming (withRequestTimeout 300)
-               . withFullHTTPStreamingLogging
                . cmdsIO
                . bashIO
                . fileWatcherNoop @ProjectFS       -- No-op file watcher for CLI
@@ -143,7 +135,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
                -- Grep for each filesystem
                . grepForFilesystem @RunixToolsFS
                . grepForFilesystem @ProjectFS
-               . interpretModel
+               . interpretModelNonStreaming
 
   runToIO' $ do
     -- Load system prompt
@@ -160,7 +152,7 @@ runAgent (ModelInterpreter @model (interpretModel) miLoadSess miSaveSess) cfg us
       Just sessionFile -> miLoadSess sessionFile
 
     -- Run the agent (configs are inferred from model's defaultConfigs with streaming disabled)
-    (result, finalHistory) <- withLLMCancellation . runConfigHistory ([]) initialHistory $
+    (result, finalHistory) <- runConfigHistory ([]) initialHistory $
       runixCode @model @CLIWidget sysPrompt userPrompt
 
     -- Save session (if specified)

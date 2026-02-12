@@ -36,7 +36,6 @@ import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
 import Runix.LLM (LLM)
-import Runix.LLM.Interpreter (withLLMCancellation)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher)
 import qualified Runix.FileSystem.Simple
 import qualified Runix.FileSystem.System
@@ -62,7 +61,7 @@ import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified Data.ByteString as BS
 import qualified UI
-import UI.Streaming (reinterpretSSEChunks, interpretStreamChunkToUI, interpretCancellation)
+import UI.Streaming (interpretCancellation)
 import UI.UserInterface (interpretAsWidget)
 import UI.AgentWidgets (AgentWidgets(..))
 import qualified Paths_runix_code
@@ -100,11 +99,11 @@ main = do
   cfg <- loadConfig
 
   -- Create model interpreter
-  ModelInterpreter{interpretModel, miLoadSession, miSaveSession} <- createModelInterpreter (cfgModelSelection cfg)
+  ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} <- createModelInterpreter (cfgModelSelection cfg)
 
   -- Run UI with the interpreter
-  -- The interpreter is now just a function we can pass around
-  runUI (\refreshCallback -> buildUIRunner interpretModel miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
+  -- The streaming interpreter is passed through to interpretAsWidget (viewport-scoped)
+  runUI (\refreshCallback -> buildUIRunner interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -120,14 +119,15 @@ agentLoop :: forall model.
           -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
           -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
-agentLoop cwd dataDir uiVars sysPrompt modelInterpreter miSaveSession exePath initialMTime = do
+agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
-  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars . modelInterpreter
+  -- Note: no LLM interpreter here — interpretAsWidget provides it per-widget
+  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars
 
   result <- runToIO' $ forever $ runOneIteration
 
@@ -233,11 +233,10 @@ agentLoop cwd dataDir uiVars sysPrompt modelInterpreter miSaveSession exePath in
                 runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming settings)]
 
             -- Run agent (with widget isolation via interpretAsWidget)
-            -- Note: interpretAsWidget sends AgentCompleteEvent automatically with final history
-            _result <- withLLMCancellation
-                     . runConfig runtimeConfigs
+            -- interpretAsWidget provides the streaming LLM interpreter and captures chunks for display
+            _result <- runConfig runtimeConfigs
                      . runHistory history
-                     . interpretAsWidget @(Message model)
+                     . interpretAsWidget @model streamingInterp
                      $ runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
             return ()
         )
@@ -259,13 +258,13 @@ buildUIRunner :: forall model.
                  , ModelDefaults model
                  , SupportsStreaming (ProviderOf model)
                  )
-              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Model interpreter
+              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
-buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refreshCallback = do
+buildUIRunner streamingInterp miLoadSession miSaveSession maybeSessionPath refreshCallback = do
   -- Get current working directory for security restrictions
   cwd <- Dir.getCurrentDirectory
 
@@ -308,7 +307,7 @@ buildUIRunner modelInterpreter miLoadSession miSaveSession maybeSessionPath refr
   stat <- getFileStatus exePath
   let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
 
-  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt modelInterpreter miSaveSession exePath initialMTime
+  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath initialMTime
   return uiVars
 
 --------------------------------------------------------------------------------
@@ -364,7 +363,6 @@ interpretTUIEffects ::
         : Cmds
         : PromptStore
         : ConfigEffect.Config RunixDataDir
-        : StreamChunk BS.ByteString
         : Cancellation
         : HTTPStreaming
         : HTTP
@@ -418,8 +416,6 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . httpIO (withRequestTimeout 300)
     . httpIOStreaming (withRequestTimeout 300)
     . interpretCancellation uiVars
-    . interpretStreamChunkToUI uiVars
-    . reinterpretSSEChunks
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
     . promptStoreIO
     . cmdsIO
