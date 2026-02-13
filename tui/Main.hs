@@ -47,7 +47,6 @@ import Runix.Logging (Logging(..), info, Level(..))
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
 import Runix.Cancellation (Cancellation(..))
-import Runix.LLM (LLMInfo)
 import Runix.Streaming.SSE (StreamingContent(..))
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
@@ -118,15 +117,14 @@ agentLoop :: forall model.
           -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, LLMInfo, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
+          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter
           -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
 agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
-  -- Note: no LLM interpreter here — interpretAsWidget provides it per-widget
-  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars
+  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars . streamingInterp
 
   result <- runToIO' $ forever $ runOneIteration
 
@@ -232,10 +230,10 @@ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath ini
                 runtimeConfigs = configsWithoutStreaming ++ [Streaming (llmStreaming settings)]
 
             -- Run agent (with widget isolation via interpretAsWidget)
-            -- interpretAsWidget provides the streaming LLM interpreter and captures chunks for display
+            -- interpretAsWidget replaces the QueryLLM callback to route chunks to AgentWidgets
             _result <- runConfig runtimeConfigs
                      . runHistory history
-                     . interpretAsWidget @model streamingInterp
+                     . interpretAsWidget @model
                      $ runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
             return ()
         )
@@ -257,7 +255,7 @@ buildUIRunner :: forall model.
                  , ModelDefaults model
                  , SupportsStreaming (ProviderOf model)
                  )
-              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, LLMInfo, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
+              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path

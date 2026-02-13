@@ -132,7 +132,6 @@ formatFileChanges changes = do
 runixCode
   :: forall model widget r.
      ( Member (LLM model) r
-     , Member LLMInfo r
      , Member Fail r
      , Member (Grep ProjectFS) r
      , Member (Grep RunixToolsFS) r
@@ -225,7 +224,6 @@ setTools tools configs =
 runixCodeAgentLoop
   :: forall model widget r.
      ( Member (LLM model) r
-     , Member LLMInfo r
      , Member Fail r
      , Member (Grep ProjectFS) r
      , Member Logging r

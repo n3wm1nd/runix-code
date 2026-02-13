@@ -65,7 +65,7 @@ import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserial
 import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt, SupportsStreaming)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
-import Runix.LLM (LLM, LLMInfo)
+import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretLLMStreaming, interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..))
 import Runix.RestAPI (restapiHTTP)
 import UI.UserInput (UserInput, interpretUserInputFail)
@@ -239,7 +239,7 @@ data ModelInterpreter where
     , ModelDefaults model
     , SupportsStreaming (ProviderOf model)
     ) =>
-    { interpretModelStreaming :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, LLMInfo, Cancellation] r => Sem (LLM model : r) a -> Sem r a
+    { interpretModelStreaming :: forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, Cancellation] r => Sem (LLM model : r) a -> Sem r a
     , interpretModelNonStreaming :: forall r a. Members [Fail, Embed IO, HTTP] r => Sem (LLM model : r) a -> Sem r a
     , miLoadSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , miSaveSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
