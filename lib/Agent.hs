@@ -32,8 +32,9 @@ import Polysemy.State
 import Polysemy.Reader 
 import Polysemy.Fail 
 import UniversalLLM
+import qualified UniversalLLM as ULL
 import UniversalLLM.Tools
-import Runix.LLM
+import Runix.LLM.WithInfo
 import qualified Tools
 import qualified Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
@@ -131,6 +132,8 @@ formatFileChanges changes = do
 runixCode
   :: forall model widget r.
      ( Member (LLM model) r
+     , Member LLMInfo r
+     , Member Fail r
      , Member (Grep ProjectFS) r
      , Member (Grep RunixToolsFS) r
      , Member Logging r
@@ -158,8 +161,8 @@ runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   -- Load CLAUDE.md files and add as system prompts if they exist
   claudeInstructions <- Tools.Claude.loadClaudeMdConfigs
 
-  let claudeMdConfigs = map (\(Tools.Claude.ClaudeInstructions txt) -> Runix.LLM.SystemPrompt txt) claudeInstructions
-      configsWithSystem = Runix.LLM.SystemPrompt sysPrompt : claudeMdConfigs ++ baseConfigs
+  let claudeMdConfigs = map (\(Tools.Claude.ClaudeInstructions txt) -> ULL.SystemPrompt txt) claudeInstructions
+      configsWithSystem = ULL.SystemPrompt sysPrompt : claudeMdConfigs ++ baseConfigs
       newHistory = currentHistory ++ [UserText userPrompt]
 
   -- Add user prompt to history
@@ -222,6 +225,8 @@ setTools tools configs =
 runixCodeAgentLoop
   :: forall model widget r.
      ( Member (LLM model) r
+     , Member LLMInfo r
+     , Member Fail r
      , Member (Grep ProjectFS) r
      , Member Logging r
      , Member (UserInput widget) r

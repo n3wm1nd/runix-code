@@ -102,7 +102,7 @@ data ClaudeSkill = ClaudeSkill
 -- | Shared agent loop for subagents and skills
 subagentLoop
   :: forall model r.
-     ( Member (LLM model) r
+     ( Members '[LLM model, Fail] r
      , Member Logging r
      , Member (State [Message model]) r
      , HasTools model
@@ -188,7 +188,7 @@ parseAgentMarkdown content =
 -- | Convert a ClaudeAgent to an LLMTool
 claudeSubagentToTool
   :: forall model r.
-     ( Member (LLM model) r
+     ( Members '[LLM model, Fail] r
      , Member Logging r
      , Member (State [Message model]) r
      , HasTools model
@@ -205,7 +205,7 @@ claudeSubagentToTool tools agent =
 -- | Run a subagent with fresh history (isolated)
 claudeSubagent
   :: forall model r.
-     ( Member (LLM model) r
+     ( Members '[LLM model, Fail] r
      , Member Logging r
      , Member (State [Message model]) r
      , HasTools model
@@ -298,7 +298,7 @@ loadSkillScripts skill = do
 -- | Run a skill with existing history (not isolated)
 claudeSkill
   :: forall model r.
-     ( Member (LLM model) r
+     ( Members '[LLM model, Fail] r
      , Member Logging r
      , Member (State [Message model]) r
      , HasTools model
@@ -317,7 +317,7 @@ claudeSkill scriptTools skill (UserPrompt userPrompt) = do
 -- | Convert a ClaudeSkill to an LLMTool
 claudeSkillToTool
   :: forall model r.
-     ( Member (LLM model) r
+     ( Members '[LLM model, Fail] r
      , Member Logging r
      , Member (State [Message model]) r
      , Member Cmds r

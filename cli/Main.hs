@@ -25,6 +25,7 @@ import qualified Runix.Config as ConfigEffect
 import qualified System.Directory as Dir
 
 import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
+import Runix.LLM (swallowLLMInfo)
 import qualified Config
 import Config (RunixDataDir(..), ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..), loadConfig, cfgModelSelection, cfgSessionFile)
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
@@ -135,6 +136,7 @@ runAgent (ModelInterpreter @model _streaming interpretModelNonStreaming miLoadSe
                -- Grep for each filesystem
                . grepForFilesystem @RunixToolsFS
                . grepForFilesystem @ProjectFS
+               . swallowLLMInfo
                . interpretModelNonStreaming
 
   runToIO' $ do

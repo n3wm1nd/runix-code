@@ -120,7 +120,7 @@ mockMCPHttpIO = interpret $ \case
                                 then [("mcp-session-id", "mock-session-123")]
                                 else []
 
-                return $ HTTPResponse
+                return $ Right $ HTTPResponse
                   200
                   ([("content-type", "text/event-stream")] ++ sessionId)
                   sseBody

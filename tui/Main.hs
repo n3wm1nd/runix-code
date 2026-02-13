@@ -47,7 +47,7 @@ import Runix.Logging (Logging(..), info, Level(..))
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
 import Runix.Cancellation (Cancellation(..))
-import Runix.Streaming (StreamChunk)
+import Runix.LLM (LLMInfo)
 import Runix.Streaming.SSE (StreamingContent(..))
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
@@ -59,7 +59,6 @@ import qualified UI.ForegroundCmd
 import UI.ForegroundCmdInterpreter (interpretForegroundCmd)
 import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
-import qualified Data.ByteString as BS
 import qualified UI
 import UI.Streaming (interpretCancellation)
 import UI.UserInterface (interpretAsWidget)
@@ -119,7 +118,7 @@ agentLoop :: forall model.
           -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
+          -> (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, LLMInfo, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
           -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
@@ -258,7 +257,7 @@ buildUIRunner :: forall model.
                  , ModelDefaults model
                  , SupportsStreaming (ProviderOf model)
                  )
-              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, StreamChunk BS.ByteString, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
+              => (forall r a. Members [Fail, Embed IO, HTTP, HTTPStreaming, LLMInfo, Cancellation] r => Sem (LLM model : r) a -> Sem r a)  -- Streaming LLM interpreter (for interpretAsWidget)
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
