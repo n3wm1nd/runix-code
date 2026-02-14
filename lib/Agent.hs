@@ -34,7 +34,7 @@ import Polysemy.Fail
 import UniversalLLM
 import qualified UniversalLLM as ULL
 import UniversalLLM.Tools
-import Runix.LLM.WithInfo
+import Runix.LLM
 import qualified Tools
 import qualified Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
