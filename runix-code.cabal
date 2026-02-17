@@ -113,7 +113,9 @@ library
                     , Config
                     , Runner
                     , Runix.PromptStore
-                    , Runix.MCPClient
+                    , Runix.MCP
+                    , Runix.MCP.DynamicTools
+                    , Runix.MCP.Playwright
                     , Runix.SSE
                     , UI.UserInput
     other-modules:    Paths_runix_code
@@ -312,7 +314,8 @@ test-suite runix-code-test
 
     other-modules:    OutputHistorySpec
                     , RegistrySpec
-                    , MCPClientSpec
+                    , MCPSpec
+                    , PlaywrightSpec
 
 -- Vty version removed - brick provides better abstraction for our use case
 -- The raw vty exploration showed it doesn't offer advantages over brick:
