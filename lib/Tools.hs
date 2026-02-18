@@ -15,7 +15,7 @@
 --     * "Runix.Tools.Config"       — filesystem phantom types (@ProjectFS@ etc.)
 --     * "Runix.Tools.Claude"       — subagent \/ skill loading
 --     * "Runix.Tools.ToolBuilder.*"— registry management
---     * "Runix.UI.UserInput"       — universal user-input effect
+--     * "UI.UserInput"             — user-input effect (runix-code only)
 --
 --   Future additions go here too: @Runix.Tools.Git@, @Runix.Tools.JS@, …
 --
@@ -70,6 +70,12 @@ module Tools
     -- * Result Types
   , EchoResult (..)
 
+    -- * User Interaction
+  , ask
+
+    -- * Result Types
+  , AskResult (..)
+
     -- * Code Generation
   , generateTool
 
@@ -88,6 +94,7 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
 import Polysemy (Sem, Member, Members)
 import Polysemy.Fail (Fail)
+import UI.UserInput (UserInput, ImplementsWidget, requestInput)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
@@ -144,6 +151,36 @@ echoCmd :: Member (Cmd "echo") r => Text -> Sem r EchoResult
 echoCmd msg = do
   output <- Cmd.call @"echo" [T.unpack msg]
   return $ EchoResult (Cmd.stdout output)
+
+--------------------------------------------------------------------------------
+-- User Interaction
+--------------------------------------------------------------------------------
+
+-- | Result from ask — the user's text response.
+newtype AskResult = AskResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
+
+instance ToolParameter AskResult where
+  paramName _ _ = "answer"
+  paramDescription _ = "the user's text response"
+
+instance ToolFunction AskResult where
+  toolFunctionName _ = "ask"
+  toolFunctionDescription _ = "Ask the user for small mid-task clarifications (e.g., 'how many retries maximum?', 'what should the timeout be?'). NOT for architectural or strategic decisions - use regular text response for those."
+
+-- | Ask the user for text input during task execution.
+-- Use for small mid-task clarifications, not architectural decisions.
+-- Fails (via 'Fail') if the user cancels with Esc.
+ask
+  :: forall widget r. (Member (UserInput widget) r, Member Fail r, ImplementsWidget widget Text)
+  => Text  -- ^ Question/prompt to show the user
+  -> Sem r AskResult
+ask question = do
+  mAnswer <- requestInput @widget question ""
+  case mAnswer of
+    Nothing -> fail "User cancelled input"
+    Just answer -> return $ AskResult answer
 
 --------------------------------------------------------------------------------
 -- Parameter Types

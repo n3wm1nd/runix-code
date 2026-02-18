@@ -12,7 +12,7 @@ module UI.UserInput.Interpreter
 import Control.Concurrent.STM (STM, TVar, atomically, newTVarIO, readTVar, retry, writeTVar)
 import Polysemy
 import UI.State (UIVars, sendAgentEvent, SomeInputWidget (..), AgentEvent(..))
-import Runix.UI.UserInput (UserInput (..))
+import UI.UserInput (UserInput (..))
 import UI.UserInput.InputWidget (TUIWidget, ImplementsWidget (..), RenderRequest (..))
 
 -- | Interpret UserInput effect using the TUI (Brick) widget system

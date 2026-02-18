@@ -28,7 +28,7 @@ import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
 import qualified Config
 import Config (RunixDataDir(..), ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..), loadConfig, cfgModelSelection, cfgSessionFile)
 import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
-import Runix.UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
+import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import qualified Runix.FileSystem.System

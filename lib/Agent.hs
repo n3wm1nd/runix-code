@@ -39,6 +39,7 @@ import qualified Runix.Tools as Tools
 import qualified Runix.Tools.Claude as Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
 import qualified GeneratedTools
+import qualified Tools as LocalTools
 import Runix.Grep
 import Runix.Cmd
 import Runix.Logging
@@ -46,7 +47,7 @@ import Runix.PromptStore
 import Runix.Config
 import Runix.FileSystem
 import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS, RunixDataDir)
-import Runix.UI.UserInput
+import UI.UserInput
 import Autodocodec
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Runix.FileSystem.Simple as Simple
@@ -186,7 +187,7 @@ runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
               , LLMTool (Tools.glob @ProjectFS)
               , LLMTool (Tools.readFile @ProjectFS)
               , LLMTool (Tools.getCwd @ProjectFS)
-              , LLMTool (Tools.ask @widget)
+              , LLMTool (LocalTools.ask @widget)
               , LLMTool Tools.todoWrite
               , LLMTool Tools.todoRead
               , LLMTool Tools.todoCheck

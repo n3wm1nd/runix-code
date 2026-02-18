@@ -34,7 +34,7 @@ import Polysemy.Fail (Fail)
 import Runix.Runner (loggingIO, failLog)
 import Runix.FileSystem (FileSystem, fileSystemLocal)
 import qualified Runix.FileSystem.System
-import Runix.UI.UserInput (ImplementsWidget(..), RenderRequest)
+import UI.UserInput (ImplementsWidget(..), RenderRequest)
 import qualified Paths_runix_code
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson
