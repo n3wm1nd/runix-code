@@ -1,171 +1,154 @@
-{-# LANGUAGE Trustworthy #-}
-{-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE AllowAmbiguousTypes #-}
-{-# LANGUAGE TypeApplications #-}
--- | Tools for Runix Code agent
+-- | Agent-specific tools for runix-code
 --
--- Each tool is just a function in Sem r that the LLM can call.
--- universal-llm handles dispatching via ToolFunction instances.
+-- This module is the home for tools that are specific to the runix-code agent
+-- and its particular codebase layout (paths, conventions, generated-tools
+-- machinery, etc.).  Generic, universally reusable tools live in the
+-- @runix-tools@ package under @Runix.Tools.*@.
 --
--- Design principles:
--- - Each tool has a unique result type (for ToolFunction instance)
--- - Newtypes for semantic parameters (not just Text everywhere)
--- - Functions run in Sem r with required effects
--- - Keep it simple - tools are just functions
+-- = Where tools live
+--
+-- * @libs\/runix-tools@ — the standard library of agent capabilities.
+--   Independently trustable (@-trust runix-tools@), so generated tools can
+--   safely import from it.  Organised as:
+--
+--     * "Runix.Tools"              — file ops, shell, bash, todo list, cabal build
+--     * "Runix.Tools.Config"       — filesystem phantom types (@ProjectFS@ etc.)
+--     * "Runix.Tools.Claude"       — subagent \/ skill loading
+--     * "Runix.Tools.ToolBuilder.*"— registry management
+--     * "Runix.UI.UserInput"       — universal user-input effect
+--
+--   Future additions go here too: @Runix.Tools.Git@, @Runix.Tools.JS@, …
+--
+-- * @apps\/runix-code\/lib\/Tools.hs@ (this file) — runix-code-specific tools
+--   that depend on Cabal's @Paths_runix_code@, hard-coded project paths, or
+--   the generated-tools infrastructure.
+--
+-- = How a tool is written
+--
+-- A tool is just a plain Haskell function in @Sem r@.  @universal-llm@
+-- dispatches to it via the 'ToolFunction' typeclass on its /result type/.
+-- Each tool gets a unique result newtype so the typeclass can distinguish them.
+--
+-- Here is a commented walk-through using @readFile@ from "Runix.Tools":
+--
+-- @
+-- -- Unique result type — this is what makes the ToolFunction instance work.
+-- -- ToolFunction picks the tool name\/description from the result type, not
+-- -- the function name, so multiple functions could share a result type if
+-- -- they have the same LLM-visible interface (they rarely do).
+-- newtype ReadFileResult = ReadFileResult Text
+--   deriving stock (Show, Eq)
+--
+-- instance HasCodec ReadFileResult where ...       -- JSON schema for the LLM
+-- instance ToolParameter ReadFileResult where ...  -- how it appears in a call
+-- instance ToolFunction ReadFileResult where
+--   toolFunctionName _ = \"read_file\"
+--   toolFunctionDescription _ = \"Read a file …\"
+--
+-- -- The function itself.  Effects are declared in the constraint row 'r':
+-- --   FileSystemRead project  — read-only access to the 'project' filesystem
+-- --   Fail                    — can fail with a message (propagated to LLM)
+-- -- The @\@project@ type application selects which chrooted filesystem to use
+-- -- (e.g. ProjectFS, RunixToolsFS) — compile-time enforcement of boundaries.
+-- readFile
+--   :: forall project r. (Members [FileSystemRead project, Fail] r)
+--   => FilePath           -- ^ parameter newtype wrapping Text
+--   -> Sem r ReadFileResult
+-- readFile (FilePath path) = do
+--   contents <- FileSystem.readFile \@project (T.unpack path)
+--   return $ ReadFileResult (T.decodeUtf8 contents)
+-- @
+--
+-- The agent loop in "Agent" collects a list of @'LLMTool' (Sem r)@ values,
+-- one per tool, and hands them to @universal-llm@ which handles JSON
+-- serialisation, schema generation, and dispatch automatically.
 module Tools
-  ( -- * File Operations
-    readFile
-  , writeFile
-  , editFile
-  , getCwd
-  , mkdir
-  , remove
-  , glob
-  , grep
-  , diff
-  , diffContentVsFile
-
-    -- * Shell
-  , bash
-
-    -- * Build Tools
-  , cabalBuild
-
-    -- * Code Generation Tools
-  , generateTool
-
-    -- * User Interaction
-  , ask
-
-    -- * Meta
-  , todoWrite
-  , todoRead
-  , todoCheck
-  , todoDelete
-  , Todo (..)
+  ( -- * Demonstration tools (not wired into the agent — illustrate the pattern)
+    echo
+  , echoCmd
 
     -- * Result Types
-  , ReadFileResult (..)
-  , WriteFileResult (..)
-  , EditFileResult (..)
-  , MkdirResult (..)
-  , RemoveResult (..)
-  , GlobResult (..)
-  , GrepResult (..)
-  , DiffResult (..)
-  , BashResult (..)
-  , CabalBuildResult (..)
+  , EchoResult (..)
+
+    -- * Code Generation
+  , generateTool
+
+    -- * Result Types
   , GenerateToolResult (..)
-  , AskResult (..)
-  , TodoWriteResult (..)
-  , TodoReadResult (..)
-  , TodoCheckResult (..)
-  , TodoDeleteResult (..)
 
     -- * Parameter Types
-  , FilePath (..)
-  , FileContent (..)
-  , OldString (..)
-  , NewString (..)
-  , CreateParents (..)
-  , Recursive (..)
-  , Pattern (..)
-  , Command (..)
-  , TodoText (..)
-  , WorkingDirectory (..)
   , FunctionName (..)
   , FunctionSignature (..)
   , FunctionBody (..)
   , CompileError (..)
   ) where
 
-import Prelude hiding (readFile, writeFile, FilePath)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
-import Data.ByteString (ByteString)
 import Polysemy (Sem, Member, Members)
-import Polysemy.State (State, modify, get, put)
 import Polysemy.Fail (Fail)
 import Autodocodec (HasCodec(..))
 import qualified Autodocodec
 import UniversalLLM.Tools (ToolFunction(..), ToolParameter(..))
-import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
+import Runix.Cmd (Cmd)
+import qualified Runix.Cmd as Cmd
+import Runix.FileSystem (FileSystemRead, FileSystemWrite)
 import qualified Runix.FileSystem as FileSystem
-import Runix.Grep (Grep)
-import Runix.Logging 
-import qualified Runix.Grep
-import Runix.Bash (Bash)
-import qualified Runix.Bash
-import Runix.Cmd (Cmds)
-import qualified Runix.Cmd
-import UI.UserInput (UserInput, requestInput, ImplementsWidget)
+import Runix.Logging (Logging, info)
+import Runix.Tools (CabalBuildResult(..), WorkingDirectory(..), cabalBuild)
 
 --------------------------------------------------------------------------------
--- Types
+-- Demonstration Tools
+--
+-- These two tools illustrate the two most common patterns:
+--
+--   echo    — no effects beyond Fail; the result is computed purely from
+--             the input.  This is as simple as a tool gets.
+--
+--   echoCmd — adds a 'Cmd "echo"' effect, showing how to declare and use a
+--             typed command effect.  The effect is interpreted at the call
+--             site (Runner.hs / Main.hs), so the tool itself stays pure in
+--             the effect-system sense: it just describes what it *needs*.
+--             Under the hood the interpreter calls /usr/bin/echo via exec(3),
+--             not through a shell — there is no shell involved at all.
+--
+-- Neither is registered in the agent tool list in Agent.hs; they exist purely
+-- as readable examples.
 --------------------------------------------------------------------------------
 
--- | A single todo item with completion status
-data Todo = Todo
-  { todoText :: Text
-  , todoCompleted :: Bool
-  } deriving stock (Show, Eq)
+-- | Shared result type for both echo variants.
+-- The result type is what the LLM sees returned; it says nothing about *how*
+-- the value was produced (pure vs. effectful), only what shape it has.
+newtype EchoResult = EchoResult Text
+  deriving stock (Show, Eq)
+  deriving (HasCodec) via Text
 
-instance HasCodec Todo where
-  codec = Autodocodec.object "Todo" $
-    Todo
-      <$> Autodocodec.requiredField "text" "todo item text" Autodocodec..= todoText
-      <*> Autodocodec.requiredField "completed" "completion status" Autodocodec..= todoCompleted
+instance ToolParameter EchoResult where
+  paramName _ _ = "message"
+  paramDescription _ = "the echoed text"
 
-instance ToolParameter Todo where
-  paramName _ _ = "todo"
-  paramDescription _ = "a todo item"
+instance ToolFunction EchoResult where
+  toolFunctionName _ = "echo"
+  toolFunctionDescription _ = "Return the input text unchanged"
+
+-- | Echo text back — no effects needed at all.
+-- The simplest possible tool: a pure function wrapped in 'return'.
+echo :: Applicative f => Text -> f EchoResult
+echo msg = pure (EchoResult msg)
+
+-- | Echo text back via the system @echo@ binary (exec, no shell).
+-- Demonstrates adding a typed 'Cmd' effect.  The @"echo"@ type-level string
+-- is the key used by the interpreter to resolve the executable path.
+echoCmd :: Member (Cmd "echo") r => Text -> Sem r EchoResult
+echoCmd msg = do
+  output <- Cmd.call @"echo" [T.unpack msg]
+  return $ EchoResult (Cmd.stdout output)
 
 --------------------------------------------------------------------------------
--- Parameter Newtypes
+-- Parameter Types
 --------------------------------------------------------------------------------
 
-newtype FilePath = FilePath Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype FileContent = FileContent Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype OldString = OldString Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype NewString = NewString Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype CreateParents = CreateParents Bool
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Bool
-
-newtype Recursive = Recursive Bool
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Bool
-
-newtype Pattern = Pattern Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype Command = Command Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype TodoText = TodoText Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype WorkingDirectory = WorkingDirectory Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
--- Code generation types
 newtype FunctionName = FunctionName Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
@@ -181,51 +164,6 @@ newtype FunctionBody = FunctionBody Text
 newtype CompileError = CompileError Text
   deriving stock (Show, Eq)
   deriving (HasCodec) via Text
-
--- ToolParameter instances for parameters
-instance ToolParameter GetCwdResult where
-  paramName _ _ = "cwd"
-  paramDescription _ = "the current working directory"
-
-instance ToolParameter FilePath where
-  paramName _ _ = "file_path"
-  paramDescription _ = "absolute path to the file"
-
-instance ToolParameter FileContent where
-  paramName _ _ = "content"
-  paramDescription _ = "content to write to the file"
-
-instance ToolParameter OldString where
-  paramName _ _ = "old_string"
-  paramDescription _ = "exact string to find and replace"
-
-instance ToolParameter NewString where
-  paramName _ _ = "new_string"
-  paramDescription _ = "string to replace with"
-
-instance ToolParameter CreateParents where
-  paramName _ _ = "create_parents"
-  paramDescription _ = "whether to create parent directories if they don't exist"
-
-instance ToolParameter Recursive where
-  paramName _ _ = "recursive"
-  paramDescription _ = "whether to remove directories recursively"
-
-instance ToolParameter Pattern where
-  paramName _ _ = "pattern"
-  paramDescription _ = "glob or regex pattern to match"
-
-instance ToolParameter Command where
-  paramName _ _ = "command"
-  paramDescription _ = "shell command to execute"
-
-instance ToolParameter TodoText where
-  paramName _ _ = "text"
-  paramDescription _ = "text or prefix of the todo item"
-
-instance ToolParameter WorkingDirectory where
-  paramName _ _ = "working_directory"
-  paramDescription _ = "directory to run the command in"
 
 instance ToolParameter FunctionName where
   paramName _ _ = "function_name"
@@ -244,74 +182,9 @@ instance ToolParameter CompileError where
   paramDescription _ = "compilation error message"
 
 --------------------------------------------------------------------------------
--- Result Types (unique for ToolFunction instances)
+-- Result Types
 --------------------------------------------------------------------------------
-newtype GetCwdResult = GetCwdResult FilePath
-  deriving stock (Show, Eq)
 
-instance HasCodec GetCwdResult where
-  codec = Autodocodec.dimapCodec GetCwdResult (\(GetCwdResult t) -> t) codec
-
-newtype ReadFileResult = ReadFileResult Text
-  deriving stock (Show, Eq)
-
-instance HasCodec ReadFileResult where
-  codec = Autodocodec.dimapCodec ReadFileResult (\(ReadFileResult t) -> t) codec
-
-newtype WriteFileResult = WriteFileResult Bool
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Bool
-
-data EditFileResult = EditFileResult
-  { editSuccess :: Bool
-  , editMessage :: Text
-  } deriving stock (Show, Eq)
-
-instance HasCodec EditFileResult where
-  codec = Autodocodec.object "EditFileResult" $
-    EditFileResult
-      <$> Autodocodec.requiredField "success" "whether the edit succeeded" Autodocodec..= editSuccess
-      <*> Autodocodec.requiredField "message" "description of what happened" Autodocodec..= editMessage
-
-newtype MkdirResult = MkdirResult Bool
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Bool
-
-newtype RemoveResult = RemoveResult Bool
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Bool
-
-newtype GlobResult = GlobResult [Text]
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via [Text]
-
-newtype GrepResult = GrepResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype DiffResult = DiffResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
-newtype BashResult = BashResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
--- | Result from cabal build - returns success status and output
-data CabalBuildResult = CabalBuildResult
-  { buildSuccess :: Bool
-  , buildOutput :: Text
-  , buildErrors :: Text
-  } deriving stock (Show, Eq)
-
-instance HasCodec CabalBuildResult where
-  codec = Autodocodec.object "CabalBuildResult" $
-    CabalBuildResult
-      <$> Autodocodec.requiredField "success" "whether build succeeded" Autodocodec..= buildSuccess
-      <*> Autodocodec.requiredField "output" "build stdout" Autodocodec..= buildOutput
-      <*> Autodocodec.requiredField "errors" "build stderr" Autodocodec..= buildErrors
-
--- | Result from generateTool - returns success status and file path or error
 data GenerateToolResult = GenerateToolResult
   { generateSuccess :: Bool
   , generateMessage :: Text
@@ -325,365 +198,17 @@ instance HasCodec GenerateToolResult where
       <*> Autodocodec.requiredField "message" "success message or error details" Autodocodec..= generateMessage
       <*> Autodocodec.optionalField "file_path" "path to generated tool file" Autodocodec..= generatedFilePath
 
--- | Result from ask - returns the user's response as text
-newtype AskResult = AskResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
--- | Result from todo_write - unit type (nothing to return to LLM)
--- State effect handles the actual todo list mutation
-data TodoWriteResult = TodoWriteResult
-  deriving stock (Show, Eq)
-
-instance HasCodec TodoWriteResult where
-  codec = Autodocodec.dimapCodec (const TodoWriteResult) (const ()) Autodocodec.nullCodec
-
--- | Result from todo_read - returns the list of todos
-newtype TodoReadResult = TodoReadResult [Todo]
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via [Todo]
-
--- | Result from todo_check - returns a message about what happened
-newtype TodoCheckResult = TodoCheckResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
--- | Result from todo_delete - returns a message about what happened
-newtype TodoDeleteResult = TodoDeleteResult Text
-  deriving stock (Show, Eq)
-  deriving (HasCodec) via Text
-
--- ToolParameter instances for result types (required by ToolFunction)
-instance ToolParameter ReadFileResult where
-  paramName _ _ = "read_file_result"
-  paramDescription _ = "file contents"
-
-instance ToolParameter WriteFileResult where
-  paramName _ _ = "write_file_result"
-  paramDescription _ = "write success status"
-
-instance ToolParameter EditFileResult where
-  paramName _ _ = "edit_file_result"
-  paramDescription _ = "edit result with success status and message"
-
-instance ToolParameter MkdirResult where
-  paramName _ _ = "mkdir_result"
-  paramDescription _ = "mkdir success status"
-
-instance ToolParameter RemoveResult where
-  paramName _ _ = "remove_result"
-  paramDescription _ = "remove success status"
-
-instance ToolParameter GlobResult where
-  paramName _ _ = "glob_result"
-  paramDescription _ = "list of matching file paths"
-
-instance ToolParameter GrepResult where
-  paramName _ _ = "grep_result"
-  paramDescription _ = "search results"
-
-instance ToolParameter DiffResult where
-  paramName _ _ = "diff_result"
-  paramDescription _ = "unified diff output showing differences between files"
-
-instance ToolParameter BashResult where
-  paramName _ _ = "bash_result"
-  paramDescription _ = "command output"
-
-instance ToolParameter CabalBuildResult where
-  paramName _ _ = "cabal_build_result"
-  paramDescription _ = "cabal build result with success status and output"
-
 instance ToolParameter GenerateToolResult where
   paramName _ _ = "generate_tool_result"
   paramDescription _ = "tool generation result with success status and details"
-
-instance ToolParameter TodoWriteResult where
-  paramName _ _ = "result"
-  paramDescription _ = "todo write result (always succeeds)"
-
-instance ToolParameter TodoReadResult where
-  paramName _ _ = "todos"
-  paramDescription _ = "list of all todos"
-
-instance ToolParameter TodoCheckResult where
-  paramName _ _ = "result"
-  paramDescription _ = "message describing what happened (todo checked, no match found, or multiple matches)"
-
-instance ToolParameter TodoDeleteResult where
-  paramName _ _ = "result"
-  paramDescription _ = "message describing what happened (todo deleted, no match found, or multiple matches)"
-
-instance ToolParameter AskResult where
-  paramName _ _ = "answer"
-  paramDescription _ = "the user's text response"
-
--- ToolFunction instances for result types
-instance ToolFunction GetCwdResult where
-  toolFunctionName _ = "getcwd"
-  toolFunctionDescription _ = "Get the current working directory"
-
-instance ToolFunction ReadFileResult where
-  toolFunctionName _ = "read_file"
-  toolFunctionDescription _ = "Read a file from the filesystem and return its contents"
-
-instance ToolFunction WriteFileResult where
-  toolFunctionName _ = "write_file"
-  toolFunctionDescription _ = "Write content to a new file or overwrite existing file"
-
-instance ToolFunction EditFileResult where
-  toolFunctionName _ = "edit_file"
-  toolFunctionDescription _ = "Edit an existing file by replacing old_string with new_string"
-
-instance ToolFunction MkdirResult where
-  toolFunctionName _ = "mkdir"
-  toolFunctionDescription _ = "Create a directory, optionally creating parent directories"
-
-instance ToolFunction RemoveResult where
-  toolFunctionName _ = "remove"
-  toolFunctionDescription _ = "Remove a file or directory, optionally recursive"
-
-instance ToolFunction GlobResult where
-  toolFunctionName _ = "glob"
-  toolFunctionDescription _ = "Find files matching a glob pattern"
-
-instance ToolFunction GrepResult where
-  toolFunctionName _ = "grep"
-  toolFunctionDescription _ = "Search file contents using regex pattern"
-
-instance ToolFunction DiffResult where
-  toolFunctionName _ = "diff"
-  toolFunctionDescription _ = "Show differences between two files using unified diff format"
-
-instance ToolFunction BashResult where
-  toolFunctionName _ = "bash"
-  toolFunctionDescription _ = "Execute a bash command and return output"
-
-instance ToolFunction CabalBuildResult where
-  toolFunctionName _ = "cabal_build"
-  toolFunctionDescription _ = "Run cabal build in a specified directory and return build results"
 
 instance ToolFunction GenerateToolResult where
   toolFunctionName _ = "generate_tool"
   toolFunctionDescription _ = "Generate a new tool by providing function name, signature, and complete function definition. The function definition should include both type signature and implementation."
 
-instance ToolFunction AskResult where
-  toolFunctionName _ = "ask"
-  toolFunctionDescription _ = "Ask the user for small mid-task clarifications (e.g., 'how many retries maximum?', 'what should the timeout be?'). NOT for architectural or strategic decisions - use regular text response for those."
-
-instance ToolFunction TodoWriteResult where
-  toolFunctionName _ = "todo_write"
-  toolFunctionDescription _ = "Add a new todo item to the list"
-
-instance ToolFunction TodoReadResult where
-  toolFunctionName _ = "todo_read"
-  toolFunctionDescription _ = "Read all current todos with their completion status"
-
-instance ToolFunction TodoCheckResult where
-  toolFunctionName _ = "todo_check"
-  toolFunctionDescription _ = "Mark a todo as completed by text prefix (must match exactly one todo)"
-
-instance ToolFunction TodoDeleteResult where
-  toolFunctionName _ = "todo_delete"
-  toolFunctionDescription _ = "Delete a todo by text prefix (must match exactly one todo)"
-
 --------------------------------------------------------------------------------
--- File Operations
+-- Code Generation
 --------------------------------------------------------------------------------
-
--- | Get current working directory
-
-getCwd :: forall project r. (Members [FileSystem project, Fail] r) => Sem r GetCwdResult
-getCwd  = do
-  cwd <- FileSystem.getCwd @project
-  return $ GetCwdResult (FilePath . T.pack $ cwd)
-
-
--- | Read a file from the filesystem
-readFile
-  :: forall project r. (Members [FileSystemRead project, Fail] r) => FilePath
-  -> Sem r ReadFileResult
-readFile (FilePath path) = do
-  contents <- FileSystem.readFile @project (T.unpack path)
-  return $ ReadFileResult (T.decodeUtf8 contents)
-
--- | Write a new file
--- Fails if write operation cannot be completed
-writeFile
-  :: forall project r. Members [FileSystemWrite project, Fail] r
-  => FilePath
-  -> FileContent
-  -> Sem r WriteFileResult
-writeFile (FilePath path) (FileContent content) = do
-  let bytes = T.encodeUtf8 content
-  FileSystem.writeFile @project (T.unpack path) bytes
-  return $ WriteFileResult True
-
--- | Edit existing file via string replacement
--- Returns error if old_string matches 0 or >1 times (must match exactly once)
--- Fails if file cannot be read or written
-editFile
-  :: forall project r. Members [FileSystemRead project, FileSystemWrite project, Fail] r
-  => FilePath
-  -> OldString
-  -> NewString
-  -> Sem r EditFileResult
-editFile (FilePath path) (OldString old) (NewString new) = do
-  contents <- FileSystem.readFile @project (T.unpack path)
-  let contentText = T.decodeUtf8 contents
-      (replaced, occurrences) = replaceAndCount old new contentText
-  case occurrences of
-    0 -> return $ EditFileResult False $
-           "Error: old_string not found in file. No changes made."
-    1 -> do
-      let newBytes = T.encodeUtf8 replaced
-      FileSystem.writeFile @project (T.unpack path) newBytes
-      return $ EditFileResult True $
-        "Successfully replaced 1 occurrence in " <> path
-    n -> return $ EditFileResult False $
-           "Error: old_string appears " <> T.pack (show n) <> " times in file. " <>
-           "To avoid unintended changes, old_string must match exactly once. " <>
-           "Please make old_string more specific."
-
--- | Replace all occurrences and count how many replacements were made
-replaceAndCount :: Text -> Text -> Text -> (Text, Int)
-replaceAndCount old new haystack
-  | T.null old = (haystack, 0)
-  | otherwise = go [] 0 haystack
-  where
-    go acc count text =
-      case T.breakOn old text of
-        (_, rest) | T.null rest -> (T.concat (reverse (text : acc)), count)
-        (before, rest) ->
-          let after = T.drop (T.length old) rest
-          in go (new : before : acc) (count + 1) after
-
--- | Create a directory
--- Fails if directory creation fails
-mkdir
-  :: forall project r. Members [FileSystemWrite project, Fail] r
-  => FilePath
-  -> CreateParents
-  -> Sem r MkdirResult
-mkdir (FilePath path) (CreateParents createParents) = do
-  FileSystem.createDirectory @project createParents (T.unpack path)
-  return $ MkdirResult True
-
--- | Remove a file or directory
--- Fails if removal fails
-remove
-  :: forall project r. Members [FileSystemWrite project, Fail] r
-  => FilePath
-  -> Recursive
-  -> Sem r RemoveResult
-remove (FilePath path) (Recursive recursive) = do
-  FileSystem.remove @project recursive (T.unpack path)
-  return $ RemoveResult True
-
--- | Find files matching a pattern
--- Fails if glob operation cannot be completed
-glob
-  :: forall project r. Members [FileSystem project, Fail] r
-  => Pattern
-  -> Sem r GlobResult
-glob (Pattern pattern) = do
-  -- Glob from current directory
-  files <- FileSystem.glob @project "." (T.unpack pattern)
-  return $ GlobResult (map T.pack files)
-
--- | Search file contents with regex
--- Parameterized by filesystem/project to work with chrooted filesystems
-grep
-  :: forall project r. Member (Runix.Grep.Grep project) r
-  => Pattern
-  -> Sem r GrepResult
-grep (Pattern pattern) = do
-  -- Grep from current directory
-  matches <- Runix.Grep.grepSearch @project "." (T.unpack pattern)
-  -- Format matches as text
-  let formatted = T.intercalate "\n" $
-        map (\m -> T.pack (Runix.Grep.matchFile m) <> ":" <>
-                   T.pack (show $ Runix.Grep.matchLine m) <> ":" <>
-                   Runix.Grep.matchText m) matches
-  return $ GrepResult formatted
-
--- | Run unified diff between two files
--- Fails if either file doesn't exist (uses Fail effect)
-diff
-  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.Cmd "diff", Fail] r
-  => FilePath
-  -> FilePath
-  -> Sem r DiffResult
-diff (FilePath file1) (FilePath file2) = do
-  -- Verify files exist (for safety)
-  exists1 <- FileSystem.fileExists @project (T.unpack file1)
-  exists2 <- FileSystem.fileExists @project (T.unpack file2)
-
-  if not exists1
-    then fail $ "File does not exist: " ++ T.unpack file1
-    else if not exists2
-    then fail $ "File does not exist: " ++ T.unpack file2
-    else do
-      -- Run diff command with unified format (-u)
-      -- diff returns exit code 0 if files are same, 1 if different, 2 on error
-      output <- Runix.Cmd.call @"diff" ["-u", T.unpack file1, T.unpack file2]
-      -- Check if diff failed (exit code 2 means error)
-      if Runix.Cmd.exitCode output == 2
-        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.stderr output)
-        else return $ DiffResult $ Runix.Cmd.stdout output
-
--- | Run unified diff between old content (via stdin) and a file
--- The label is used for the "old" file name in the diff output
-diffContentVsFile
-  :: forall project r. Members '[FileSystem project, FileSystemRead project, Runix.Cmd.Cmd "diff", Fail] r
-  => String           -- ^ Label for old content (e.g., "path/to/file.old")
-  -> ByteString       -- ^ Old content
-  -> FilePath         -- ^ Path to current file
-  -> Sem r DiffResult
-diffContentVsFile label oldContent (FilePath file) = do
-  -- Verify file exists
-  exists <- FileSystem.fileExists @project (T.unpack file)
-  if not exists
-    then fail $ "File does not exist: " ++ T.unpack file
-    else do
-      -- Run diff with old content via stdin
-      -- Use --label to set the filename for stdin content, and - to read from stdin
-      output <- Runix.Cmd.callStdin @"diff"
-                  ["-u", "--label", label, "-", T.unpack file]
-                  oldContent
-      -- Check if diff failed (exit code 2 means error)
-      if Runix.Cmd.exitCode output == 2
-        then fail $ "diff command failed: " ++ T.unpack (Runix.Cmd.stderr output)
-        else return $ DiffResult $ Runix.Cmd.stdout output
-
---------------------------------------------------------------------------------
--- Shell Operations
---------------------------------------------------------------------------------
-
--- | Execute a bash command
-bash
-  :: Member Bash r
-  => Command
-  -> Sem r BashResult
-bash (Command cmd) = do
-  output <- Runix.Bash.bashExec (T.unpack cmd)
-  -- Format output with stdout and stderr
-  let result = if Runix.Bash.exitCode output == 0
-               then Runix.Bash.stdout output
-               else Runix.Bash.stdout output <> "\nSTDERR:\n" <> Runix.Bash.stderr output
-  return $ BashResult result
-
--- | Run cabal build in a specified directory
-cabalBuild
-  :: Member (Runix.Cmd.Cmd "cabal") r
-  => WorkingDirectory
-  -> Sem r CabalBuildResult
-cabalBuild (WorkingDirectory workDir) = do
-  output <- Runix.Cmd.callIn @"cabal" (T.unpack workDir) ["build", "all"]
-  let success = Runix.Cmd.exitCode output == 0
-      stdout = Runix.Cmd.stdout output
-      stderr = Runix.Cmd.stderr output
-  return $ CabalBuildResult success stdout stderr
 
 -- | Generate a new tool by writing source code and compiling it
 -- Fails if file operations cannot be completed
@@ -713,23 +238,21 @@ generateTool (FunctionName expectedFuncName) (FunctionSignature funcSig) (Functi
       let originalContent = currentContent
       FileSystem.writeFile @project generatedToolsPath (T.encodeUtf8 updatedContent)
 
-      info("file written, compiling now")
+      info "file written, compiling now"
       -- Step 5: Test compilation
       CabalBuildResult success _stdout errors <- cabalBuild (WorkingDirectory workingDir)
 
       if success
-        then do
-          -- Success: keep the updated file
-          return $ GenerateToolResult True ("Successfully generated tool: " <> expectedFuncName) (Just (T.pack generatedToolsPath))
+        then return $ GenerateToolResult True ("Successfully generated tool: " <> expectedFuncName) (Just (T.pack generatedToolsPath))
         else do
           -- Failure: revert to original content
           FileSystem.writeFile @project generatedToolsPath (T.encodeUtf8 originalContent)
-          let errorMsg = "Compilation failed: " <> errors
-          return $ GenerateToolResult False errorMsg Nothing
+          return $ GenerateToolResult False ("Compilation failed: " <> errors) Nothing
 
--- Helper functions for code generation
+--------------------------------------------------------------------------------
+-- Helpers
+--------------------------------------------------------------------------------
 
--- Validate that the function signature starts with the expected function name and has ::
 validateFunctionSignature :: Text -> Text -> Either Text ()
 validateFunctionSignature expectedName funcSig =
   let trimmedSig = T.strip funcSig
@@ -738,16 +261,14 @@ validateFunctionSignature expectedName funcSig =
      then Right ()
      else Left $ "Function signature must start with '" <> expectedPattern <> "', got: " <> T.take 50 trimmedSig
 
--- Validate that the function definition starts with the expected function name
 validateFunctionDef :: Text -> Text -> Either Text ()
 validateFunctionDef expectedName functionDef =
-  let firstLine = T.take 100 functionDef -- Look at first 100 chars
+  let firstLine = T.take 100 functionDef
       namePattern = expectedName <> " "
   in if namePattern `T.isInfixOf` firstLine
      then Right ()
      else Left $ "Function definition must start with function name '" <> expectedName <> "', got: " <> T.take 50 firstLine
 
--- Format tool code with LLM-provided signature and body (both should include function name)
 formatToolCodeWithSignature :: Text -> Text -> Text -> Text
 formatToolCodeWithSignature funcName funcSig functionDef = T.unlines
   [ "-- Generated tool: " <> funcName
@@ -758,91 +279,3 @@ formatToolCodeWithSignature funcName funcSig functionDef = T.unlines
 
 appendToolToModule :: Text -> Text -> Text
 appendToolToModule currentContent newToolCode = currentContent <> "\n" <> newToolCode
-
---------------------------------------------------------------------------------
--- User Interaction
---------------------------------------------------------------------------------
-
--- | Ask the user for text input during task execution
--- Use for small mid-task clarifications (e.g., "how many retries?", "timeout value?")
--- NOT for architectural or strategic decisions - use regular text response for those
--- Polymorphic over widget system - works with any UI that implements ImplementsWidget
--- The widget system determines how the input is displayed (TUI widget, CLI prompt, etc.)
--- Fails (using Fail effect) if the user cancels by pressing Esc
-ask
-  :: forall widget r. (Member (UserInput widget) r, Member Fail r, ImplementsWidget widget Text)
-  => Text  -- ^ Question/prompt to show the user
-  -> Sem r AskResult
-ask question = do
-  mAnswer <- requestInput @widget question ""
-  case mAnswer of
-    Nothing -> fail "User cancelled input"
-    Just answer -> return $ AskResult answer
-
---------------------------------------------------------------------------------
--- Meta Operations
---------------------------------------------------------------------------------
-
--- | Add a todo to the list using State effect
--- Tool mutates state directly, returns unit to LLM
-todoWrite
-  :: Member (State [Todo]) r
-  => TodoText
-  -> Sem r TodoWriteResult
-todoWrite (TodoText text) = do
-  let newTodo = Todo { todoText = text, todoCompleted = False }
-  modify (newTodo :)
-  return TodoWriteResult
-
--- | Read all todos from the state
-todoRead
-  :: Member (State [Todo]) r
-  => Sem r TodoReadResult
-todoRead = do
-  todos <- get @[Todo]
-  -- Return in reverse order so newest todos are at the end (more natural)
-  return $ TodoReadResult (reverse todos)
-
--- | Mark a todo as completed by text prefix
--- Returns a message indicating success, no match, or multiple matches
-todoCheck
-  :: Member (State [Todo]) r
-  => TodoText
-  -> Sem r TodoCheckResult
-todoCheck (TodoText prefix) = do
-  todos <- get @[Todo]
-  let matches = filter (\todo -> prefix `T.isPrefixOf` todoText todo) todos
-  case matches of
-    [] -> return $ TodoCheckResult "No todo found matching that prefix"
-    [matchedTodo] -> do
-      -- Update the single matching todo
-      let updatedTodos = map
-            (\todo -> if todoText todo == todoText matchedTodo
-                      then todo { todoCompleted = True }
-                      else todo)
-            todos
-      put @[Todo] updatedTodos
-      return $ TodoCheckResult $ "Checked off: " <> todoText matchedTodo
-    multiple -> do
-      let matchTexts = T.intercalate ", " (map todoText multiple)
-      return $ TodoCheckResult $ "Multiple matches found: " <> matchTexts
-
--- | Delete a todo by text prefix
--- Returns a message indicating success, no match, or multiple matches
-todoDelete
-  :: Member (State [Todo]) r
-  => TodoText
-  -> Sem r TodoDeleteResult
-todoDelete (TodoText prefix) = do
-  todos <- get @[Todo]
-  let matches = filter (\todo -> prefix `T.isPrefixOf` todoText todo) todos
-  case matches of
-    [] -> return $ TodoDeleteResult "No todo found matching that prefix"
-    [matchedTodo] -> do
-      -- Remove the single matching todo
-      let updatedTodos = filter (\todo -> todoText todo /= todoText matchedTodo) todos
-      put @[Todo] updatedTodos
-      return $ TodoDeleteResult $ "Deleted: " <> todoText matchedTodo
-    multiple -> do
-      let matchTexts = T.intercalate ", " (map todoText multiple)
-      return $ TodoDeleteResult $ "Multiple matches found: " <> matchTexts

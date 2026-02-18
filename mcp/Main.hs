@@ -25,7 +25,7 @@ import Config (RunixDataDir(..), ProjectFS(..))
 -- Tools and LLM
 import UniversalLLM (ToolDefinition(..), ToolCall(..), ToolResult(..))
 import UniversalLLM.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList)
-import qualified Tools
+import qualified Runix.Tools as Tools
 
 -- Polysemy and effects
 import Polysemy (Sem, runM, Member)
@@ -34,7 +34,7 @@ import Polysemy.Fail (Fail)
 import Runix.Runner (loggingIO, failLog)
 import Runix.FileSystem (FileSystem, fileSystemLocal)
 import qualified Runix.FileSystem.System
-import UI.UserInput (ImplementsWidget(..), RenderRequest)
+import Runix.UI.UserInput (ImplementsWidget(..), RenderRequest)
 import qualified Paths_runix_code
 import Data.Aeson (Value)
 import qualified Data.Aeson as Aeson

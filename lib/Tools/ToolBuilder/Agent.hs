@@ -33,20 +33,20 @@ import qualified UniversalLLM as ULL
 import Runix.LLM (LLM, queryLLM)
 import Runix.LLM.ToolExecution (executeTool)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
-import Config (RunixToolsFS(..))
+import Runix.Tools.Config (RunixToolsFS(..))
 import Runix.Cmd (Cmds, interpretCmd)
 import Runix.Logging (Logging, info)
 import Runix.Grep (Grep)
 import Runix.PromptStore (PromptStore)
 import System.FilePath ((</>))
-import Tools.ToolBuilder.Types
+import Runix.Tools.ToolBuilder.Types
 import Runix.FileSystem (getFileSystem)
 import Tools.ToolBuilder.Prompt (loadToolBuilderPrompt)
-import qualified Tools  -- Import base tools
+import qualified Runix.Tools as Tools
 import Runix.LLM.ToolInstances ()
 import qualified Autodocodec
 import qualified UniversalLLM.Tools
-import Tools.ToolBuilder.Registry (ToolDef(..), parseToolsList, renderToolsList, modifyRegistry, addTool)
+import Runix.Tools.ToolBuilder.Registry (ToolDef(..), parseToolsList, renderToolsList, modifyRegistry, addTool)
 
 --------------------------------------------------------------------------------
 -- Main Entry Point

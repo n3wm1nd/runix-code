@@ -20,7 +20,7 @@ import Config (RunixDataDir(..), ProjectFS(..))
 import qualified Paths_runix_code
 
 -- Tools
-import qualified Tools
+import qualified Runix.Tools as Tools
 import UniversalLLM (ToolDefinition(..), ToolCall(..), ToolResult(..))
 import UniversalLLM.Tools (LLMTool(..), llmToolToDefinition, executeToolCallFromList)
 

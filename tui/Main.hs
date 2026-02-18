@@ -51,7 +51,7 @@ import Runix.Streaming.SSE (StreamingContent(..))
 import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), LLMSettings(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
-import UI.UserInput (UserInput)
+import Runix.UI.UserInput (UserInput)
 import UI.UserInput.Interpreter (interpretUserInput)
 import UI.UserInput.InputWidget (TUIWidget)
 import qualified UI.ForegroundCmd

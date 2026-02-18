@@ -34,7 +34,7 @@ import Graphics.Vty
   )
 
 -- Re-export universal interface from library
-import UI.UserInput (ImplementsWidget (..), RenderRequest)
+import Runix.UI.UserInput (ImplementsWidget (..), RenderRequest)
 
 -- | TUI-specific RenderRequest constructor
 -- The constraint dict brings the necessary typeclass evidence

@@ -22,6 +22,7 @@ import Runix.LLM (LLMTool(..))
 import Runix.Cmd (Cmd)
 import Runix.Safe.Polysemy
 import Runix.FileSystem.Simple (FileSystem, FileSystemRead, FileSystemWrite)
+import qualified Runix.Tools as Tools
 
 -- GENERATED_TOOL_IMPORTS_START
 import qualified GeneratedTools.Echo as Echo
@@ -32,6 +33,10 @@ import qualified GeneratedTools.Echo as Echo
 --------------------------------------------------------------------------------
 -- Tool Registration List
 --------------------------------------------------------------------------------
+
+-- | Test: reference Tools types to verify Safe Haskell trust works
+_testImport :: Tools.FilePath -> Tools.FileContent -> Tools.WriteFileResult
+_testImport _ _ = Tools.WriteFileResult True
 
 -- | All generated tools are registered here
 -- The tool-builder agent will add new tools to this list

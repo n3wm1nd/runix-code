@@ -15,7 +15,7 @@ module Config
     Config(..)
   , ModelSelection(..)
   , RunixDataDir(..)
-    -- * Filesystem Types
+    -- * Filesystem Types (re-exported from Tools.Config)
   , ProjectFS(..)
   , ClaudeConfigFS(..)
   , RunixToolsFS(..)
@@ -34,7 +34,7 @@ import System.Environment (getArgs, lookupEnv)
 import qualified Data.Text as T
 import System.IO (hPutStr)
 import qualified System.IO as IO
-import Runix.FileSystem (HasProjectPath(..))
+import Runix.Tools.Config (ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..))
 
 --------------------------------------------------------------------------------
 -- Configuration Types
@@ -65,35 +65,6 @@ data Config = Config
   , cfgSessionFile :: Maybe FilePath
   , cfgResumeSession :: Maybe FilePath
   } deriving stock (Show, Eq)
-
---------------------------------------------------------------------------------
--- Filesystem Types (for parameterized filesystem effects)
---------------------------------------------------------------------------------
-
--- | Project filesystem - the user's project directory (CWD)
--- This is the main workspace where user code lives
-newtype ProjectFS = ProjectFS FilePath
-  deriving stock (Show, Eq)
-
--- | Claude configuration filesystem - access to .claude directories
--- Typically read-only access for loading subagents, skills, etc.
-newtype ClaudeConfigFS = ClaudeConfigFS FilePath
-  deriving stock (Show, Eq)
-
--- | Runix tools filesystem - the runix-code codebase itself
--- Used for GeneratedTools.hs and other tool development
-newtype RunixToolsFS = RunixToolsFS FilePath
-  deriving stock (Show, Eq)
-
--- HasProjectPath instances for filesystem types
-instance HasProjectPath ProjectFS where
-  getProjectPath (ProjectFS path) = path
-
-instance HasProjectPath ClaudeConfigFS where
-  getProjectPath (ClaudeConfigFS path) = path
-
-instance HasProjectPath RunixToolsFS where
-  getProjectPath (RunixToolsFS path) = path
 
 --------------------------------------------------------------------------------
 -- Configuration Loading

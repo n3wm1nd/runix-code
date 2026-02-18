@@ -18,8 +18,8 @@ Every tool must have:
 
 ## Module Structure
 
-- **/generated_tools/GeneratedTools.hs** - Registry that imports and re-exports all generated tools
-- **/generated_tools/GeneratedTools/{ToolName}.hs** - Individual module for each tool
+- **/generated-tools/GeneratedTools.hs** - Registry that imports and re-exports all generated tools
+- **/generated-tools/GeneratedTools/{ToolName}.hs** - Individual module for each tool
 
 ## Tool Module Organization
 
@@ -28,9 +28,10 @@ Within each tool module (`GeneratedTools/{ToolName}.hs`), you have complete flex
 - **Add as many types as needed** - Define parameter types, result types, intermediate data structures
 - **Add helper functions** - Break down complex logic into smaller functions
 - **Organize logically** - Structure code for clarity and maintainability
-- **Use Runix effects directly** - Call effect functions like `Runix.FileSystem.readFile`, `Runix.Grep.grep`, etc.
-  - Do NOT import `Tools` module (circular dependency - it's not accessible from generated-tools)
-  - Instead, use the underlying Runix effects that Tools wraps
+- **Use the `Tools` module** - Generated tools can import from `Tools`, `Tools.Config`, `UI.UserInput`, etc.
+  - These live in the `tools` sublibrary which `generated-tools` depends on
+  - You can reuse `Tools.FilePath`, `Tools.FileContent`, result types, etc. directly
+  - You can also call Runix effects directly if you need lower-level control
 
 **The requirement:** Your module must export exactly ONE tool function that will be registered in `GeneratedTools.hs`. This function must:
 - Have a `ToolFunction` instance on its result type
@@ -48,13 +49,10 @@ Even if your module compiles in isolation, it can still fail when integrated if 
 You are encouraged to explore the runix and runix-code codebase to find patterns, understand available effects, and see how existing tools work.
 
 **Recommended starting points:**
-- `/lib/Tools.hs` - Reference implementation showing tool patterns
-  - **NOTE:** You CANNOT import this module (circular dependency)
-  - Use it as inspiration to see how to structure tools and which Runix effects to call
-  - The Tools module is just a thin wrapper around Runix effects - call those directly instead
+- `/tools/Tools.hs` - Core tool infrastructure: parameter types, result types, ToolFunction/ToolParameter instances, and tool implementations. You can import from this module.
+- `/tools/Tools/Config.hs` - Filesystem phantom types (`ProjectFS`, `ClaudeConfigFS`, `RunixToolsFS`)
 - `/lib/Agent.hs` - Main agent loop and tool execution patterns
-- `/generated_tools/GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
--  read access to Core Runix effects and interpreters (these you CAN import) is planned, but not yet available to you (WIP)
+- `/generated-tools/GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
 Use the `read_file`, `glob`, and `grep` tools to explore code and find relevant patterns.
 
 ## Workflow
@@ -270,7 +268,7 @@ todoRead = do
 4. **Effect constraints**: Declare exactly which effects your function needs (FileSystemRead, Fail, etc.)
 5. **Qualified imports**: Import effect modules qualified to avoid name collisions
 6. **Complete imports**: Include all necessary imports (Data.Text, effects, Safe reexports, etc.)
-7. **Direct effect usage**: Call Runix effect functions directly (e.g., `Runix.FileSystem.readFile`, not `Tools.readFile`)
+7. **Reuse `Tools` infrastructure**: Import from `Tools` for common parameter/result types and implementations, or call Runix effects directly for lower-level control
 8. **Safe Haskell compatibility**:
    - Use `Runix.Safe.Polysemy` instead of `Polysemy`
    - Use `Runix.Safe.Polysemy.Fail` instead of `Polysemy.Fail`

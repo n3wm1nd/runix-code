@@ -35,8 +35,8 @@ import UniversalLLM
 import qualified UniversalLLM as ULL
 import UniversalLLM.Tools
 import Runix.LLM
-import qualified Tools
-import qualified Tools.Claude
+import qualified Runix.Tools as Tools
+import qualified Runix.Tools.Claude as Tools.Claude
 import qualified Tools.ToolBuilder.Agent as ToolBuilder
 import qualified GeneratedTools
 import Runix.Grep
@@ -46,7 +46,7 @@ import Runix.PromptStore
 import Runix.Config
 import Runix.FileSystem
 import Config (ProjectFS, ClaudeConfigFS, RunixToolsFS, RunixDataDir)
-import UI.UserInput
+import Runix.UI.UserInput
 import Autodocodec
 import Runix.LLM.ToolExecution (executeTool)
 import qualified Runix.FileSystem.Simple as Simple
