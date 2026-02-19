@@ -28,9 +28,8 @@ Within each tool module (`GeneratedTools/{ToolName}.hs`), you have complete flex
 - **Add as many types as needed** - Define parameter types, result types, intermediate data structures
 - **Add helper functions** - Break down complex logic into smaller functions
 - **Organize logically** - Structure code for clarity and maintainability
-- **Use the `Tools` module** - Generated tools can import from `Tools`, `Tools.Config`, `UI.UserInput`, etc.
-  - These live in the `tools` sublibrary which `generated-tools` depends on
-  - You can reuse `Tools.FilePath`, `Tools.FileContent`, result types, etc. directly
+- **Use the `Runix.Tools` module** - Generated tools can import from `runix-tools` (`Runix.Tools`, `Runix.Tools.Config`, etc.)
+  - You can reuse `Runix.Tools.FilePath`, `Runix.Tools.FileContent`, result types, etc. directly
   - You can also call Runix effects directly if you need lower-level control
 
 **The requirement:** Your module must export exactly ONE tool function that will be registered in `GeneratedTools.hs`. This function must:
@@ -49,10 +48,11 @@ Even if your module compiles in isolation, it can still fail when integrated if 
 You are encouraged to explore the runix and runix-code codebase to find patterns, understand available effects, and see how existing tools work.
 
 **Recommended starting points:**
-- `/tools/Tools.hs` - Core tool infrastructure: parameter types, result types, ToolFunction/ToolParameter instances, and tool implementations. You can import from this module.
-- `/tools/Tools/Config.hs` - Filesystem phantom types (`ProjectFS`, `ClaudeConfigFS`, `RunixToolsFS`)
+- `/lib/Tools.hs` - Agent-specific tools and the `generate_tool` infrastructure. Also contains `echo`/`echoCmd` as annotated examples of the tool pattern.
+- `Runix.Tools` (from `runix-tools` package) - Core tool infrastructure: parameter types, result types, ToolFunction/ToolParameter instances. You can import from this package.
+- `Runix.Tools.Config` - Filesystem phantom types (`ProjectFS`, `ClaudeConfigFS`, `RunixToolsFS`)
 - `/lib/Agent.hs` - Main agent loop and tool execution patterns
-- `/generated-tools/GeneratedTools/*.hs` - Already-generated tool examples (file tree provided in context)
+- `/generated-tools/GeneratedTools.hs` - Registry that imports and re-exports all generated tools
 Use the `read_file`, `glob`, and `grep` tools to explore code and find relevant patterns.
 
 ## Workflow
@@ -268,7 +268,7 @@ todoRead = do
 4. **Effect constraints**: Declare exactly which effects your function needs (FileSystemRead, Fail, etc.)
 5. **Qualified imports**: Import effect modules qualified to avoid name collisions
 6. **Complete imports**: Include all necessary imports (Data.Text, effects, Safe reexports, etc.)
-7. **Reuse `Tools` infrastructure**: Import from `Tools` for common parameter/result types and implementations, or call Runix effects directly for lower-level control
+7. **Reuse `Runix.Tools` infrastructure**: Import from `Runix.Tools` (the `runix-tools` package) for common parameter/result types and implementations, or call Runix effects directly for lower-level control
 8. **Safe Haskell compatibility**:
    - Use `Runix.Safe.Polysemy` instead of `Polysemy`
    - Use `Runix.Safe.Polysemy.Fail` instead of `Polysemy.Fail`

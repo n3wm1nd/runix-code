@@ -181,23 +181,26 @@ cabal clean
 
 ```
 runix-code/
-├── lib/              # Core agent library
-│   ├── Agent.hs      # Main agent loop
-│   ├── Tools.hs      # Tool implementations
+├── lib/                  # Core agent library
+│   ├── Agent.hs          # Main agent loop
+│   ├── Tools.hs          # Agent-specific tools (generate_tool, ask, demos)
 │   ├── Tools/
-│   │   └── Claude.hs # Claude Code integrations
-│   ├── Config.hs     # Configuration and model selection
-│   ├── Models.hs     # Model-specific configurations
-│   └── Runner.hs     # Effect interpreters
-├── tui/              # Brick-based TUI
+│   │   └── ToolBuilder/  # Tool-builder agent infrastructure
+│   ├── UI/UserInput.hs   # User-input effect + interpreter interface
+│   ├── Config.hs         # Configuration and model selection
+│   └── Runner.hs         # Effect interpreters
+├── generated-tools/      # LLM-generated tools (compiled with Safe Haskell)
+├── tui/                  # Brick-based TUI
 │   ├── Main.hs
-│   └── UI/           # UI components
-├── cli/              # Simple CLI interface
+│   └── lib/UI/           # UI components and widget system
+├── cli/                  # Simple CLI interface
 │   └── Main.hs
-├── test/             # Tests
-├── bench/            # Benchmarks
-└── prompt/           # System prompts
+└── prompt/               # System prompts
 ```
+
+The universally reusable tools (file ops, shell, build, todo list) live in the
+`runix-tools` package — a separate dependency that `generated-tools` can safely
+`-trust` via Safe Haskell.
 
 ## What Makes This Different
 
