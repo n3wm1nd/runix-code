@@ -49,9 +49,9 @@ import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
-import UniversalLLM.Models.Anthropic (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
-import UniversalLLM.Models.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
-import UniversalLLM.Models.Qwen (Qwen3Coder(..), qwen3Coder)
+import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
+import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
+import UniversalLLM.Models.Alibaba.Qwen (Qwen3Coder(..), qwen3Coder)
 import UniversalLLM.Models.OpenRouter (Universal(..))
 
 --------------------------------------------------------------------------------
