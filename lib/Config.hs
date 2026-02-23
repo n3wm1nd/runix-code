@@ -46,6 +46,7 @@ data ModelSelection
   | UseClaudeHaiku45
   | UseClaudeOpus46
   | UseGLM45Air
+  | UseMinimaxM25
   | UseQwen3Coder
   | UseOpenRouter
   | UseGLM45AirZAI
@@ -73,7 +74,7 @@ data Config = Config
 -- | Load configuration from CLI args and environment variables
 --
 -- Environment variables:
--- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "claude-haiku-45", "claude-opus-46", "glm-45-air", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai", "glm-5-zai")
+-- - RUNIX_MODEL: Model selection ("claude-sonnet-45", "claude-haiku-45", "claude-opus-46", "glm-45-air", "minimax-m25", "qwen3-coder", "glm-45-air-zai", "glm-46-zai", "glm-47-zai", "glm-5-zai")
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional, legacy)
@@ -123,6 +124,10 @@ getModelSelection = do
       "glm-4.5-air" -> return UseGLM45Air
       "glm45air" -> return UseGLM45Air
       "glm" -> return UseGLM45Air
+      "minimax-m25" -> return UseMinimaxM25
+      "minimax-m2.5" -> return UseMinimaxM25
+      "minimaxm25" -> return UseMinimaxM25
+      "minimax" -> return UseMinimaxM25
       "qwen3-coder" -> return UseQwen3Coder
       "qwen3coder" -> return UseQwen3Coder
       "qwen" -> return UseQwen3Coder

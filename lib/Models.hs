@@ -20,12 +20,14 @@ module Models
   , GLM47(..)
   , GLM5(..)
   , ZAI(..)
+  , MinimaxM25(..)
   , Qwen3Coder(..)
   , Universal(..)
     -- * Tested providers from universal-llm
   , claudeSonnet45OAuth
   , claudeHaiku45OAuth
   , claudeOpus46OAuth
+  , minimaxM25LlamaCpp
   , glm45AirLlamaCpp
   , glm45AirZAI
   , glm46
@@ -51,6 +53,7 @@ import qualified UniversalLLM.Providers.OpenAI as OpenAI
 -- Import production models from universal-llm
 import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
 import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
+import UniversalLLM.Models.Minimax.M (MinimaxM25(..), minimaxM25LlamaCpp)
 import UniversalLLM.Models.Alibaba.Qwen (Qwen3Coder(..), qwen3Coder)
 import UniversalLLM.Models.OpenRouter (Universal(..))
 
@@ -121,6 +124,12 @@ instance ModelDefaults (Model GLM45Air LlamaCpp) where
     , Reasoning True    -- Enable reasoning extraction
     ]
 
+instance ModelDefaults (Model MinimaxM25 LlamaCpp) where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
+    ]
+
 instance ModelDefaults (Model Qwen3Coder LlamaCpp) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
@@ -169,6 +178,7 @@ type instance ConfigFor (Model ClaudeSonnet45 AnthropicOAuth) = ClaudeSonnet45Co
 type instance ConfigFor (Model ClaudeHaiku45 AnthropicOAuth) = ClaudeHaiku45Config
 type instance ConfigFor (Model ClaudeOpus46 AnthropicOAuth) = ClaudeOpus46Config
 type instance ConfigFor (Model GLM45Air LlamaCpp) = GLM45AirConfig
+type instance ConfigFor (Model MinimaxM25 LlamaCpp) = MinimaxM25Config
 type instance ConfigFor (Model Qwen3Coder LlamaCpp) = Qwen3CoderConfig
 type instance ConfigFor (Model Universal OpenRouter) = UniversalConfig
 type instance ConfigFor (Model UniversalWithTools OpenRouter) = UniversalWithToolsConfig
@@ -203,6 +213,14 @@ data ClaudeOpus46Config = ClaudeOpus46Config
 
 -- GLM-4.5-Air (LlamaCpp) configuration
 data GLM45AirConfig = GLM45AirConfig
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- MiniMax M2.5 (LlamaCpp) configuration
+data MinimaxM25Config = MinimaxM25Config
   { streaming :: StreamingSetting
   , reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting

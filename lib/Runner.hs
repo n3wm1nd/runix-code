@@ -69,7 +69,7 @@ import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretLLMStreaming, interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..))
 import Runix.RestAPI (restapiHTTP)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -301,6 +301,20 @@ createModelInterpreter UseGLM45Air = do
           . interpretLLM @LlamaCppAuth glm45AirLlamaCpp (Model GLM45Air LlamaCpp) . raiseUnder
     , miLoadSession = loadSession glm45AirLlamaCpp
     , miSaveSession = saveSession glm45AirLlamaCpp
+    }
+
+createModelInterpreter UseMinimaxM25 = do
+  endpoint <- getLlamaCppEndpoint
+  let auth = LlamaCppAuth endpoint
+  return $ ModelInterpreter
+    { interpretModelStreaming =
+        restapiHTTP auth
+          . interpretLLMStreaming auth minimaxM25LlamaCpp (Model MinimaxM25 LlamaCpp) . raiseUnder
+    , interpretModelNonStreaming =
+        restapiHTTP auth
+          . interpretLLM @LlamaCppAuth minimaxM25LlamaCpp (Model MinimaxM25 LlamaCpp) . raiseUnder
+    , miLoadSession = loadSession minimaxM25LlamaCpp
+    , miSaveSession = saveSession minimaxM25LlamaCpp
     }
 
 createModelInterpreter UseQwen3Coder = do
