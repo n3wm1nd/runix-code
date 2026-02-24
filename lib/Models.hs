@@ -21,7 +21,7 @@ module Models
   , GLM5(..)
   , ZAI(..)
   , MinimaxM25(..)
-  , Qwen3Coder(..)
+  , Qwen3CoderNext(..)
   , Universal(..)
     -- * Tested providers from universal-llm
   , claudeSonnet45OAuth
@@ -54,7 +54,7 @@ import qualified UniversalLLM.Providers.OpenAI as OpenAI
 import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
 import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
 import UniversalLLM.Models.Minimax.M (MinimaxM25(..), minimaxM25LlamaCpp)
-import UniversalLLM.Models.Alibaba.Qwen (Qwen3Coder(..), qwen3Coder)
+import UniversalLLM.Models.Alibaba.Qwen (Qwen3CoderNext(..), qwen3Coder)
 import UniversalLLM.Models.OpenRouter (Universal(..))
 
 --------------------------------------------------------------------------------
@@ -130,7 +130,7 @@ instance ModelDefaults (Model MinimaxM25 LlamaCpp) where
     , Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model Qwen3Coder LlamaCpp) where
+instance ModelDefaults (Model Qwen3CoderNext LlamaCpp) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
     ]
@@ -179,7 +179,7 @@ type instance ConfigFor (Model ClaudeHaiku45 AnthropicOAuth) = ClaudeHaiku45Conf
 type instance ConfigFor (Model ClaudeOpus46 AnthropicOAuth) = ClaudeOpus46Config
 type instance ConfigFor (Model GLM45Air LlamaCpp) = GLM45AirConfig
 type instance ConfigFor (Model MinimaxM25 LlamaCpp) = MinimaxM25Config
-type instance ConfigFor (Model Qwen3Coder LlamaCpp) = Qwen3CoderConfig
+type instance ConfigFor (Model Qwen3CoderNext LlamaCpp) = Qwen3CoderConfig
 type instance ConfigFor (Model Universal OpenRouter) = UniversalConfig
 type instance ConfigFor (Model UniversalWithTools OpenRouter) = UniversalWithToolsConfig
 type instance ConfigFor (Model GLM45Air ZAI) = GLM45AirZAIConfig

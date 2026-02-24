@@ -69,7 +69,7 @@ import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretLLMStreaming, interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..))
 import Runix.RestAPI (restapiHTTP)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen3Coder(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen3CoderNext(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -323,10 +323,10 @@ createModelInterpreter UseQwen3Coder = do
   return $ ModelInterpreter
     { interpretModelStreaming =
         restapiHTTP auth
-          . interpretLLMStreaming auth qwen3Coder (Model Qwen3Coder LlamaCpp) . raiseUnder
+          . interpretLLMStreaming auth qwen3Coder (Model Qwen3CoderNext LlamaCpp) . raiseUnder
     , interpretModelNonStreaming =
         restapiHTTP auth
-          . interpretLLM @LlamaCppAuth qwen3Coder (Model Qwen3Coder LlamaCpp) . raiseUnder
+          . interpretLLM @LlamaCppAuth qwen3Coder (Model Qwen3CoderNext LlamaCpp) . raiseUnder
     , miLoadSession = loadSession qwen3Coder
     , miSaveSession = saveSession qwen3Coder
     }
