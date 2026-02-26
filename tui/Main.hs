@@ -64,7 +64,7 @@ import UI.UserInterface (interpretAsWidget)
 import UI.AgentWidgets (AgentWidgets(..))
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
-import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherGeneric, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
+import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherIO, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 
 
 --------------------------------------------------------------------------------
@@ -396,7 +396,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . Runix.FileSystem.System.filesystemIO
     -- ProjectFS: user's project with chroot, filters, logging, and file watching
     . fileSystemLocal (ProjectFS cwd)
-    . fileWatcherGeneric @ProjectFS
+    . fileWatcherIO @ProjectFS
     . interceptFileAccessWrite @ProjectFS
     . interceptFileAccessRead @ProjectFS
     . loggingWrite @ProjectFS "project"
