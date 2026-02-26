@@ -21,6 +21,7 @@ module Models
   , GLM5(..)
   , ZAI(..)
   , MinimaxM25(..)
+  , Qwen35_122B(..)
   , Qwen3CoderNext(..)
   , Universal(..)
     -- * Tested providers from universal-llm
@@ -28,6 +29,7 @@ module Models
   , claudeHaiku45OAuth
   , claudeOpus46OAuth
   , minimaxM25LlamaCpp
+  , qwen35_122B
   , glm45AirLlamaCpp
   , glm45AirZAI
   , glm46
@@ -54,7 +56,7 @@ import qualified UniversalLLM.Providers.OpenAI as OpenAI
 import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
 import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
 import UniversalLLM.Models.Minimax.M (MinimaxM25(..), minimaxM25LlamaCpp)
-import UniversalLLM.Models.Alibaba.Qwen (Qwen3CoderNext(..), qwen3Coder)
+import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), qwen35_122B, qwen3Coder)
 import UniversalLLM.Models.OpenRouter (Universal(..))
 
 --------------------------------------------------------------------------------
@@ -130,6 +132,12 @@ instance ModelDefaults (Model MinimaxM25 LlamaCpp) where
     , Reasoning True    -- Enable reasoning extraction
     ]
 
+instance ModelDefaults (Model Qwen35_122B LlamaCpp) where
+  defaultConfigs =
+    [ Streaming True    -- Enable streaming for real-time feedback
+    , Reasoning True    -- Enable reasoning extraction
+    ]
+
 instance ModelDefaults (Model Qwen3CoderNext LlamaCpp) where
   defaultConfigs =
     [ Streaming True    -- Enable streaming for real-time feedback
@@ -179,6 +187,7 @@ type instance ConfigFor (Model ClaudeHaiku45 AnthropicOAuth) = ClaudeHaiku45Conf
 type instance ConfigFor (Model ClaudeOpus46 AnthropicOAuth) = ClaudeOpus46Config
 type instance ConfigFor (Model GLM45Air LlamaCpp) = GLM45AirConfig
 type instance ConfigFor (Model MinimaxM25 LlamaCpp) = MinimaxM25Config
+type instance ConfigFor (Model Qwen35_122B LlamaCpp) = Qwen35Config
 type instance ConfigFor (Model Qwen3CoderNext LlamaCpp) = Qwen3CoderConfig
 type instance ConfigFor (Model Universal OpenRouter) = UniversalConfig
 type instance ConfigFor (Model UniversalWithTools OpenRouter) = UniversalWithToolsConfig
@@ -221,6 +230,14 @@ data GLM45AirConfig = GLM45AirConfig
 
 -- MiniMax M2.5 (LlamaCpp) configuration
 data MinimaxM25Config = MinimaxM25Config
+  { streaming :: StreamingSetting
+  , reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- Qwen 3.5 122B configuration
+data Qwen35Config = Qwen35Config
   { streaming :: StreamingSetting
   , reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting

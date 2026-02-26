@@ -69,7 +69,7 @@ import Runix.LLM (LLM)
 import Runix.LLM.Interpreter (interpretLLMStreaming, interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..))
 import Runix.RestAPI (restapiHTTP)
 import UI.UserInput (UserInput, interpretUserInputFail)
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen3CoderNext(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen35_122B, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
 import Config (ModelSelection(..), getLlamaCppEndpoint, getOpenRouterApiKey, getOpenRouterModel, getZAIApiKey)
 import qualified Runix.FileSystem.System as System.Effects
 
@@ -315,6 +315,20 @@ createModelInterpreter UseMinimaxM25 = do
           . interpretLLM @LlamaCppAuth minimaxM25LlamaCpp (Model MinimaxM25 LlamaCpp) . raiseUnder
     , miLoadSession = loadSession minimaxM25LlamaCpp
     , miSaveSession = saveSession minimaxM25LlamaCpp
+    }
+
+createModelInterpreter UseQwen35 = do
+  endpoint <- getLlamaCppEndpoint
+  let auth = LlamaCppAuth endpoint
+  return $ ModelInterpreter
+    { interpretModelStreaming =
+        restapiHTTP auth
+          . interpretLLMStreaming auth qwen35_122B (Model Qwen35_122B LlamaCpp) . raiseUnder
+    , interpretModelNonStreaming =
+        restapiHTTP auth
+          . interpretLLM @LlamaCppAuth qwen35_122B (Model Qwen35_122B LlamaCpp) . raiseUnder
+    , miLoadSession = loadSession qwen35_122B
+    , miSaveSession = saveSession qwen35_122B
     }
 
 createModelInterpreter UseQwen3Coder = do

@@ -47,6 +47,7 @@ data ModelSelection
   | UseClaudeOpus46
   | UseGLM45Air
   | UseMinimaxM25
+  | UseQwen35
   | UseQwen3Coder
   | UseOpenRouter
   | UseGLM45AirZAI
@@ -128,6 +129,9 @@ getModelSelection = do
       "minimax-m2.5" -> return UseMinimaxM25
       "minimaxm25" -> return UseMinimaxM25
       "minimax" -> return UseMinimaxM25
+      "qwen3.5" -> return UseQwen35
+      "qwen3.5-122b" -> return UseQwen35
+      "qwen35" -> return UseQwen35
       "qwen3-coder" -> return UseQwen3Coder
       "qwen3coder" -> return UseQwen3Coder
       "qwen" -> return UseQwen3Coder
