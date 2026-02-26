@@ -43,7 +43,7 @@ import Runix.Grep (Grep)
 import Runix.Bash (Bash)
 import Runix.Cmd (Cmds)
 import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
-import Runix.Logging (Logging(..), info, Level(..))
+import Runix.Logging (Logging(..), info, Level(..), loggingNull)
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
 import Runix.Cancellation (Cancellation(..))
@@ -178,8 +178,8 @@ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath ini
         -- not just Message history. For now, reload only preserves conversation messages.
         let sessionFile = "/tmp/runix-code-session.json"
 
-        -- Use the effect stack to save session
-        let runSave = runM . runError @String . loggingIO . failLog
+        -- Use the effect stack to save session (loggingNull: Brick owns stdout)
+        let runSave = runM . runError @String . loggingNull . failLog
                     . Runix.FileSystem.Simple.filesystemIO
         result <- runSave $ miSaveSession sessionFile history
 
