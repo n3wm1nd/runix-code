@@ -61,7 +61,8 @@ import UniversalLLM (HasTools, SupportsSystemPrompt, SupportsStreaming)
 import qualified UI
 import UI.Streaming (interpretCancellation)
 import UI.UserInterface (interpretAsWidget)
-import UI.AgentWidgets (AgentWidgets(..))
+import UI.AgentWidgets (AgentWidgets, agentError)
+import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
@@ -126,13 +127,13 @@ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath ini
   -- Run the entire agent loop inside Sem so FileWatcher state persists
   let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars . streamingInterp
 
-  result <- runToIO' $ forever $ runOneIteration
+  result <- runToIO' $ forever runOneIteration
 
   -- Handle top-level errors (though forever should never return)
   case result of
     Left err -> do
       clearCancellationFlag uiVars
-      sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Fatal error: " ++ err))
+      sendAgentEvent uiVars (LogEvent Error (T.pack $ "Fatal error: " ++ err))
     Right _ -> return ()
 
   where
@@ -186,7 +187,7 @@ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath ini
         case result of
           Left err -> do
             -- Failed to save session - log error but don't reload
-            sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Failed to save session for reload: " ++ err))
+            sendAgentEvent uiVars (LogEvent Error (T.pack $ "Failed to save session for reload: " ++ err))
           Right () -> do
             -- Successfully saved - exec new binary via UI event (so Brick can suspend first)
             sendAgentEvent uiVars (RunExternalCommandEvent $ do
@@ -218,7 +219,7 @@ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath ini
 
     -- | The default agent command: run runixCode with the user's input
     runDefaultAgentCommand history settings userText = do
-      -- Send user message to UI immediately (adds to history)
+      -- Send user message to UI immediately (before agent processes it)
       embed $ sendAgentEvent uiVars (UserMessageEvent (UserText userText))
 
       catch
@@ -235,9 +236,10 @@ agentLoop cwd dataDir uiVars sysPrompt streamingInterp miSaveSession exePath ini
                      . runHistory history
                      . interpretAsWidget @model
                      $ runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
-            return ()
+            -- Signal completion so UI updates status
+            embed $ sendAgentEvent uiVars (AgentCompleteEvent [])
         )
-        (\err -> embed $ sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Command error: " ++ err)))
+        (\err -> embed $ sendAgentEvent uiVars (LogEvent Error (T.pack $ "Command error: " ++ err)))
 
 --------------------------------------------------------------------------------
 -- UI Runner Builder
@@ -281,7 +283,7 @@ buildUIRunner streamingInterp miLoadSession miSaveSession maybeSessionPath refre
           when (not $ null msgs) $
             sendAgentEvent uiVars (AgentCompleteEvent msgs)
         Left err -> do
-          sendAgentEvent uiVars (AgentErrorEvent (T.pack $ "Failed to load session: " ++ err))
+          sendAgentEvent uiVars (LogEvent Error (T.pack $ "Failed to load session: " ++ err))
     Nothing -> return ()
 
   -- Get data file path for the system prompt
@@ -310,31 +312,6 @@ buildUIRunner streamingInterp miLoadSession miSaveSession maybeSessionPath refre
 --------------------------------------------------------------------------------
 -- Runner Creation
 --------------------------------------------------------------------------------
-
--- | Interpret AgentWidgets by sending events to UIVars
---
--- This interpreter bridges the abstract AgentWidgets effect to the concrete
--- TUI event system. Each AgentWidgets operation is translated to an AgentEvent
--- and sent to the UI thread via UIVars.
-interpretAgentWidgets :: forall msg r a. Member (Embed IO) r
-                      => UIVars msg
-                      -> Sem (AgentWidgets msg : r) a
-                      -> Sem r a
-interpretAgentWidgets uiVars = interpret $ \case
-  EmitLog level text ->
-    embed $ sendAgentEvent uiVars (LogEvent level text)
-
-  EmitStreamChunk content ->
-    embed $ sendAgentEvent uiVars (toAgentEvent content)
-    where
-      toAgentEvent (StreamingText text) = StreamChunkEvent text
-      toAgentEvent (StreamingReasoning reasoning) = StreamReasoningEvent reasoning
-
-  EmitError text ->
-    embed $ sendAgentEvent uiVars (AgentErrorEvent text)
-
-  EmitCompletion msgs ->
-    embed $ sendAgentEvent uiVars (AgentCompleteEvent msgs)
 
 -- | Interpret all base effects for TUI agents
 --

@@ -358,43 +358,21 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'c') [V.MCtrl])) = M.halt
 -- Handle agent events - process state updates, render is triggered by separate channel
 handleNormalEvent (T.AppEvent (AgentEvent event)) = do
   case event of
-      StreamChunkEvent text -> do
-        -- Accumulate streaming text: if current is StreamingChunkItem, append to it
-        zipper <- use outputZipperL
+      ZipperUpdateEvent newZipper -> do
+        -- Replace zipper with agent's updated version
         mode <- use markdownModeL
         let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
-        case zipperCurrent zipper of
-          Just (StreamingChunkItem prevText) -> do
-            let newItem = StreamingChunkItem (prevText <> text)
-            outputZipperL %= updateCurrent newItem
-            -- Only re-render current, not entire zipper
-            widgetZipperL %= updateCurrent (renderItem opts newItem)
-            invalidateCacheEntry CachedCurrent
-          _ -> do
-            -- First chunk: create new streaming item
-            let newItem = StreamingChunkItem text
-            outputZipperL %= appendItem newItem
-            widgetZipperL %= appendItem (renderItem opts newItem)
-            invalidateCacheEntry CachedFront
-            invalidateCacheEntry CachedCurrent
-
-      StreamReasoningEvent text -> do
-        -- Accumulate reasoning text similarly
-        zipper <- use outputZipperL
-        mode <- use markdownModeL
-        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
-        case zipperCurrent zipper of
-          Just (StreamingReasoningItem prevText) -> do
-            let newItem = StreamingReasoningItem (prevText <> text)
-            outputZipperL %= updateCurrent newItem
-            widgetZipperL %= updateCurrent (renderItem opts newItem)
-            invalidateCacheEntry CachedCurrent
-          _ -> do
-            let newItem = StreamingReasoningItem text
-            outputZipperL %= appendItem newItem
-            widgetZipperL %= appendItem (renderItem opts newItem)
-            invalidateCacheEntry CachedFront
-            invalidateCacheEntry CachedCurrent
+            newWidgetZipper = Zipper
+              { zipperBack = fmap (renderItem opts) (zipperBack newZipper)
+              , zipperCurrent = fmap (renderItem opts) (zipperCurrent newZipper)
+              , zipperFront = fmap (renderItem opts) (zipperFront newZipper)
+              }
+        outputZipperL .= newZipper
+        widgetZipperL .= newWidgetZipper
+        -- Invalidate all caches since the zipper changed
+        invalidateCacheEntry CachedFront
+        invalidateCacheEntry CachedCurrent
+        invalidateCacheEntry CachedBack
 
       UserMessageEvent msg -> do
         -- Add user message as new current
@@ -406,59 +384,15 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         invalidateCacheEntry CachedFront
         invalidateCacheEntry CachedCurrent
 
-      AgentCompleteEvent msgs -> do
-        -- Use mergeOutputMessages to properly merge messages with existing output
-        zipper <- use outputZipperL
-        let currentItems = zipperToList zipper  -- newest-first
-
-            -- Remove streaming items first
-            withoutStreaming = filter (\case
-                StreamingChunkItem _ -> False
-                StreamingReasoningItem _ -> False
-                _ -> True) currentItems
-
-            -- Convert messages to OutputItems (newest-first)
-            newItems = map MessageItem (reverse msgs)
-
-            -- Merge using the tested merge logic
-            mergedItems = mergeOutputMessages newItems withoutStreaming
-
-            -- Add CompletedToolItem entries for tool pairs
-            withToolItems = addCompletedToolItems mergedItems
-
-        -- Convert back to zipper (full rebuild)
-        outputZipperL .= listToZipper withToolItems
-        reRenderWidgetZipper
-        -- Agent is done, update status
+      AgentCompleteEvent _msgs -> do
+        -- Agent completed, update status
         statusL .= Text.pack "Ready"
-        -- Invalidate all caches (full rebuild of zipper structure)
-        invalidateCacheEntry CachedFront
-        invalidateCacheEntry CachedCurrent
-        invalidateCacheEntry CachedBack
-
-      AgentErrorEvent text -> do
-        mode <- use markdownModeL
-        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
-            newItem = SystemEventItem text
-        outputZipperL %= appendItem newItem
-        widgetZipperL %= appendItem (renderItem opts newItem)
-        statusL .= Text.append (Text.pack "Error: ") text
-        invalidateCacheEntry CachedFront
-        invalidateCacheEntry CachedCurrent
 
       LogEvent level text -> do
+        -- UI infrastructure logs (not agent output)
         mode <- use markdownModeL
         let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
             newItem = LogItem level text
-        outputZipperL %= appendItem newItem
-        widgetZipperL %= appendItem (renderItem opts newItem)
-        invalidateCacheEntry CachedFront
-        invalidateCacheEntry CachedCurrent
-
-      ToolExecutionEvent text -> do
-        mode <- use markdownModeL
-        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
-            newItem = ToolExecutionItem text
         outputZipperL %= appendItem newItem
         widgetZipperL %= appendItem (renderItem opts newItem)
         invalidateCacheEntry CachedFront

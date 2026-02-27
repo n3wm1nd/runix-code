@@ -92,6 +92,7 @@ data OutputItem msg
   | SystemEventItem Text      -- ^ System event notification
   | ToolExecutionItem Text    -- ^ Tool execution indicator
   | CompletedToolItem msg msg -- ^ Completed tool call: tool call + result (for display)
+  | SectionItem (Zipper (OutputItem msg))  -- ^ Grouped output from a sub-agent invocation
   deriving stock (Eq, Show, Ord)
 
 -- | Generic zipper structure for navigable lists
@@ -101,7 +102,7 @@ data Zipper a = Zipper
   { zipperBack :: [a]      -- ^ Newer items (reverse chronological)
   , zipperCurrent :: Maybe a  -- ^ Focused/streaming item
   , zipperFront :: [a]     -- ^ Older items (reverse chronological)
-  }
+  } deriving stock (Eq, Show, Ord)
 
 -- | Type alias for output history (zipper of OutputItems)
 type OutputHistoryZipper msg = Zipper (OutputItem msg)
@@ -184,13 +185,16 @@ appendItem item (Zipper back current front) =
   in Zipper back (Just item) front'
 
 -- | Extract typed messages from zipper (filters out logs, streaming, etc.)
+-- Recurses into SectionItems to find nested messages.
 -- Returns messages in oldest-first order (ready to pass to agent)
 extractMessages :: OutputHistoryZipper msg -> [msg]
 extractMessages zipper =
   let items = zipperToList zipper
-      extractMsg (MessageItem msg) = Just msg
-      extractMsg _ = Nothing
-  in reverse $ foldr (\item acc -> maybe acc (:acc) (extractMsg item)) [] items
+  in reverse $ foldr (\item acc -> extractFromItem item ++ acc) [] items
+  where
+    extractFromItem (MessageItem msg) = [msg]
+    extractFromItem (SectionItem subZipper) = extractMessages subZipper
+    extractFromItem _ = []
 
 --------------------------------------------------------------------------------
 -- Rendering Functions
@@ -269,6 +273,15 @@ renderItem opts item = vBox $ case item of
   -- Fallback for other message types in CompletedToolItem (shouldn't happen)
   CompletedToolItem _ _ ->
     [txt "T [Invalid tool item]"]
+
+  -- Section: render sub-items recursively with indentation
+  -- zipperToList returns newest-first; reverse for chronological order
+  SectionItem subZipper ->
+    let subItems = reverse (zipperToList subZipper)
+        subWidgets = map (renderItem opts) subItems
+    in case subWidgets of
+         [] -> []
+         ws -> [padLeft (Pad 1) (vBox ws)]
 
   where
     useMd = useMarkdown opts

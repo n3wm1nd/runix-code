@@ -4,14 +4,18 @@
 -- | AgentWidgets effect for routing agent output to UI widgets
 --
 -- This effect provides a clean abstraction for agents to output to UI
--- without requiring direct IO access. Different UIs (TUI, CLI, API) can
--- interpret this effect differently.
+-- without requiring direct knowledge of the storage format. The interpreter
+-- maintains the actual OutputHistoryZipper and handles semantic operations.
 module UI.AgentWidgets
   ( AgentWidgets(..)
-  , emitLog
-  , emitStreamChunk
-  , emitError
-  , emitCompletion
+  , SegmentID(..)
+  , addMessage
+  , streamChunk
+  , logMessage
+  , agentError
+  , createSegment
+  , updateSegment
+  , replaceHistory
   ) where
 
 import Polysemy
@@ -19,36 +23,62 @@ import Data.Kind (Type)
 import Data.Text (Text)
 import Runix.Logging (Level)
 import Runix.Streaming.SSE (StreamingContent)
+import UI.OutputHistory (Zipper, OutputItem)
+
+-- | Opaque identifier for a segment (subsection) in the output history
+newtype SegmentID = SegmentID Int
+  deriving stock (Eq, Ord, Show)
 
 -- | Effect for outputting to agent widgets
 --
--- Operations represent different types of output an agent might produce:
--- - Logs (with severity levels)
--- - Streaming chunks (real-time LLM responses)
--- - Errors
--- - Completion (with final message history)
+-- Semantic operations that abstract away the storage format:
+-- - AddMessage: add a message to history (user or agent)
+-- - StreamChunk: append streaming chunk (thinking or response)
+-- - LogMessage: add a log entry
+-- - AgentError: indicate an error occurred
+-- - CreateSegment: create a new subsection for sub-agent output, returns ID
+-- - UpdateSegment: modify a specific segment's zipper
+-- - ReplaceHistory: merge new message history (preserves logs, subsections)
 data AgentWidgets msg (m :: Type -> Type) a where
-  -- | Emit a log message with a severity level
-  EmitLog :: Level -> Text -> AgentWidgets msg m ()
+  -- | Add a message to the history
+  AddMessage :: msg -> AgentWidgets msg m ()
 
-  -- | Emit a streaming chunk (real-time LLM output)
-  EmitStreamChunk :: StreamingContent -> AgentWidgets msg m ()
+  -- | Append a streaming chunk (type is in StreamingContent: Text or Reasoning)
+  StreamChunk :: StreamingContent -> AgentWidgets msg m ()
 
-  -- | Emit an error message
-  EmitError :: Text -> AgentWidgets msg m ()
+  -- | Add a log message with severity level
+  LogMessage :: Level -> Text -> AgentWidgets msg m ()
 
-  -- | Signal completion with final message history
-  EmitCompletion :: [msg] -> AgentWidgets msg m ()
+  -- | Indicate an error occurred
+  AgentError :: Text -> AgentWidgets msg m ()
+
+  -- | Create a new segment (subsection) for sub-agent output
+  CreateSegment :: AgentWidgets msg m SegmentID
+
+  -- | Update a specific segment's zipper
+  UpdateSegment :: SegmentID -> (Zipper (OutputItem msg) -> Zipper (OutputItem msg)) -> AgentWidgets msg m ()
+
+  -- | Replace message history (merges, preserving logs and subsections)
+  ReplaceHistory :: [msg] -> AgentWidgets msg m ()
 
 -- | Smart constructors for AgentWidgets operations
-emitLog :: forall msg r. Member (AgentWidgets msg) r => Level -> Text -> Sem r ()
-emitLog level text = send @(AgentWidgets msg) (EmitLog level text)
+addMessage :: forall msg r. Member (AgentWidgets msg) r => msg -> Sem r ()
+addMessage msg = send @(AgentWidgets msg) (AddMessage msg)
 
-emitStreamChunk :: forall msg r. Member (AgentWidgets msg) r => StreamingContent -> Sem r ()
-emitStreamChunk content = send @(AgentWidgets msg) (EmitStreamChunk content)
+streamChunk :: forall msg r. Member (AgentWidgets msg) r => StreamingContent -> Sem r ()
+streamChunk content = send @(AgentWidgets msg) (StreamChunk content)
 
-emitError :: forall msg r. Member (AgentWidgets msg) r => Text -> Sem r ()
-emitError text = send @(AgentWidgets msg) (EmitError text)
+logMessage :: forall msg r. Member (AgentWidgets msg) r => Level -> Text -> Sem r ()
+logMessage level text = send @(AgentWidgets msg) (LogMessage level text)
 
-emitCompletion :: forall msg r. Member (AgentWidgets msg) r => [msg] -> Sem r ()
-emitCompletion msgs = send @(AgentWidgets msg) (EmitCompletion msgs)
+agentError :: forall msg r. Member (AgentWidgets msg) r => Text -> Sem r ()
+agentError text = send @(AgentWidgets msg) (AgentError text)
+
+createSegment :: forall msg r. Member (AgentWidgets msg) r => Sem r SegmentID
+createSegment = send @(AgentWidgets msg) CreateSegment
+
+updateSegment :: forall msg r. Member (AgentWidgets msg) r => SegmentID -> (Zipper (OutputItem msg) -> Zipper (OutputItem msg)) -> Sem r ()
+updateSegment segId f = send @(AgentWidgets msg) (UpdateSegment segId f)
+
+replaceHistory :: forall msg r. Member (AgentWidgets msg) r => [msg] -> Sem r ()
+replaceHistory msgs = send @(AgentWidgets msg) (ReplaceHistory msgs)

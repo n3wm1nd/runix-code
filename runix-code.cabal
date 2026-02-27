@@ -160,6 +160,7 @@ library runix-code-tui-lib
                     , UI.UserInput.Interpreter
                     , UI.UserInterface
                     , UI.AgentWidgets
+                    , UI.AgentWidgetsInterpreter
                     , UI.ForegroundCmd
                     , UI.ForegroundCmdInterpreter
                     , UI.MessageFormat

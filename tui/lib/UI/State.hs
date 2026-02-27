@@ -25,8 +25,9 @@ module UI.State
 
 import Control.Concurrent.STM
 import Data.Text (Text)
-import Runix.Logging (Level(..))
+import Runix.Logging (Level)
 import UI.UserInput.InputWidget (InputWidget(..))
+import UI.OutputHistory (Zipper, OutputItem)
 
 -- | Resource names for widgets (defined here to avoid circular dependency)
 data Name = InputEditor
@@ -49,26 +50,20 @@ data SomeInputWidget where
 -- | Events sent from agent thread to UI thread
 -- Note: Events carry typed messages when relevant
 data AgentEvent msg
-  = StreamChunkEvent Text         -- ^ New streaming chunk
-  | StreamReasoningEvent Text     -- ^ New streaming reasoning chunk
+  = ZipperUpdateEvent (Zipper (OutputItem msg))  -- ^ Full zipper update from agent
   | UserMessageEvent msg          -- ^ User message received (before agent processes it)
   | AgentCompleteEvent [msg]      -- ^ Agent completed with new messages
-  | AgentErrorEvent Text          -- ^ Agent encountered error
-  | LogEvent Level Text           -- ^ New log entry
-  | ToolExecutionEvent Text       -- ^ Tool execution started
+  | LogEvent Level Text           -- ^ Log event (for UI infrastructure, not agent output)
   | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
   | ClearInputWidgetEvent         -- ^ Clear the current input widget
   | RunExternalCommandEvent (IO ())  -- ^ Run external command (suspends/resumes Vty)
 
 -- Manual Eq instance (SomeInputWidget can't derive Eq due to callback function)
 instance Eq msg => Eq (AgentEvent msg) where
-  StreamChunkEvent t1 == StreamChunkEvent t2 = t1 == t2
-  StreamReasoningEvent t1 == StreamReasoningEvent t2 = t1 == t2
+  ZipperUpdateEvent z1 == ZipperUpdateEvent z2 = z1 == z2
   UserMessageEvent m1 == UserMessageEvent m2 = m1 == m2
   AgentCompleteEvent ms1 == AgentCompleteEvent ms2 = ms1 == ms2
-  AgentErrorEvent t1 == AgentErrorEvent t2 = t1 == t2
   LogEvent l1 t1 == LogEvent l2 t2 = l1 == l2 && t1 == t2
-  ToolExecutionEvent t1 == ToolExecutionEvent t2 = t1 == t2
   ShowInputWidgetEvent _ == ShowInputWidgetEvent _ = False  -- Can't compare functions
   ClearInputWidgetEvent == ClearInputWidgetEvent = True
   RunExternalCommandEvent _ == RunExternalCommandEvent _ = False  -- Can't compare IO actions
@@ -76,13 +71,10 @@ instance Eq msg => Eq (AgentEvent msg) where
 
 -- Manual Show instance
 instance Show msg => Show (AgentEvent msg) where
-  show (StreamChunkEvent t) = "StreamChunkEvent " ++ show t
-  show (StreamReasoningEvent t) = "StreamReasoningEvent " ++ show t
+  show (ZipperUpdateEvent _) = "ZipperUpdateEvent <zipper>"
   show (UserMessageEvent m) = "UserMessageEvent " ++ show m
   show (AgentCompleteEvent ms) = "AgentCompleteEvent " ++ show ms
-  show (AgentErrorEvent t) = "AgentErrorEvent " ++ show t
   show (LogEvent l t) = "LogEvent " ++ show l ++ " " ++ show t
-  show (ToolExecutionEvent t) = "ToolExecutionEvent " ++ show t
   show (ShowInputWidgetEvent _) = "ShowInputWidgetEvent <widget>"
   show ClearInputWidgetEvent = "ClearInputWidgetEvent"
   show (RunExternalCommandEvent _) = "RunExternalCommandEvent <action>"
