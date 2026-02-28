@@ -102,79 +102,63 @@ class ModelDefaults model where
 instance ModelDefaults (Model ClaudeSonnet45 AnthropicOAuth) where
   defaultConfigs :: [ModelConfig (Model ClaudeSonnet45 AnthropicOAuth)]
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable extended thinking
+    [ Reasoning True    -- Enable extended thinking
     ]
 
 instance ModelDefaults (Model ClaudeHaiku45 AnthropicOAuth) where
   defaultConfigs :: [ModelConfig (Model ClaudeHaiku45 AnthropicOAuth)]
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable extended thinking
+    [ Reasoning True    -- Enable extended thinking
     ]
 
 instance ModelDefaults (Model ClaudeOpus46 AnthropicOAuth) where
   defaultConfigs :: [ModelConfig (Model ClaudeOpus46 AnthropicOAuth)]
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable adaptive reasoning
+    [ Reasoning True    -- Enable adaptive reasoning
     ]
 
 instance ModelDefaults (Model GLM45Air LlamaCpp) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 instance ModelDefaults (Model MinimaxM25 LlamaCpp) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 instance ModelDefaults (Model Qwen35_122B LlamaCpp) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 instance ModelDefaults (Model Qwen3CoderNext LlamaCpp) where
-  defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    ]
+  defaultConfigs = []
 
 instance ModelDefaults (Model Universal OpenRouter) where
-  defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    ]
+  defaultConfigs = []
 
 instance ModelDefaults (Model UniversalWithTools OpenRouter) where
-  defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    ]
+  defaultConfigs = []
 
 instance ModelDefaults (Model GLM45Air ZAI) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 instance ModelDefaults (Model GLM46 ZAI) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 instance ModelDefaults (Model GLM47 ZAI) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 instance ModelDefaults (Model GLM5 ZAI) where
   defaultConfigs =
-    [ Streaming True    -- Enable streaming for real-time feedback
-    , Reasoning True    -- Enable reasoning extraction
+    [ Reasoning True    -- Enable reasoning extraction
     ]
 
 --------------------------------------------------------------------------------

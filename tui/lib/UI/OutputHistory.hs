@@ -48,10 +48,7 @@ module UI.OutputHistory
   -- , patchOutputHistory  -- Removed: not used
   , addLog
   , addSystemEvent
-  , addStreamingChunk
-  , addStreamingReasoning
   , addToolExecution
-  , removeStreamingChunks
   , splitHistory
   ) where
 
@@ -59,6 +56,7 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
 import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
+import UI.AgentWidgets (AgentStatus(..), StreamingState(..))
 import Brick.Types (Widget)
 import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
 import Brick.Widgets.Core (Padding(..))
@@ -87,8 +85,7 @@ defaultRenderOptions = RenderOptions
 data OutputItem msg
   = MessageItem msg           -- ^ Conversation message (typed)
   | LogItem Level Text        -- ^ Log entry
-  | StreamingChunkItem Text   -- ^ Streaming text chunk
-  | StreamingReasoningItem Text  -- ^ Streaming reasoning chunk
+  | StatusItem AgentStatus    -- ^ Agent status
   | SystemEventItem Text      -- ^ System event notification
   | ToolExecutionItem Text    -- ^ Tool execution indicator
   | CompletedToolItem msg msg -- ^ Completed tool call: tool call + result (for display)
@@ -250,13 +247,23 @@ renderItem opts item = vBox $ case item of
           Error -> ("E ", logErrorAttr)
     in [withAttr attr (txt marker) <+> txt msg]
 
-  -- Streaming chunks
-  StreamingChunkItem text ->
-    [renderContentWithMarker "}" text]
-
-  -- Streaming reasoning
-  StreamingReasoningItem text ->
-    [renderContentWithMarker "~" text]
+  -- Status items
+  StatusItem status ->
+    case status of
+      Idle -> []
+      Working desc -> [txt "⋯ " <+> txt desc]
+      Streaming state ->
+        let thinkingWidget = case streamingThinking state of
+              Nothing -> []
+              Just t -> [renderContentWithMarker "~" t]
+            responseWidget = case streamingResponse state of
+              Nothing -> []
+              Just r -> [renderContentWithMarker "}" r]
+        in thinkingWidget ++ responseWidget
+      WaitingForInput -> [txt "⋯ Waiting for input"]
+      WaitingForToolCall -> [txt "⋯ Waiting for tool call"]
+      Done -> []
+      Failed err -> [txt "✗ " <+> txt err]
 
   -- System events: always same rendering
   SystemEventItem msg ->
@@ -363,8 +370,6 @@ renderItem opts item = vBox $ case item of
 data OutputMessage
   = ConversationMessage Int Text
   | LogEntry Level Text
-  | StreamingChunk Text
-  | StreamingReasoning Text
   | SystemEvent Text
   | ToolExecution Text
   deriving stock (Eq, Show, Ord)
@@ -385,7 +390,6 @@ type OutputHistory n = [RenderedMessage n]
 data DisplayFilter = DisplayFilter
   { showMessages :: Bool      -- ^ Show conversation messages
   , showLogs :: Bool          -- ^ Show log entries
-  , showStreaming :: Bool     -- ^ Show streaming chunks
   , showSystemEvents :: Bool  -- ^ Show system events
   , showToolCalls :: Bool     -- ^ Show tool executions
   }
@@ -395,7 +399,6 @@ defaultFilter :: DisplayFilter
 defaultFilter = DisplayFilter
   { showMessages = True
   , showLogs = True
-  , showStreaming = True
   , showSystemEvents = False  -- System events off by default
   , showToolCalls = True
   }
@@ -404,8 +407,6 @@ defaultFilter = DisplayFilter
 shouldDisplay :: DisplayFilter -> OutputMessage -> Bool
 shouldDisplay filt (ConversationMessage _ _) = showMessages filt
 shouldDisplay filt (LogEntry _ _) = showLogs filt
-shouldDisplay filt (StreamingChunk _) = showStreaming filt
-shouldDisplay filt (StreamingReasoning _) = showStreaming filt  -- Treat reasoning same as streaming
 shouldDisplay filt (SystemEvent _) = showSystemEvents filt
 shouldDisplay filt (ToolExecution _) = showToolCalls filt
 
@@ -464,12 +465,6 @@ renderOutputMessage (LogEntry level msg) =
                  Warning -> "W "
                  Error -> "E "
   in [txt marker <+> vBox (markdownToWidgets msg)]
-renderOutputMessage (StreamingChunk text) =
-  let contentWidgets = markdownToWidgetsWithIndent 1 text
-  in combineMarkerWithContent "}" contentWidgets
-renderOutputMessage (StreamingReasoning text) =
-  let contentWidgets = markdownToWidgetsWithIndent 1 text
-  in combineMarkerWithContent "~" contentWidgets  -- Use "~" marker for streaming reasoning
 renderOutputMessage (SystemEvent msg) =
   [txt "S " <+> vBox (markdownToWidgets msg)]
 renderOutputMessage (ToolExecution name) =
@@ -487,9 +482,6 @@ renderOutputMessages renderFunc messages = go messages
         ConversationMessage _ _ ->
           -- Add blank line before, render message, add blank line after
           -- Use txt " " instead of emptyWidget to ensure it takes vertical space
-          txt " " : renderFunc msg ++ [txt " "] ++ go rest
-        StreamingChunk _ ->
-          -- Add blank line before streaming chunk (same as conversation message)
           txt " " : renderFunc msg ++ [txt " "] ++ go rest
         _ ->
           -- No spacing for logs, system events, tool executions
@@ -515,10 +507,6 @@ renderOutputMessageRaw (LogEntry level msg) =
                  Warning -> "W "
                  Error -> "E "
   in [txt marker <+> txt msg]
-renderOutputMessageRaw (StreamingChunk text) =
-  [txt "}" <+> padLeft (Pad 1) (txt text)]
-renderOutputMessageRaw (StreamingReasoning text) =
-  [txt "~" <+> padLeft (Pad 1) (txt text)]
 renderOutputMessageRaw (SystemEvent msg) = [txt "S " <+> txt msg]
 renderOutputMessageRaw (ToolExecution name) = [txt "T " <+> txt name]
 
@@ -747,43 +735,6 @@ addLog level msg output = renderMessage (LogEntry level msg) : output
 -- | Add a system event to the output history (cons to front - newest first)
 addSystemEvent :: forall n. Text -> OutputHistory n -> OutputHistory n
 addSystemEvent msg output = renderMessage (SystemEvent msg) : output
-
--- | Add or update streaming chunk in the output history
-addStreamingChunk :: forall n. Text -> OutputHistory n -> OutputHistory n
-addStreamingChunk chunk output =
-  case output of
-    (RenderedMessage (StreamingChunk existing) _ _ : rest) ->
-      renderMessage (StreamingChunk (existing <> chunk)) : rest
-    _ ->
-      renderMessage (StreamingChunk chunk) : output
-
--- | Add or update streaming reasoning chunk in the output history
-addStreamingReasoning :: forall n. Text -> OutputHistory n -> OutputHistory n
-addStreamingReasoning chunk output =
-  case output of
-    (RenderedMessage (StreamingReasoning existing) _ _ : rest) ->
-      renderMessage (StreamingReasoning (existing <> chunk)) : rest
-    _ ->
-      renderMessage (StreamingReasoning chunk) : output
-
--- | Remove all streaming chunks from output history
--- Stops at first ConversationMessage (can't be any streaming before that)
-removeStreamingChunks :: forall n. OutputHistory n -> OutputHistory n
-removeStreamingChunks = go []
-  where
-    go acc [] = reverse acc
-    go acc (msg@(RenderedMessage (ConversationMessage _ _) _ _) : rest) =
-      -- Hit conversation message, keep it and everything after
-      reverse acc ++ (msg : rest)
-    go acc (RenderedMessage (StreamingChunk _) _ _ : rest) =
-      -- Remove streaming chunk, continue
-      go acc rest
-    go acc (RenderedMessage (StreamingReasoning _) _ _ : rest) =
-      -- Remove streaming reasoning placeholder, continue
-      go acc rest
-    go acc (msg : rest) =
-      -- Keep other messages (logs, system events, etc)
-      go (msg : acc) rest
 
 -- | Add a tool execution indicator (cons to front - newest first)
 addToolExecution :: forall n. Text -> OutputHistory n -> OutputHistory n

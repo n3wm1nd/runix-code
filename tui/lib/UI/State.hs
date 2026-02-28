@@ -80,8 +80,9 @@ instance Show msg => Show (AgentEvent msg) where
   show (RunExternalCommandEvent _) = "RunExternalCommandEvent <action>"
 
 -- | Runtime LLM configuration settings
+-- Currently empty but can hold maxLength, reasoning effort, temperature, etc.
 data LLMSettings = LLMSettings
-  { llmStreaming :: Bool
+  {
   } deriving stock (Eq, Show)
 
 -- | User request containing input text, history, and LLM settings

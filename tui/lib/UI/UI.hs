@@ -159,7 +159,7 @@ runUI mkUIVars = do
         , _markdownMode = RenderMarkdown
         , _lastViewport = Nothing
         , _eventChan = eventChan
-        , _llmSettings = LLMSettings { llmStreaming = True }  -- Default settings
+        , _llmSettings = LLMSettings  -- Default settings
         }
 
   -- Create vty with bracketed paste enabled
@@ -228,7 +228,6 @@ drawUI st = [indicatorLayer, baseLayer]
                     RenderMarkdown -> "Markdown: rendered"
                     ShowRaw -> "Markdown: raw"
 
-    llmSettingsStr = "Streaming: " ++ (if llmStreaming (_llmSettings st) then "on" else "off")
 
     -- Combine widgets: front (oldest) ++ current ++ back (newest at bottom)
     historyWidgets = frontWidgets ++ currentWidgets ++ backWidgets
@@ -263,7 +262,7 @@ drawUI st = [indicatorLayer, baseLayer]
                     , hBorder
                     , vLimit inputHeight $
                         renderEditor (vBox . map renderLine) True (_inputEditor st)
-                    , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | " ++ llmSettingsStr ++ " | \\<Enter>: newline | Ctrl-T: input | Ctrl-R: markdown | Ctrl-S: streaming | Ctrl-C: quit"
+                    , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: input | Ctrl-R: markdown | Ctrl-C: quit"
                     ]
       T.render ui
 
@@ -486,11 +485,6 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'r') [V.MCtrl])) = do
   -- Update viewport state after mode switch (non-blocking)
   chan <- use eventChanL
   liftIO $ void $ Brick.BChan.writeBChanNonBlocking chan UpdateViewport
-
--- Ctrl-S toggles streaming on/off
-handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 's') [V.MCtrl])) = do
-  settings <- use llmSettingsL
-  llmSettingsL .= settings { llmStreaming = not (llmStreaming settings) }
 
 -- Ctrl-D sends message (useful in EnterNewline mode)
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'd') [V.MCtrl])) = sendMessage
