@@ -182,101 +182,88 @@ type instance ConfigFor (Model GLM5 ZAI) = GLM5Config
 
 -- Claude Sonnet 4.5 configuration
 data ClaudeSonnet45Config = ClaudeSonnet45Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- Claude Haiku 4.5 configuration
 data ClaudeHaiku45Config = ClaudeHaiku45Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- Claude Opus 4.6 configuration
 data ClaudeOpus46Config = ClaudeOpus46Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- GLM-4.5-Air (LlamaCpp) configuration
 data GLM45AirConfig = GLM45AirConfig
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- MiniMax M2.5 (LlamaCpp) configuration
 data MinimaxM25Config = MinimaxM25Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- Qwen 3.5 122B configuration
 data Qwen35Config = Qwen35Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- Qwen3-Coder configuration (no reasoning)
 data Qwen3CoderConfig = Qwen3CoderConfig
-  { streaming :: StreamingSetting
-  , temperature :: Maybe TemperatureSetting
+  { temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- Universal (OpenRouter) configuration - text-only, no reasoning
 data UniversalConfig = UniversalConfig
-  { streaming :: StreamingSetting
-  , temperature :: Maybe TemperatureSetting
+  { temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- UniversalWithTools (OpenRouter) configuration - tools support
 data UniversalWithToolsConfig = UniversalWithToolsConfig
-  { streaming :: StreamingSetting
-  , temperature :: Maybe TemperatureSetting
+  { temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- GLM-4.5-Air (ZAI) configuration
 data GLM45AirZAIConfig = GLM45AirZAIConfig
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- GLM-4.6 configuration
 data GLM46Config = GLM46Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- GLM-4.7 configuration
 data GLM47Config = GLM47Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)
 
 -- GLM-5 configuration
 data GLM5Config = GLM5Config
-  { streaming :: StreamingSetting
-  , reasoning :: ReasoningSetting
+  { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)

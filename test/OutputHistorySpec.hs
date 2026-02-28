@@ -21,8 +21,8 @@ logMsg = LogItem Info
 getText :: OutputItem Text -> Text
 getText (MessageItem t) = t
 getText (LogItem _ t) = "Log: " <> t
-getText (StreamingChunkItem t) = "Stream: " <> t
-getText (StreamingReasoningItem t) = "Reasoning: " <> t
+-- getText (StreamingChunkItem t) = "Stream: " <> t
+-- getText (StreamingReasoningItem t) = "Reasoning: " <> t
 getText (SystemEventItem t) = "System: " <> t
 getText (ToolExecutionItem t) = "Tool: " <> t
 
@@ -55,7 +55,7 @@ instance Arbitrary (OutputItem Text) where
   arbitrary = oneof
     [ MessageItem <$> arbitraryConvText
     , LogItem Info <$> arbitraryLogText
-    , StreamingChunkItem <$> arbitraryText
+    -- , StreamingChunkItem <$> arbitraryText
     , SystemEventItem <$> arbitraryText
     , ToolExecutionItem <$> arbitraryText
     ]
