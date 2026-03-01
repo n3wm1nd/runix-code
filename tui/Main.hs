@@ -223,9 +223,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModel miSaveSession exePath init
                      . runHistory history
                      . interpretAsWidget @model
                      $ do
-                        -- Add conversation history to output
-                        mapM_ (addMessage @(Message model)) history
-                        -- Add new user message
+                        -- Add new user message (history is already in the output zipper)
                         addMessage @(Message model) (UserText userText)
                         -- Run the agent
                         runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
