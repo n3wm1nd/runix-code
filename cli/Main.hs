@@ -95,7 +95,7 @@ main = do
 --
 -- This composes the model interpreter with CLI effects (simple I/O)
 runAgent :: ModelInterpreter -> Config.Config -> Text -> IO (Either String Text)
-runAgent (ModelInterpreter @model interpretModelNonStreaming miLoadSess miSaveSess) cfg userInput = do
+runAgent (ModelInterpreter @model interpretModelNonStreaming _interpretModelStreaming miLoadSess miSaveSess) cfg userInput = do
   -- Get current working directory for filesystem chroot
   cwd <- Dir.getCurrentDirectory
 

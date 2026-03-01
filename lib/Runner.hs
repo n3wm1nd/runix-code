@@ -65,7 +65,9 @@ import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
 import Runix.LLM (LLM)
-import Runix.LLM.Interpreter (interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..))
+import Runix.LLMStream (LLMStreaming)
+import Runix.HTTP (HTTPStreaming)
+import Runix.LLM.Interpreter (interpretLLM, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..))
 import Runix.RestAPI (restapiHTTP)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults, claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen35_122B, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
@@ -234,6 +236,7 @@ data ModelInterpreter where
     , ModelDefaults model
     ) =>
     { interpretModelNonStreaming :: forall r a. Members [Fail, Embed IO, HTTP] r => Sem (LLM model : r) a -> Sem r a
+    , interpretModelStreaming :: forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a
     , miLoadSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , miSaveSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreter
@@ -247,6 +250,8 @@ createModelInterpreter UseClaudeSonnet45 = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @AnthropicOAuthAuth claudeSonnet45OAuth (Model ClaudeSonnet45 AnthropicOAuth) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth claudeSonnet45OAuth (Model ClaudeSonnet45 AnthropicOAuth)
     , miLoadSession = loadSession claudeSonnet45OAuth
     , miSaveSession = saveSession claudeSonnet45OAuth
     }
@@ -258,6 +263,8 @@ createModelInterpreter UseClaudeHaiku45 = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @AnthropicOAuthAuth claudeHaiku45OAuth (Model ClaudeHaiku45 AnthropicOAuth) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth claudeHaiku45OAuth (Model ClaudeHaiku45 AnthropicOAuth)
     , miLoadSession = loadSession claudeHaiku45OAuth
     , miSaveSession = saveSession claudeHaiku45OAuth
     }
@@ -269,6 +276,8 @@ createModelInterpreter UseClaudeOpus46 = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @AnthropicOAuthAuth claudeOpus46OAuth (Model ClaudeOpus46 AnthropicOAuth) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth claudeOpus46OAuth (Model ClaudeOpus46 AnthropicOAuth)
     , miLoadSession = loadSession claudeOpus46OAuth
     , miSaveSession = saveSession claudeOpus46OAuth
     }
@@ -280,6 +289,8 @@ createModelInterpreter UseGLM45Air = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @LlamaCppAuth glm45AirLlamaCpp (Model GLM45Air LlamaCpp) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth glm45AirLlamaCpp (Model GLM45Air LlamaCpp)
     , miLoadSession = loadSession glm45AirLlamaCpp
     , miSaveSession = saveSession glm45AirLlamaCpp
     }
@@ -291,6 +302,8 @@ createModelInterpreter UseMinimaxM25 = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @LlamaCppAuth minimaxM25LlamaCpp (Model MinimaxM25 LlamaCpp) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth minimaxM25LlamaCpp (Model MinimaxM25 LlamaCpp)
     , miLoadSession = loadSession minimaxM25LlamaCpp
     , miSaveSession = saveSession minimaxM25LlamaCpp
     }
@@ -302,6 +315,8 @@ createModelInterpreter UseQwen35 = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @LlamaCppAuth qwen35_122B (Model Qwen35_122B LlamaCpp) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth qwen35_122B (Model Qwen35_122B LlamaCpp)
     , miLoadSession = loadSession qwen35_122B
     , miSaveSession = saveSession qwen35_122B
     }
@@ -313,6 +328,8 @@ createModelInterpreter UseQwen3Coder = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @LlamaCppAuth qwen3Coder (Model Qwen3CoderNext LlamaCpp) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth qwen3Coder (Model Qwen3CoderNext LlamaCpp)
     , miLoadSession = loadSession qwen3Coder
     , miSaveSession = saveSession qwen3Coder
     }
@@ -325,6 +342,8 @@ createModelInterpreter UseOpenRouter = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @OpenRouterAuth universalWithTools (Model (UniversalWithTools (T.pack modelName)) OpenRouter) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth universalWithTools (Model (UniversalWithTools (T.pack modelName)) OpenRouter)
     , miLoadSession = loadSession universalWithTools
     , miSaveSession = saveSession universalWithTools
     }
@@ -336,6 +355,8 @@ createModelInterpreter UseGLM45AirZAI = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @ZAIAuth glm45AirZAI (Model GLM45Air ZAI) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth glm45AirZAI (Model GLM45Air ZAI)
     , miLoadSession = loadSession glm45AirZAI
     , miSaveSession = saveSession glm45AirZAI
     }
@@ -347,6 +368,8 @@ createModelInterpreter UseGLM46ZAI = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @ZAIAuth glm46 (Model GLM46 ZAI) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth glm46 (Model GLM46 ZAI)
     , miLoadSession = loadSession glm46
     , miSaveSession = saveSession glm46
     }
@@ -358,6 +381,8 @@ createModelInterpreter UseGLM47ZAI = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @ZAIAuth glm47 (Model GLM47 ZAI) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth glm47 (Model GLM47 ZAI)
     , miLoadSession = loadSession glm47
     , miSaveSession = saveSession glm47
     }
@@ -369,6 +394,8 @@ createModelInterpreter UseGLM5ZAI = do
     { interpretModelNonStreaming =
         restapiHTTP auth
           . interpretLLM @ZAIAuth glm5 (Model GLM5 ZAI) . raiseUnder
+    , interpretModelStreaming =
+        interpretLLMStream auth glm5 (Model GLM5 ZAI)
     , miLoadSession = loadSession glm5
     , miSaveSession = saveSession glm5
     }

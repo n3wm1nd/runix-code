@@ -42,7 +42,7 @@ import qualified Runix.FileSystem.System
 import Runix.Grep (Grep)
 import Runix.Bash (Bash)
 import Runix.Cmd (Cmds)
-import Runix.HTTP (HTTP, httpIO, withRequestTimeout)
+import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
 import Runix.Logging (Logging(..), info, Level(..), loggingNull)
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
@@ -60,6 +60,9 @@ import qualified UI
 import UI.UserInterface (interpretAsWidget)
 import UI.AgentWidgets (AgentWidgets, addMessage)
 import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
+import UI.StreamingInterceptor (interceptStreamChunksToUI)
+import Runix.LLMStream (LLMStreaming)
+import Runix.LLM.Interpreter (interpretLLMViaStreaming)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
@@ -95,10 +98,10 @@ main = do
   cfg <- loadConfig
 
   -- Create model interpreter
-  ModelInterpreter{interpretModelNonStreaming = interpretModel, miLoadSession, miSaveSession} <- createModelInterpreter (cfgModelSelection cfg)
+  ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} <- createModelInterpreter (cfgModelSelection cfg)
 
-  -- Run UI with the interpreter
-  runUI (\refreshCallback -> buildUIRunner interpretModel miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
+  -- Run UI with the streaming interpreter
+  runUI (\refreshCallback -> buildUIRunner interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -113,14 +116,21 @@ agentLoop :: forall model.
           -> RunixDataDir  -- Data directory path
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members [Fail, Embed IO, HTTP] r => Sem (LLM model : r) a -> Sem r a)  -- LLM interpreter
+          -> (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter (internal)
           -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
-agentLoop cwd dataDir uiVars sysPrompt interpretModel miSaveSession exePath initialMTime = do
+agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
-  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars . interpretModel
+  -- Stack: interpretModelStreaming . interceptStreamChunksToUI . interpretLLMViaStreaming
+  -- interpretModelStreaming: HTTPStreaming -> LLMStreaming
+  -- interceptStreamChunksToUI: intercepts LLMStreaming (Sem r a -> Sem r a)
+  -- interpretLLMViaStreaming: LLMStreaming -> LLM
+  let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars
+                   . interpretModelStreaming
+                   . interceptStreamChunksToUI uiVars
+                   . interpretLLMViaStreaming @model
 
   result <- runToIO' $ forever runOneIteration
 
@@ -247,13 +257,13 @@ buildUIRunner :: forall model.
                  , SupportsSystemPrompt (ProviderOf model)
                  , ModelDefaults model
                  )
-              => (forall r a. Members [Fail, Embed IO, HTTP] r => Sem (LLM model : r) a -> Sem r a)  -- LLM interpreter
+              => (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
-buildUIRunner interpretModel miLoadSession miSaveSession maybeSessionPath refreshCallback = do
+buildUIRunner interpretModelStreaming miLoadSession miSaveSession maybeSessionPath refreshCallback = do
   -- Get current working directory for security restrictions
   cwd <- Dir.getCurrentDirectory
 
@@ -296,7 +306,7 @@ buildUIRunner interpretModel miLoadSession miSaveSession maybeSessionPath refres
   stat <- getFileStatus exePath
   let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
 
-  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt interpretModel miSaveSession exePath initialMTime
+  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exePath initialMTime
   return uiVars
 
 --------------------------------------------------------------------------------
@@ -327,6 +337,7 @@ interpretTUIEffects ::
         : Cmds
         : PromptStore
         : ConfigEffect.Config RunixDataDir
+        : HTTPStreaming
         : HTTP
         : FileSystemWrite RunixToolsFS
         : FileSystemRead RunixToolsFS
@@ -376,6 +387,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . fileSystemLocal (RunixToolsFS runixCodeDir)
     . loggingWrite @RunixToolsFS "runix-tools"
     . httpIO (withRequestTimeout 300)
+    . httpIOStreaming (withRequestTimeout 300)
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
     . promptStoreIO
     . cmdsIO

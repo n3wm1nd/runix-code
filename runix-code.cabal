@@ -161,6 +161,7 @@ library runix-code-tui-lib
                     , UI.UserInterface
                     , UI.AgentWidgets
                     , UI.AgentWidgetsInterpreter
+                    , UI.StreamingInterceptor
                     , UI.ForegroundCmd
                     , UI.ForegroundCmdInterpreter
                     , UI.MessageFormat

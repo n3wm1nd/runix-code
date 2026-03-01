@@ -57,6 +57,9 @@ data AgentEvent msg
   | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
   | ClearInputWidgetEvent         -- ^ Clear the current input widget
   | RunExternalCommandEvent (IO ())  -- ^ Run external command (suspends/resumes Vty)
+  | StreamStartEvent Int          -- ^ Stream started (stream ID)
+  | StreamChunkEvent Int Int      -- ^ Chunk received (stream ID, total chunks for this stream)
+  | StreamEndEvent Int            -- ^ Stream completed (stream ID)
 
 -- Manual Eq instance (SomeInputWidget can't derive Eq due to callback function)
 instance Eq msg => Eq (AgentEvent msg) where
@@ -67,6 +70,9 @@ instance Eq msg => Eq (AgentEvent msg) where
   ShowInputWidgetEvent _ == ShowInputWidgetEvent _ = False  -- Can't compare functions
   ClearInputWidgetEvent == ClearInputWidgetEvent = True
   RunExternalCommandEvent _ == RunExternalCommandEvent _ = False  -- Can't compare IO actions
+  StreamStartEvent id1 == StreamStartEvent id2 = id1 == id2
+  StreamChunkEvent id1 c1 == StreamChunkEvent id2 c2 = id1 == id2 && c1 == c2
+  StreamEndEvent id1 == StreamEndEvent id2 = id1 == id2
   _ == _ = False
 
 -- Manual Show instance
@@ -78,6 +84,9 @@ instance Show msg => Show (AgentEvent msg) where
   show (ShowInputWidgetEvent _) = "ShowInputWidgetEvent <widget>"
   show ClearInputWidgetEvent = "ClearInputWidgetEvent"
   show (RunExternalCommandEvent _) = "RunExternalCommandEvent <action>"
+  show (StreamStartEvent sid) = "StreamStartEvent " ++ show sid
+  show (StreamChunkEvent sid c) = "StreamChunkEvent " ++ show sid ++ " " ++ show c
+  show (StreamEndEvent sid) = "StreamEndEvent " ++ show sid
 
 -- | Runtime LLM configuration settings
 -- Currently empty but can hold maxLength, reasoning effort, temperature, etc.

@@ -70,6 +70,12 @@ data MarkdownMode = RenderMarkdown | ShowRaw
 -- Parametrized over message type to store typed messages in zipper
 -- The zipper lives here - UI owns the state, interpreters send events to update it
 -- Uses parallel zippers: one for data, one for pre-rendered widgets
+-- | Information about an active LLM stream
+data StreamInfo = StreamInfo
+  { streamId :: Int       -- ^ Stream identifier
+  , chunkCount :: Int     -- ^ Number of chunks received
+  } deriving stock (Eq, Show)
+
 data AppState msg = AppState
   { _uiVars :: UIVars msg                  -- STM queues for communication
   , _outputZipper :: OutputHistoryZipper msg  -- History zipper with typed messages (data)
@@ -82,6 +88,7 @@ data AppState msg = AppState
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
   , _eventChan :: Brick.BChan.BChan (CustomEvent msg)  -- Event channel for sending custom events
   , _llmSettings :: LLMSettings            -- Current LLM settings for display
+  , _activeStreams :: [StreamInfo]         -- Active LLM streams (in order of creation)
   }
 
 --------------------------------------------------------------------------------
@@ -120,6 +127,9 @@ eventChanL = lens _eventChan (\st c -> st { _eventChan = c })
 
 llmSettingsL :: Lens' (AppState msg) LLMSettings
 llmSettingsL = lens _llmSettings (\st s -> st { _llmSettings = s })
+
+activeStreamsL :: Lens' (AppState msg) [StreamInfo]
+activeStreamsL = lens _activeStreams (\st s -> st { _activeStreams = s })
 
 --------------------------------------------------------------------------------
 -- Display Rendering
@@ -160,6 +170,7 @@ runUI mkUIVars = do
         , _lastViewport = Nothing
         , _eventChan = eventChan
         , _llmSettings = LLMSettings  -- Default settings
+        , _activeStreams = []
         }
 
   -- Create vty with bracketed paste enabled
@@ -232,6 +243,14 @@ drawUI st = [indicatorLayer, baseLayer]
     -- Combine widgets: front (oldest) ++ current ++ back (newest at bottom)
     historyWidgets = frontWidgets ++ currentWidgets ++ backWidgets
 
+    -- Active streams widget
+    activeStreamsWidget = if null (_activeStreams st)
+                          then emptyWidget
+                          else vBox $ map renderStream (_activeStreams st)
+      where
+        renderStream si = txt $ "⋯ Stream #" <> Text.pack (show (streamId si))
+                                <> ": " <> Text.pack (show (chunkCount si)) <> " chunks"
+
     statusText = Text.unpack status
 
     -- MessageHistory returns (base, indicators) for Brick's layer system
@@ -256,9 +275,11 @@ drawUI st = [indicatorLayer, baseLayer]
 
             -- Normal input mode
             Nothing ->
-              let historyH = availH - inputHeight - 3  -- -3 for border, status
+              let streamHeight = length (_activeStreams st)
+                  historyH = availH - inputHeight - streamHeight - 3  -- -3 for border, status
                in vBox
                     [ vLimit historyH historyBase
+                    , activeStreamsWidget
                     , hBorder
                     , vLimit inputHeight $
                         renderEditor (vBox . map renderLine) True (_inputEditor st)
@@ -409,6 +430,18 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         M.suspendAndResume $ do
           action
           return currentState  -- Return current state unchanged
+
+      StreamStartEvent sid -> do
+        -- Add new stream to active streams
+        activeStreamsL %= (++ [StreamInfo sid 0])
+
+      StreamChunkEvent sid _ -> do
+        -- Increment chunk count for this stream
+        activeStreamsL %= map (\si -> if streamId si == sid then si { chunkCount = chunkCount si + 1 } else si)
+
+      StreamEndEvent sid -> do
+        -- Remove stream from active streams
+        activeStreamsL %= filter (\si -> streamId si /= sid)
 
   -- After processing the event, scroll viewport and request viewport update
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
