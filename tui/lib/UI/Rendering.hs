@@ -47,9 +47,14 @@ markdownToWidgets = markdownToWidgetsWithIndent 0
 --
 -- On parse errors, returns a single widget with the original text.
 markdownToWidgetsWithIndent :: forall n. Int -> Text -> [Widget n]
-markdownToWidgetsWithIndent baseIndent text = case runPure (readCommonMark readerOpts text) of
-  Right (Pandoc _ blocks) -> renderBlocksHierarchical baseIndent blocks
-  Left _err -> [padLeft (Pad baseIndent) (txt text)]  -- Fallback to plain text on error
+markdownToWidgetsWithIndent baseIndent text =
+  -- Add trailing newline if missing - CommonMark needs it to properly close blocks like tables
+  let textWithNewline = if T.null text || T.last text /= '\n'
+                        then text <> "\n"
+                        else text
+  in case runPure (readCommonMark readerOpts textWithNewline) of
+    Right (Pandoc _ blocks) -> renderBlocksHierarchical baseIndent blocks
+    Left _err -> [padLeft (Pad baseIndent) (txt text)]  -- Fallback to plain text on error
 
 -- | Reader options for markdown parsing
 readerOpts :: ReaderOptions
