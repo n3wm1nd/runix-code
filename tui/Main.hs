@@ -66,7 +66,7 @@ import Runix.LLM.Interpreter (interpretLLMViaStreaming)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
-import UI.OutputHistory (OutputItem(..), listToZipper, addCompletedToolItems, extractMessages)
+import UI.OutputHistory (OutputItem(..), listToZipper, addCompletedToolItems, extractMessages, emptyZipper)
 
 
 --------------------------------------------------------------------------------
@@ -157,6 +157,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       let cmdSet = CommandSet
             { slashCommands = [ echoCommand
                               , reloadCommand historyMessages
+                              , clearCommand
                               , let (name, fn) = ViewCmd.viewCommand historyMessages uiVars
                                 in SlashCommand { commandName = name, commandFn = fn }
                               , let (name, fn) = HistoryCmd.historyCommand historyMessages uiVars
@@ -236,6 +237,13 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
     reloadCommand history = SlashCommand
       { commandName = "reload"
       , commandFn = \_ -> embed $ performReload history
+      }
+
+    -- | Clear command: reset history to empty
+    clearCommand :: forall r. Member (Embed IO) r => SlashCommand r
+    clearCommand = SlashCommand
+      { commandName = "clear"
+      , commandFn = \_ -> embed $ sendAgentEvent uiVars (RestoreSessionEvent emptyZipper)
       }
 
     -- | The default agent command: run runixCode with the user's input
