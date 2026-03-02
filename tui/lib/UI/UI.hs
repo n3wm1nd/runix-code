@@ -266,24 +266,28 @@ drawUI st = [indicatorLayer, baseLayer]
             -- Input widget is active - show it instead of normal input
             Just widget ->
               let (inputPanel, panelHeight) = IP.drawInputPanel widget
-                  historyH = availH - panelHeight - 1  -- -1 for status
+                  historyH = availH - panelHeight - 2  -- -2 for border and status
                in vBox
                     [ vLimit historyH historyBase
                     , inputPanel
-                    , strWrap $ "Status: " ++ statusText ++ " | Input widget active | Esc: cancel"
+                    , hBorder
+                    , renderInputWidgetStatusBar
                     ]
 
             -- Normal input mode
             Nothing ->
               let streamHeight = length (_activeStreams st)
-                  historyH = availH - inputHeight - streamHeight - 3  -- -3 for border, status
+                  historyH = availH - inputHeight - streamHeight - 4  -- -4 for two borders, status
                in vBox
                     [ vLimit historyH historyBase
                     , activeStreamsWidget
                     , hBorder
                     , vLimit inputHeight $
-                        renderEditor (vBox . map renderLine) True (_inputEditor st)
-                    , strWrap $ "Status: " ++ statusText ++ " | " ++ modeStr ++ " | " ++ markdownStr ++ " | \\<Enter>: newline | Ctrl-T: input | Ctrl-R: markdown | Ctrl-C: quit"
+                        renderPrompt status <+>
+                          padLeft (Pad 1) (padRight (Pad 1) $
+                            renderEditor (vBox . map renderLine) True (_inputEditor st))
+                    , hBorder
+                    , renderStatusBar (_inputMode st) (_markdownMode st)
                     ]
       T.render ui
 
@@ -294,6 +298,45 @@ drawUI st = [indicatorLayer, baseLayer]
     renderLine :: String -> T.Widget Name
     renderLine "" = str " "
     renderLine s = str s
+
+    -- Render input prompt with color based on status
+    renderPrompt :: Text -> T.Widget Name
+    renderPrompt status =
+      let promptAttr = if status == "Ready" || status == ""
+                       then Attrs.promptReadyAttr  -- green
+                       else Attrs.promptBusyAttr   -- yellow for pending/working
+      in withAttr promptAttr (txt ">")
+
+    -- Render a structured status bar with colors
+    renderStatusBar :: InputMode -> MarkdownMode -> T.Widget Name
+    renderStatusBar inputMode mdMode =
+      let -- Mode indicators
+          inputModeWidget = case inputMode of
+            EnterSends -> txt "Enter: send"
+            EnterNewline -> txt "Enter: newline"
+
+          mdModeWidget = case mdMode of
+            RenderMarkdown -> txt "markdown"
+            ShowRaw -> txt "raw"
+
+          modesWidget = withAttr Attrs.boldAttr inputModeWidget
+                    <+> txt "  "
+                    <+> withAttr Attrs.boldAttr mdModeWidget
+
+          -- Keybindings section (right side)
+          keybinding key desc = withAttr Attrs.codeAttr (txt key) <+> txt (" " <> desc)
+          keybindings = keybinding "\\Enter" "newline" <+> txt "  "
+                    <+> keybinding "Ctrl-T" "input" <+> txt "  "
+                    <+> keybinding "Ctrl-R" "toggle md" <+> txt "  "
+                    <+> keybinding "Ctrl-C" "quit"
+
+      in modesWidget <+> fill ' ' <+> keybindings
+
+    renderInputWidgetStatusBar :: T.Widget Name
+    renderInputWidgetStatusBar =
+      let inputWidgetLabel = withAttr Attrs.inputPanelLabelAttr (txt "Input Widget Active")
+          keybinding = withAttr Attrs.codeAttr (txt "Esc") <+> txt " cancel"
+      in inputWidgetLabel <+> fill ' ' <+> keybinding
 
 --------------------------------------------------------------------------------
 -- Event Handling

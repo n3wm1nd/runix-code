@@ -25,6 +25,8 @@ module UI.Attributes
   , logErrorAttr
   , focusedItemAttr
   , transparentBgAttr
+  , promptReadyAttr
+  , promptBusyAttr
     -- * Attribute map
   , theMap
   ) where
@@ -68,6 +70,10 @@ focusedItemAttr = attrName "focusedItem"
 transparentBgAttr :: AttrName
 transparentBgAttr = attrName "transparentBg"
 
+promptReadyAttr, promptBusyAttr :: AttrName
+promptReadyAttr = attrName "promptReady"
+promptBusyAttr = attrName "promptBusy"
+
 -- | The attribute map defining all styles
 theMap :: AttrMap
 theMap = attrMap V.defAttr
@@ -94,4 +100,7 @@ theMap = attrMap V.defAttr
   , (focusedItemAttr, V.defAttr `V.withForeColor` V.cyan `V.withBackColor` V.brightBlack)
   -- Transparent background - just use default attr (no background color set)
   , (transparentBgAttr, V.defAttr)
+  -- Prompt indicators - green when ready, gray background with yellow text when busy
+  , (promptReadyAttr, V.defAttr `V.withForeColor` V.green `V.withStyle` V.bold)
+  , (promptBusyAttr, V.defAttr `V.withForeColor` V.yellow `V.withBackColor` V.brightBlack `V.withStyle` V.bold)
   ]
