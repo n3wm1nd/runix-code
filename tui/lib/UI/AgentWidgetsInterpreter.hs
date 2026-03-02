@@ -16,8 +16,8 @@ import Polysemy
 import Polysemy.State (State, put, modify, runState, gets, get)
 import Control.Monad (when)
 
-import UI.AgentWidgets (AgentWidgets(..))
-import UI.OutputHistory (OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, updateCurrent, zipperCurrent)
+import UI.AgentWidgets (AgentWidgets(..), SubsectionAddr(..))
+import UI.OutputHistory (OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, insertItem, moveNewer, updateCurrent, zipperCurrent, countSubtrees, atAddress, queryAtAddress)
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 
 -- | State maintained by AgentWidgets interpreter
@@ -41,35 +41,49 @@ interpretAgentWidgets uiVars sem = do
 
     handler :: AgentWidgets msg (Sem rInitial) x -> Sem (State (AgentWidgetsState msg) : r) x
     handler = \case
-      AddMessage msg -> do
+      AddMessage addr msg -> do
         clearStatusIfPresent
-        modifyZipper (appendItem (MessageItem msg))
+        modifyZipperAt addr (appendItem (MessageItem msg))
         sendUpdate
 
-      LogMessage level text -> do
-        modifyZipper (appendItem (LogItem level text))
+      LogMessage addr level text -> do
+        modifyZipperAt addr (appendItem (LogItem level text))
         sendUpdate
 
-      SetStatus status -> do
-        zipper <- gets @(AgentWidgetsState msg) awsZipper
-        let newZipper = case zipperCurrent zipper of
-              Just (StatusItem _) -> updateCurrent (StatusItem status) zipper
-              _ -> appendItem (StatusItem status) zipper
-        put $ AgentWidgetsState newZipper
+      SetStatus addr status -> do
+        modifyZipperAt addr (\zipper ->
+          case zipperCurrent zipper of
+            Just (StatusItem _) -> updateCurrent (StatusItem status) zipper
+            _ -> appendItem (StatusItem status) zipper
+          )
         sendUpdate
 
-      ReplaceHistory msgs -> do
-        mapM_ (\msg -> modifyZipper (appendItem (MessageItem msg))) msgs
+      ReplaceHistory addr msgs -> do
+        mapM_ (\msg -> modifyZipperAt addr (appendItem (MessageItem msg))) msgs
         sendUpdate
 
-    modifyZipper :: (OutputHistoryZipper msg -> OutputHistoryZipper msg) -> Sem (State (AgentWidgetsState msg) : r) ()
-    modifyZipper f = modify (\s -> s { awsZipper = f (awsZipper s) })
+      StartSubsection addr -> do
+        -- Count existing SectionItems at this address to get the new ID
+        zipper <- gets awsZipper
+        let subsectionId = countSectionsAt addr zipper
+        -- Insert subsection as newer item (into back), then move focus to it
+        modifyZipperAt addr (\z -> moveNewer (insertItem (SectionItem emptyZipper) z))
+        -- Return the new nested address
+        return $ Nested subsectionId addr
+
+    -- Count how many SectionItems exist at a given address
+    countSectionsAt :: SubsectionAddr -> OutputHistoryZipper msg -> Int
+    countSectionsAt addr zipper = queryAtAddress addr countSubtrees zipper
+
+    -- Modify zipper at address using proper zipper operations
+    modifyZipperAt :: SubsectionAddr -> (OutputHistoryZipper msg -> OutputHistoryZipper msg) -> Sem (State (AgentWidgetsState msg) : r) ()
+    modifyZipperAt addr f = modify (\s -> s { awsZipper = atAddress addr f (awsZipper s) })
 
     clearStatusIfPresent :: Sem (State (AgentWidgetsState msg) : r) ()
     clearStatusIfPresent = do
       zipper <- gets @(AgentWidgetsState msg) awsZipper
       case zipperCurrent zipper of
-        Just (StatusItem _) -> modifyZipper removeCurrentItem
+        Just (StatusItem _) -> modify @(AgentWidgetsState msg) (\s -> s { awsZipper = removeCurrentItem (awsZipper s) })
         _ -> return ()
 
     sendUpdate :: Sem (State (AgentWidgetsState msg) : r) ()

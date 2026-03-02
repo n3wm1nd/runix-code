@@ -309,11 +309,12 @@ reRenderWidgetZipper = do
                                       RenderMarkdown -> True
                                       ShowRaw -> False }
       -- Render each OutputItem to Widget Name
+      -- Current item gets isFocused=True for highlight, others get False
       renderZipper (Zipper back current front) =
         Zipper
-          { zipperBack = map (renderItem opts) back
-          , zipperCurrent = fmap (renderItem opts) current
-          , zipperFront = map (renderItem opts) front
+          { zipperBack = map (renderItem opts False) back
+          , zipperCurrent = fmap (renderItem opts True) current
+          , zipperFront = map (renderItem opts False) front
           }
   widgetZipperL .= renderZipper ozipper
 
@@ -383,9 +384,9 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         mode <- use markdownModeL
         let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
             newWidgetZipper = Zipper
-              { zipperBack = fmap (renderItem opts) (zipperBack newZipper)
-              , zipperCurrent = fmap (renderItem opts) (zipperCurrent newZipper)
-              , zipperFront = fmap (renderItem opts) (zipperFront newZipper)
+              { zipperBack = fmap (renderItem opts False) (zipperBack newZipper)
+              , zipperCurrent = fmap (renderItem opts True) (zipperCurrent newZipper)
+              , zipperFront = fmap (renderItem opts False) (zipperFront newZipper)
               }
         outputZipperL .= newZipper
         widgetZipperL .= newWidgetZipper
@@ -400,7 +401,7 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
             newItem = MessageItem msg
         outputZipperL %= appendItem newItem
-        widgetZipperL %= appendItem (renderItem opts newItem)
+        widgetZipperL %= appendItem (renderItem opts True newItem)
         invalidateCacheEntry CachedFront
         invalidateCacheEntry CachedCurrent
 
@@ -414,7 +415,7 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
             newItem = LogItem level text
         outputZipperL %= appendItem newItem
-        widgetZipperL %= appendItem (renderItem opts newItem)
+        widgetZipperL %= appendItem (renderItem opts True newItem)
         invalidateCacheEntry CachedFront
         invalidateCacheEntry CachedCurrent
 

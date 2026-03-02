@@ -10,16 +10,23 @@ module UI.AgentWidgets
   ( AgentWidgets(..)
   , AgentStatus(..)
   , StreamingState(..)
+  , SubsectionAddr(..)
   , addMessage
   , logMessage
   , setStatus
   , replaceHistory
+  , startSubsection
   ) where
 
 import Polysemy
 import Data.Kind (Type)
 import Data.Text (Text)
 import Runix.Logging (Level)
+
+-- | Hierarchical address for subsections in the zipper tree
+-- () = root, (n, addr) = nth subsection at addr
+data SubsectionAddr = Root | Nested Int SubsectionAddr
+  deriving stock (Eq, Show, Ord)
 
 -- | Agent execution status (includes streaming state)
 data AgentStatus
@@ -41,32 +48,36 @@ data StreamingState = StreamingState
 -- | Effect for outputting to agent widgets
 --
 -- Semantic operations that abstract away the storage format:
--- - AddMessage: add a message to history (user or agent)
--- - LogMessage: add a log entry
--- - SetStatus: update agent status (includes streaming)
--- - ReplaceHistory: merge new message history (preserves logs, subsections)
+-- All operations take a SubsectionAddr to specify where in the zipper tree they operate.
 data AgentWidgets msg (m :: Type -> Type) a where
-  -- | Add a message to the history
-  AddMessage :: msg -> AgentWidgets msg m ()
+  -- | Add a message to the history at the given address
+  AddMessage :: SubsectionAddr -> msg -> AgentWidgets msg m ()
 
-  -- | Add a log message with severity level
-  LogMessage :: Level -> Text -> AgentWidgets msg m ()
+  -- | Add a log message with severity level at the given address
+  LogMessage :: SubsectionAddr -> Level -> Text -> AgentWidgets msg m ()
 
-  -- | Set agent status (includes streaming state)
-  SetStatus :: AgentStatus -> AgentWidgets msg m ()
+  -- | Set agent status at the given address (includes streaming state)
+  SetStatus :: SubsectionAddr -> AgentStatus -> AgentWidgets msg m ()
 
-  -- | Replace message history (merges, preserving logs and subsections)
-  ReplaceHistory :: [msg] -> AgentWidgets msg m ()
+  -- | Replace message history at the given address (merges, preserving logs and subsections)
+  ReplaceHistory :: SubsectionAddr -> [msg] -> AgentWidgets msg m ()
+
+  -- | Start a new subsection at the given address, returns the new subsection's address
+  StartSubsection :: SubsectionAddr -> AgentWidgets msg m SubsectionAddr
 
 -- | Smart constructors for AgentWidgets operations
+-- These default to Root address for backward compatibility
 addMessage :: forall msg r. Member (AgentWidgets msg) r => msg -> Sem r ()
-addMessage msg = send @(AgentWidgets msg) (AddMessage msg)
+addMessage msg = send @(AgentWidgets msg) (AddMessage Root msg)
 
 logMessage :: forall msg r. Member (AgentWidgets msg) r => Level -> Text -> Sem r ()
-logMessage level text = send @(AgentWidgets msg) (LogMessage level text)
+logMessage level text = send @(AgentWidgets msg) (LogMessage Root level text)
 
 setStatus :: forall msg r. Member (AgentWidgets msg) r => AgentStatus -> Sem r ()
-setStatus status = send @(AgentWidgets msg) (SetStatus status)
+setStatus status = send @(AgentWidgets msg) (SetStatus Root status)
 
 replaceHistory :: forall msg r. Member (AgentWidgets msg) r => [msg] -> Sem r ()
-replaceHistory msgs = send @(AgentWidgets msg) (ReplaceHistory msgs)
+replaceHistory msgs = send @(AgentWidgets msg) (ReplaceHistory Root msgs)
+
+startSubsection :: forall msg r. Member (AgentWidgets msg) r => SubsectionAddr -> Sem r SubsectionAddr
+startSubsection addr = send @(AgentWidgets msg) (StartSubsection addr)

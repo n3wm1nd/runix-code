@@ -27,13 +27,14 @@ module UI.UserInterface
   ) where
 
 import Polysemy
+import Polysemy.State (State, get, put, evalState)
 import Polysemy.Fail (Fail(..))
 import qualified Data.Text as T
 
 import Runix.LLM (LLM(..))
 import Runix.Logging (Logging(..))
 import UniversalLLM (Message)
-import UI.AgentWidgets (AgentWidgets(..), AgentStatus(..), addMessage, logMessage, setStatus, replaceHistory)
+import UI.AgentWidgets (AgentWidgets(..), AgentStatus(..), SubsectionAddr(..), addMessage, logMessage, setStatus, replaceHistory, startSubsection)
 
 -- | Interpret LLM, Logging, and inner AgentWidgets effects as AgentWidgets operations
 --
@@ -45,29 +46,42 @@ interpretAsWidget
      , Member (LLM model) r
      , Member Fail r
      )
-  => Sem (AgentWidgets (Message model) : Logging : LLM model : r) a
+  => Sem (Logging : LLM model : AgentWidgets (Message model) : r) a
   -> Sem r a
 interpretAsWidget =
   -- Composition: each interpreter removes one effect from the stack
+  -- IMPORTANT: interpretAgentWidgetsAsSubsection must come FIRST (closest to action)
+  -- so that it intercepts operations from interceptLLMToWidgets and interpretLoggingToAgentWidgets
   interpretFail @model
+  . interpretAgentWidgetsAsSubsection @model
   . interceptLLMToWidgets @model
   . interpretLoggingToAgentWidgets @model
-  . interpretAgentWidgetsAsSubsection @model
 
--- | Intercept AgentWidgets operations and wrap each in withSubAgent
--- | Pass through AgentWidgets operations (no subsection wrapping for now)
--- TODO: Implement subsection wrapping via a different mechanism
+-- | Intercept AgentWidgets operations and route them into a subsection
+-- Creates a subsection, runs action with operations routed to that subsection address
 interpretAgentWidgetsAsSubsection
   :: forall model r a.
      Member (AgentWidgets (Message model)) r
   => Sem (AgentWidgets (Message model) : r) a
   -> Sem r a
-interpretAgentWidgetsAsSubsection = interpret $ \case
-  -- Just forward each operation to the parent AgentWidgets
-  AddMessage msg -> addMessage @(Message model) msg
-  LogMessage level text -> logMessage @(Message model) level text
-  SetStatus status -> setStatus @(Message model) status
-  ReplaceHistory msgs -> replaceHistory @(Message model) msgs
+interpretAgentWidgetsAsSubsection action = do
+  -- Start a new subsection at root, get its address
+  subsectionAddr <- startSubsection @(Message model) Root
+
+  -- Intercept all AgentWidgets operations and redirect them to the subsection address
+  interpret (\case
+      AddMessage _oldAddr msg ->
+        send @(AgentWidgets (Message model)) (AddMessage subsectionAddr msg)
+      LogMessage _oldAddr level text ->
+        send @(AgentWidgets (Message model)) (LogMessage subsectionAddr level text)
+      SetStatus _oldAddr status ->
+        send @(AgentWidgets (Message model)) (SetStatus subsectionAddr status)
+      ReplaceHistory _oldAddr msgs ->
+        send @(AgentWidgets (Message model)) (ReplaceHistory subsectionAddr msgs)
+      StartSubsection _oldAddr ->
+        -- Nested subsection: start it relative to our subsection
+        send @(AgentWidgets (Message model)) (StartSubsection subsectionAddr)
+    ) action
 
 -- | Interpret Logging as AgentWidgets operations
 interpretLoggingToAgentWidgets

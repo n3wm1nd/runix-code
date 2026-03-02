@@ -26,12 +26,20 @@ module UI.OutputHistory
   , insertItem
   , updateCurrent
   , appendItem
+  , appendItemAndFocus
   , extractMessages
+  , onRewoundZipper
+  , onForwardUntil
+  , onNthSubtree
+  , countSubtrees
+  , atAddress
+  , queryAtAddress
     -- * Filters
   , defaultFilter
   , shouldDisplay
     -- * Rendering
   , renderItem
+  , renderZipper
     -- * Merge logic
   , mergeOutputMessages
   , mergeEditedMessages
@@ -56,9 +64,9 @@ import Data.Text (Text)
 import qualified Data.Text as T
 import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
 import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
-import UI.AgentWidgets (AgentStatus(..), StreamingState(..))
+import UI.AgentWidgets (AgentStatus(..), StreamingState(..), SubsectionAddr(..))
 import Brick.Types (Widget)
-import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr)
+import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), (<=>), vBox, withAttr, emptyWidget, fill)
 import Brick.Widgets.Core (Padding(..))
 import Runix.Logging (Level(..))
 import UniversalLLM (Message(..), ToolCall(..), ToolResult(..))
@@ -181,6 +189,15 @@ appendItem item (Zipper back current front) =
         Just c -> c : front
   in Zipper back (Just item) front'
 
+-- | Add a new item as current, moving the old current to back (keeps focus on new item)
+-- Use this when you want to immediately work with the newly added item
+appendItemAndFocus :: a -> Zipper a -> Zipper a
+appendItemAndFocus item (Zipper back current front) =
+  let back' = case current of
+        Nothing -> back
+        Just c -> c : back
+  in Zipper back' (Just item) front
+
 -- | Extract typed messages from zipper (filters out logs, streaming, etc.)
 -- Recurses into SectionItems to find nested messages.
 -- Returns messages in oldest-first order (ready to pass to agent)
@@ -193,26 +210,166 @@ extractMessages zipper =
     extractFromItem (SectionItem subZipper) = extractMessages subZipper
     extractFromItem _ = []
 
+-- | Run an operation on a rewound zipper, then restore focus
+-- Recursively rewinds to oldest, applies operation, then moves forward same number of steps
+onRewoundZipper :: (Zipper a -> Zipper a) -> Zipper a -> Zipper a
+onRewoundZipper f zipper =
+  case zipperFront zipper of
+    [] -> f zipper  -- Already at oldest, apply operation
+    _ ->
+      let rewound = moveOlder zipper           -- Step back one
+          modified = onRewoundZipper f rewound -- Recurse (goes all the way back)
+          restored = moveNewer modified        -- Step forward one (as stack unwinds)
+      in restored
+
+-- | Move forward until condition on element is met, apply operation, then restore position
+-- Recursively moves forward, checking condition on current element, then restores on unwind
+onForwardUntil :: (a -> Bool) -> (Zipper a -> Zipper a) -> Zipper a -> Zipper a
+onForwardUntil condition f zipper =
+  case zipperCurrent zipper of
+    Nothing -> zipper  -- End of zipper, condition never met
+    Just elem
+      | condition elem -> f zipper  -- Condition met on current element
+      | otherwise ->
+          case zipperBack zipper of
+            [] -> zipper  -- No newer items, can't move forward, give up
+            _ ->
+              let forward = moveNewer zipper
+                  modified = onForwardUntil condition f forward
+                  restored = moveOlder modified
+              in restored
+
+-- | Apply operation on the nth SectionItem's inner zipper (counting from oldest/front)
+-- Must be called within onRewoundZipper to start from the beginning
+onNthSubtree :: Int -> (Zipper (OutputItem msg) -> Zipper (OutputItem msg)) -> Zipper (OutputItem msg) -> Zipper (OutputItem msg)
+onNthSubtree targetIdx f zipper
+  | targetIdx < 0 = zipper  -- Invalid index, no-op
+  | otherwise = case zipperCurrent zipper of
+      Just (SectionItem subZipper)
+        | targetIdx == 0 ->
+            -- Found the target subsection, apply operation
+            updateCurrent (SectionItem (f subZipper)) zipper
+        | otherwise ->
+            -- This is a subsection but not the target, keep searching
+            onNthSubtree (targetIdx - 1) f (moveNewer zipper)
+      Just _ ->
+        -- Not a subsection, keep searching forward
+        onNthSubtree targetIdx f (moveNewer zipper)
+      Nothing ->
+        -- End of zipper, subsection not found
+        zipper
+
+-- | Count SectionItems in entire zipper (all of back, current, and front)
+countSubtrees :: Zipper (OutputItem msg) -> Int
+countSubtrees (Zipper back current front) =
+  let countInList = length . filter isSectionItem
+      isSectionItem (SectionItem _) = True
+      isSectionItem _ = False
+      backCount = countInList back
+      currentCount = case current of
+        Just (SectionItem _) -> 1
+        _ -> 0
+      frontCount = countInList front
+  in backCount + currentCount + frontCount
+
+-- | Apply operation at a hierarchical address in the zipper tree (modify)
+-- Preserves cursor position by rewinding, modifying, then restoring
+atAddress :: SubsectionAddr -> (Zipper (OutputItem msg) -> Zipper (OutputItem msg)) -> Zipper (OutputItem msg) -> Zipper (OutputItem msg)
+atAddress Root f zipper = f zipper
+atAddress (Nested idx parent) f zipper =
+  -- Recurse to parent address, then within parent navigate to idx'th subsection
+  atAddress parent (\parentZipper ->
+    onRewoundZipper (findAndModify idx) parentZipper
+  ) zipper
+  where
+    -- Find the idx'th SectionItem (counting from oldest) and apply f to its inner zipper
+    findAndModify n z = case zipperCurrent z of
+      Just (SectionItem subZipper)
+        | n == 0 ->
+            -- Found the target! Apply f to its inner zipper
+            updateCurrent (SectionItem (f subZipper)) z
+        | otherwise ->
+            -- This is a SectionItem but not the target, keep going
+            case zipperBack z of
+              [] -> z  -- Can't move forward, give up
+              _ -> findAndModify (n - 1) (moveNewer z)
+      Just _ ->
+        -- Not a SectionItem, skip it
+        case zipperBack z of
+          [] -> z  -- Can't move forward, give up
+          _ -> findAndModify n (moveNewer z)
+      Nothing ->
+        -- End of zipper, couldn't find it
+        z
+
+-- | Query at a hierarchical address in the zipper tree (read-only)
+-- Returns a value extracted from the zipper at that address
+queryAtAddress :: SubsectionAddr -> (Zipper (OutputItem msg) -> a) -> Zipper (OutputItem msg) -> a
+queryAtAddress Root f zipper = f zipper
+queryAtAddress (Nested idx parent) f zipper =
+  -- Recurse to parent address, then within parent navigate to idx'th subsection
+  queryAtAddress parent (\parentZipper ->
+    skipAndQuery idx (focusOldest parentZipper)
+  ) zipper
+  where
+    -- Skip to the idx'th SectionItem and query its inner zipper
+    -- This doesn't modify the zipper, just extracts a value
+    skipAndQuery n z = case zipperCurrent z of
+      Just (SectionItem subZipper)
+        | n == 0 -> f subZipper  -- Found it!
+        | otherwise ->
+            case zipperBack z of
+              [] -> error "Invalid address: subsection not found (end of zipper)"
+              _ -> skipAndQuery (n - 1) (moveNewer z)
+      Just _ ->
+        case zipperBack z of
+          [] -> error "Invalid address: subsection not found (no more items)"
+          _ -> skipAndQuery n (moveNewer z)
+      Nothing -> error "Invalid address: subsection not found (empty)"
+
 --------------------------------------------------------------------------------
 -- Rendering Functions
 --------------------------------------------------------------------------------
 
+-- | Render an entire output history zipper with focus markers
+-- This is the main rendering function that handles front/current/back and focus
+renderZipper :: forall model n. RenderOptions -> OutputHistoryZipper (Message model) -> Widget n
+renderZipper opts zipper =
+  let -- Render front (older items, reversed for chronological order)
+      frontWidgets = case reverse (zipperFront zipper) of
+        [] -> emptyWidget
+        items -> vBox $ map (renderItem opts False) items
+      -- Render current (focused item with highlighted indicator)
+      currentWidget = case zipperCurrent zipper of
+        Nothing -> emptyWidget
+        Just item -> renderItem opts True item
+      -- Render back (newer items, reversed for chronological order)
+      backWidgets = case reverse (zipperBack zipper) of
+        [] -> emptyWidget
+        items -> vBox $ map (renderItem opts False) items
+  in vBox [frontWidgets, currentWidget, backWidgets]
+
 -- | Render an OutputItem with optional markdown formatting
 -- Pattern matches directly on Message constructors to determine rendering
 -- Only UserText, AssistantText, AssistantReasoning, and streaming items use markdown when enabled
-renderItem :: forall model n. RenderOptions -> OutputItem (Message model) -> Widget n
-renderItem opts item = vBox $ case item of
+-- The isFocused parameter highlights the message type indicator when True
+renderItem :: forall model n. RenderOptions -> Bool -> OutputItem (Message model) -> Widget n
+renderItem opts isFocused item =
+  let focusMarker marker = if isFocused
+                           then withAttr logInfoAttr (txt marker)
+                           else txt marker
+  in vBox $ case item of
   -- User messages
   MessageItem (UserText text) ->
-    [txt " ", renderContentWithMarker "<" text, txt " "]
+    [txt " ", renderContentWithMarker (focusMarker "<") text, txt " "]
 
   -- Assistant text
   MessageItem (AssistantText text) ->
-    [txt " ", renderContentWithMarker ">" text, txt " "]
+    [txt " ", renderContentWithMarker (focusMarker ">") text, txt " "]
 
   -- Assistant reasoning
   MessageItem (AssistantReasoning text) ->
-    [txt " ", renderContentWithMarker "?" text, txt " "]
+    [txt " ", renderContentWithMarker (focusMarker "?") text, txt " "]
 
   -- Tool calls: Don't render - they're shown via CompletedToolItem
   MessageItem (AssistantTool _toolCall) ->
@@ -255,10 +412,10 @@ renderItem opts item = vBox $ case item of
       Streaming state ->
         let thinkingWidget = case streamingThinking state of
               Nothing -> []
-              Just t -> [renderContentWithMarker "~" t]
+              Just t -> [renderContentWithMarker (focusMarker "~") t]
             responseWidget = case streamingResponse state of
               Nothing -> []
-              Just r -> [renderContentWithMarker "}" r]
+              Just r -> [renderContentWithMarker (focusMarker "}") r]
         in thinkingWidget ++ responseWidget
       WaitingForInput -> [txt "⋯ Waiting for input"]
       WaitingForToolCall -> [txt "⋯ Waiting for tool call"]
@@ -281,27 +438,22 @@ renderItem opts item = vBox $ case item of
   CompletedToolItem _ _ ->
     [txt "T [Invalid tool item]"]
 
-  -- Section: render sub-items recursively with indentation
-  -- zipperToList returns newest-first; reverse for chronological order
+  -- Section: render subzipper recursively (same as root zipper, but indented)
   SectionItem subZipper ->
-    let subItems = reverse (zipperToList subZipper)
-        subWidgets = map (renderItem opts) subItems
-    in case subWidgets of
-         [] -> []
-         ws -> [padLeft (Pad 1) (vBox ws)]
+    [padLeft (Pad 1) (renderZipper opts subZipper)]
 
   where
     useMd = useMarkdown opts
 
     -- Render content with a marker on the first line
-    renderContentWithMarker :: Text -> Text -> Widget n
+    renderContentWithMarker :: Widget n -> Text -> Widget n
     renderContentWithMarker marker text =
       let content = if useMd
                     then markdownToWidgetsWithIndent 0 text
                     else [txtWrap text]
       in case content of
-           [] -> txt marker <+> txt " "
-           (firstLine:rest) -> vBox $ (txt marker <+> txt " " <+> firstLine) : map (padLeft (Pad 2)) rest
+           [] -> marker <+> txt " "
+           (firstLine:rest) -> vBox $ (marker <+> txt " " <+> firstLine) : map (padLeft (Pad 2)) rest
 
     -- Render a completed tool call with nice formatting
     renderCompletedTool :: ToolCall -> ToolResult -> [Widget n]

@@ -228,14 +228,15 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
         (do -- Use default configs (no streaming)
             let baseConfigs = defaultConfigs @model
 
+            -- Add user message BEFORE entering subsection (so it's at root level)
+            addMessage @(Message model) (UserText userText)
+
             -- Run agent (with widget isolation via interpretAsWidget)
             _result <- runConfig baseConfigs
                      . runHistory history
                      . interpretAsWidget @model
                      $ do
-                        -- Add new user message (history is already in the output zipper)
-                        addMessage @(Message model) (UserText userText)
-                        -- Run the agent
+                        -- Run the agent (user message already added above)
                         runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
             -- Signal completion so UI updates status
             embed $ sendAgentEvent uiVars (AgentCompleteEvent [])

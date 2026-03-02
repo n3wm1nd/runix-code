@@ -6,6 +6,7 @@ import qualified RegistrySpec
 import qualified MCPSpec
 import qualified PlaywrightSpec
 import qualified UserInterfaceSpec
+import qualified ZipperSpec
 
 main :: IO ()
 main = hspec $ do
@@ -14,3 +15,4 @@ main = hspec $ do
   describe "MCP" MCPSpec.spec
   describe "Playwright" PlaywrightSpec.spec
   describe "UserInterface" UserInterfaceSpec.spec
+  describe "Zipper" ZipperSpec.spec

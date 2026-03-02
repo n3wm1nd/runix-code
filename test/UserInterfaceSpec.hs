@@ -12,7 +12,7 @@ import Polysemy.State (runState, get, put)
 
 import Runix.LLM (LLM(..))
 import Runix.Logging (Logging(..))
-import UI.AgentWidgets (AgentWidgets(..), AgentStatus(..))
+import UI.AgentWidgets (AgentWidgets(..), AgentStatus(..), SubsectionAddr(..))
 import UI.UserInterface (interpretAsWidget)
 import Polysemy.Fail (Fail, runFail)
 import UniversalLLM (Message(..))
@@ -24,14 +24,15 @@ spec = describe "interpretAsWidget" $ do
     -- Collect AgentWidgets outputs
     let collectOutputs :: Sem (AgentWidgets (Message String) : r) a -> Sem r (([AgentStatus], [Message String]), a)
         collectOutputs = runState ([], []) . reinterpret (\case
-          AddMessage msg -> do
+          AddMessage _addr msg -> do
             (statuses, msgs) <- get @([AgentStatus], [Message String])
             put (statuses, msgs ++ [msg])
-          LogMessage _ _ -> return ()
-          SetStatus status -> do
+          LogMessage _addr _ _ -> return ()
+          SetStatus _addr status -> do
             (statuses, msgs) <- get @([AgentStatus], [Message String])
             put (statuses ++ [status], msgs)
-          ReplaceHistory _ -> return ()
+          ReplaceHistory _addr _ -> return ()
+          StartSubsection _addr -> return Root  -- Mock subsection creation
           )
 
     -- Mock LLM that returns a simple response
