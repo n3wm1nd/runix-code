@@ -53,6 +53,7 @@ data AgentEvent msg
   = ZipperUpdateEvent (Zipper (OutputItem msg))  -- ^ Full zipper update from agent
   | UserMessageEvent msg          -- ^ User message received (before agent processes it)
   | AgentCompleteEvent [msg]      -- ^ Agent completed with new messages
+  | RestoreSessionEvent (Zipper (OutputItem msg))  -- ^ Restore session (UI only, doesn't affect AgentWidgets)
   | LogEvent Level Text           -- ^ Log event (for UI infrastructure, not agent output)
   | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
   | ClearInputWidgetEvent         -- ^ Clear the current input widget
@@ -66,6 +67,7 @@ instance Eq msg => Eq (AgentEvent msg) where
   ZipperUpdateEvent z1 == ZipperUpdateEvent z2 = z1 == z2
   UserMessageEvent m1 == UserMessageEvent m2 = m1 == m2
   AgentCompleteEvent ms1 == AgentCompleteEvent ms2 = ms1 == ms2
+  RestoreSessionEvent z1 == RestoreSessionEvent z2 = z1 == z2
   LogEvent l1 t1 == LogEvent l2 t2 = l1 == l2 && t1 == t2
   ShowInputWidgetEvent _ == ShowInputWidgetEvent _ = False  -- Can't compare functions
   ClearInputWidgetEvent == ClearInputWidgetEvent = True
@@ -80,6 +82,7 @@ instance Show msg => Show (AgentEvent msg) where
   show (ZipperUpdateEvent _) = "ZipperUpdateEvent <zipper>"
   show (UserMessageEvent m) = "UserMessageEvent " ++ show m
   show (AgentCompleteEvent ms) = "AgentCompleteEvent " ++ show ms
+  show (RestoreSessionEvent _) = "RestoreSessionEvent <zipper>"
   show (LogEvent l t) = "LogEvent " ++ show l ++ " " ++ show t
   show (ShowInputWidgetEvent _) = "ShowInputWidgetEvent <widget>"
   show ClearInputWidgetEvent = "ClearInputWidgetEvent"

@@ -418,6 +418,15 @@ reRenderWidgetZipper = do
           }
   widgetZipperL .= renderZipper ozipper
 
+-- | Replace output zipper, re-render widgets, and invalidate caches
+replaceOutputZipper :: Zipper (OutputItem (Message model)) -> T.EventM Name (AppState (Message model)) ()
+replaceOutputZipper zipper = do
+  outputZipperL .= zipper
+  reRenderWidgetZipper
+  invalidateCacheEntry CachedFront
+  invalidateCacheEntry CachedCurrent
+  invalidateCacheEntry CachedBack
+
 handleEvent :: forall model. Eq (Message model) => T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
 -- Check if input widget is active first
 handleEvent ev = do
@@ -481,19 +490,7 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
   case event of
       ZipperUpdateEvent newZipper -> do
         -- Replace zipper with agent's updated version
-        mode <- use markdownModeL
-        let opts = defaultRenderOptions { useMarkdown = case mode of RenderMarkdown -> True; ShowRaw -> False }
-            newWidgetZipper = Zipper
-              { zipperBack = fmap (renderItem opts False) (zipperBack newZipper)
-              , zipperCurrent = fmap (renderItem opts True) (zipperCurrent newZipper)
-              , zipperFront = fmap (renderItem opts False) (zipperFront newZipper)
-              }
-        outputZipperL .= newZipper
-        widgetZipperL .= newWidgetZipper
-        -- Invalidate all caches since the zipper changed
-        invalidateCacheEntry CachedFront
-        invalidateCacheEntry CachedCurrent
-        invalidateCacheEntry CachedBack
+        replaceOutputZipper newZipper
 
       UserMessageEvent msg -> do
         -- Add user message as new current
@@ -508,6 +505,10 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
       AgentCompleteEvent _msgs -> do
         -- Agent completed, update status
         statusL .= Text.pack "Ready"
+
+      RestoreSessionEvent zipper -> do
+        -- Restore session: update UI zipper and re-render
+        replaceOutputZipper zipper
 
       LogEvent level text -> do
         -- UI infrastructure logs (not agent output)

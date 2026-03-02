@@ -66,6 +66,7 @@ import Runix.LLM.Interpreter (interpretLLMViaStreaming)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
+import UI.OutputHistory (OutputItem(..), listToZipper, addCompletedToolItems)
 
 
 --------------------------------------------------------------------------------
@@ -152,6 +153,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       -- Build command set with current settings and history
       let cmdSet = CommandSet
             { slashCommands = [ echoCommand
+                              , reloadCommand currentHistory
                               , let (name, fn) = ViewCmd.viewCommand currentHistory uiVars
                                 in SlashCommand { commandName = name, commandFn = fn }
                               , let (name, fn) = HistoryCmd.historyCommand currentHistory uiVars
@@ -170,6 +172,29 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       -- Check if executable has been modified and reload if necessary
       embed $ checkAndReloadOnChange currentHistory
 
+    -- | Perform reload: save session and exec new binary
+    -- TODO: This is lossy - should save full OutputHistory (with tool calls, streaming state, etc)
+    -- not just Message history. For now, reload only preserves conversation messages.
+    performReload :: [Message model] -> IO ()
+    performReload history = do
+      let sessionFile = "/tmp/runix-code-session.json"
+
+      -- Use the effect stack to save session (loggingNull: Brick owns stdout)
+      let runSave = runM . runError @String . loggingNull . failLog
+                  . Runix.FileSystem.Simple.filesystemIO
+      result <- runSave $ miSaveSession sessionFile history
+
+      case result of
+        Left err -> do
+          -- Failed to save session - log error but don't reload
+          sendAgentEvent uiVars (LogEvent Error (T.pack $ "Failed to save session for reload: " ++ err))
+        Right () -> do
+          -- Successfully saved - exec new binary via UI event (so Brick can suspend first)
+          sendAgentEvent uiVars (RunExternalCommandEvent $ do
+            executeFile exePath False ["--resume-session", sessionFile] Nothing
+            -- Never returns!
+            )
+
     -- | Check if executable has changed and reload if so
     checkAndReloadOnChange :: [Message model] -> IO ()
     checkAndReloadOnChange history = do
@@ -178,27 +203,8 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       let currentMTime = fromIntegral $ fromEnum $ modificationTime stat
 
       -- Check if executable has been modified (compare to initial mtime from startup)
-      when (currentMTime /= initialMTime) $ do
-        -- Save current session
-        -- TODO: This is lossy - should save full OutputHistory (with tool calls, streaming state, etc)
-        -- not just Message history. For now, reload only preserves conversation messages.
-        let sessionFile = "/tmp/runix-code-session.json"
-
-        -- Use the effect stack to save session (loggingNull: Brick owns stdout)
-        let runSave = runM . runError @String . loggingNull . failLog
-                    . Runix.FileSystem.Simple.filesystemIO
-        result <- runSave $ miSaveSession sessionFile history
-
-        case result of
-          Left err -> do
-            -- Failed to save session - log error but don't reload
-            sendAgentEvent uiVars (LogEvent Error (T.pack $ "Failed to save session for reload: " ++ err))
-          Right () -> do
-            -- Successfully saved - exec new binary via UI event (so Brick can suspend first)
-            sendAgentEvent uiVars (RunExternalCommandEvent $ do
-              executeFile exePath False ["--resume-session", sessionFile] Nothing
-              -- Never returns!
-              )
+      when (currentMTime /= initialMTime) $
+        performReload history
 
     -- | Dispatch user input to the appropriate command
     -- | Checks if input starts with "/" and matches a slash command,
@@ -220,6 +226,13 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
     echoCommand = SlashCommand
       { commandName = "echo"
       , commandFn = \text -> info $ "Echo: " <> text
+      }
+
+    -- | Reload command: save session and restart with new binary
+    reloadCommand :: forall r. Member (Embed IO) r => [Message model] -> SlashCommand r
+    reloadCommand history = SlashCommand
+      { commandName = "reload"
+      , commandFn = \_ -> embed $ performReload history
       }
 
     -- | The default agent command: run runixCode with the user's input
@@ -280,9 +293,13 @@ buildUIRunner interpretModelStreaming miLoadSession miSaveSession maybeSessionPa
         Right msgs -> do
           -- Log successful reload
           sendAgentEvent uiVars (LogEvent Info (T.pack $ "Code reloaded - session restored with " ++ show (length msgs) ++ " messages"))
-          -- Send loaded history to UI so it displays the messages
-          when (not $ null msgs) $
-            sendAgentEvent uiVars (AgentCompleteEvent msgs)
+          -- Convert messages to OutputItems and create zipper
+          -- Send RestoreSessionEvent (not ZipperUpdateEvent) so AgentWidgets state isn't affected
+          when (not $ null msgs) $ do
+            let items = map MessageItem (reverse msgs)  -- msgs is oldest-first, zipper needs newest-first
+                itemsWithTools = addCompletedToolItems items
+                zipper = listToZipper itemsWithTools
+            sendAgentEvent uiVars (RestoreSessionEvent zipper)
         Left err -> do
           sendAgentEvent uiVars (LogEvent Error (T.pack $ "Failed to load session: " ++ err))
     Nothing -> return ()
@@ -326,7 +343,7 @@ buildUIRunner interpretModelStreaming miLoadSession miSaveSession maybeSessionPa
 
 
 
-interpretTUIEffects ::
+interpretTUIEffects :: forall msg r a.
   (Member (Error String) r, Member (Embed IO) r) =>
   FilePath ->
   RunixDataDir ->
