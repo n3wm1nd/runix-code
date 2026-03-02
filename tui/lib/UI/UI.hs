@@ -29,13 +29,13 @@ import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
 import qualified Data.Text as Text
 import Data.Text (Text)
-import Data.Text.Zipper (cursorPosition, breakLine, deletePrevChar)
+import Data.Text.Zipper (TextZipper, cursorPosition, breakLine, deletePrevChar, moveLeft, moveRight, getText, currentLine)
 import Lens.Micro
 import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (when, void)
 import Control.Concurrent.STM
-import Data.List (intersperse)
+import Data.List (intersperse, dropWhileEnd)
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
@@ -194,6 +194,63 @@ app = M.App
   , M.appAttrMap = const Attrs.theMap
   , M.appChooseCursor = M.showFirstCursor
   }
+
+--------------------------------------------------------------------------------
+-- Editor Helper Functions
+--------------------------------------------------------------------------------
+
+-- | Delete the word before the cursor (Ctrl-W behavior)
+deleteWordBackwards :: Editor String Name -> Editor String Name
+deleteWordBackwards ed =
+  let z = ed ^. editContentsL
+      (row, col) = cursorPosition z
+      currentLine = case drop row (getEditContents ed) of
+                      (line:_) -> line
+                      [] -> ""
+      -- Find the start of the word (skip back over non-whitespace, then over whitespace)
+      beforeCursor = take col currentLine
+      -- Skip trailing whitespace
+      afterWhitespace = dropWhileEnd (== ' ') beforeCursor
+      -- Skip the word
+      afterWord = dropWhileEnd (/= ' ') afterWhitespace
+      newCol = length afterWord
+      charsToDelete = col - newCol
+      -- Delete that many characters
+      z' = iterate deletePrevChar z !! charsToDelete
+  in ed & editContentsL .~ z'
+
+-- | Move cursor backwards by one word (Ctrl-Left behavior)
+-- Works on TextZipper, can be used with applyEdit
+moveWordBackwards :: TextZipper String -> TextZipper String
+moveWordBackwards z =
+  let (_row, col) = cursorPosition z
+      line = currentLine z
+      beforeCursor = take col line
+      -- Skip trailing whitespace
+      afterWhitespace = dropWhileEnd (== ' ') beforeCursor
+      -- Skip the word
+      afterWord = dropWhileEnd (/= ' ') afterWhitespace
+      newCol = length afterWord
+      charsToMove = col - newCol
+  in applyN charsToMove moveLeft z
+  where
+    applyN n f x = iterate f x !! max 0 n
+
+-- | Move cursor forwards by one word (Ctrl-Right behavior)
+-- Works on TextZipper, can be used with applyEdit
+moveWordForwards :: TextZipper String -> TextZipper String
+moveWordForwards z =
+  let (_row, col) = cursorPosition z
+      line = currentLine z
+      afterCursor = drop col line
+      -- Skip whitespace
+      afterWhitespace = dropWhile (== ' ') afterCursor
+      -- Skip the word
+      afterWord = dropWhile (/= ' ') afterWhitespace
+      charsToMove = length afterCursor - length afterWord
+  in applyN charsToMove moveRight z
+  where
+    applyN n f x = iterate f x !! max 0 n
 
 --------------------------------------------------------------------------------
 -- UI Rendering
@@ -601,6 +658,26 @@ handleNormalEvent (T.VtyEvent (V.EvKey V.KEnter [])) = do
 -- Shift-Enter also inserts newline for terminals that support it
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEnter [V.MShift])) = do
   zoom inputEditorL $ handleEditorEvent (T.VtyEvent (V.EvKey V.KEnter []))
+
+-- Ctrl-W: Delete word backwards
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'w') [V.MCtrl])) = do
+  inputEditorL %= deleteWordBackwards
+
+-- Ctrl-Left: Jump word backwards (may not work in all terminals)
+handleNormalEvent (T.VtyEvent (V.EvKey V.KLeft [V.MCtrl])) = do
+  inputEditorL %= applyEdit moveWordBackwards
+
+-- Ctrl-Right: Jump word forwards (may not work in all terminals)
+handleNormalEvent (T.VtyEvent (V.EvKey V.KRight [V.MCtrl])) = do
+  inputEditorL %= applyEdit moveWordForwards
+
+-- Alt-B: Jump word backwards (Emacs-style, fallback for Ctrl-Left)
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'b') [V.MMeta])) = do
+  inputEditorL %= applyEdit moveWordBackwards
+
+-- Alt-F: Jump word forwards (Emacs-style, fallback for Ctrl-Right)
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'f') [V.MMeta])) = do
+  inputEditorL %= applyEdit moveWordForwards
 
 handleNormalEvent ev = do
   -- Delegate other events to the editor
