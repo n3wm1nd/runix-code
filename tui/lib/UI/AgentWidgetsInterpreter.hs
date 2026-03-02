@@ -17,7 +17,7 @@ import Polysemy.State (State, put, modify, runState, gets, get)
 import Control.Monad (when)
 
 import UI.AgentWidgets (AgentWidgets(..), SubsectionAddr(..))
-import UI.OutputHistory (OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, insertItem, moveNewer, updateCurrent, zipperCurrent, countSubtrees, atAddress, queryAtAddress)
+import UI.OutputHistory (OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, insertItem, moveNewer, updateCurrent, zipperCurrent, countSubtrees, atAddress, queryAtAddress, zipperToList, listToZipper, mergeOutputMessages)
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 
 -- | State maintained by AgentWidgets interpreter
@@ -31,7 +31,7 @@ newtype AgentWidgetsState msg = AgentWidgetsState
 -- updates the zipper, then sends a ZipperUpdateEvent to the UI for immediate rendering.
 --
 -- Takes the initial zipper from the UI to ensure state is in sync.
-interpretAgentWidgets :: forall msg r a. Member (Embed IO) r
+interpretAgentWidgets :: forall msg r a. (Member (Embed IO) r, Eq msg)
                       => UIVars msg
                       -> OutputHistoryZipper msg  -- ^ Initial zipper from UI
                       -> Sem (AgentWidgets msg : r) a
@@ -61,7 +61,15 @@ interpretAgentWidgets uiVars initialZipper sem = do
         sendUpdate
 
       ReplaceHistory addr msgs -> do
-        mapM_ (\msg -> modifyZipperAt addr (appendItem (MessageItem msg))) msgs
+        -- Replace history by merging new messages with existing zipper
+        -- Preserves logs and subsections from old zipper
+        -- Note: CompletedToolItem entries are NOT added here - they're added at display time
+        -- or when initially loading a session. This keeps the interpreter generic over msg type.
+        modifyZipperAt addr $ \zipper ->
+          let oldItems = zipperToList zipper  -- newest-first
+              newItems = map MessageItem (reverse msgs)  -- msgs is oldest-first, convert to newest-first
+              merged = mergeOutputMessages newItems oldItems  -- newest-first
+          in listToZipper merged
         sendUpdate
 
       StartSubsection addr -> do

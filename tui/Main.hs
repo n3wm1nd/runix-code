@@ -22,6 +22,7 @@ import System.Posix.Files (getFileStatus, modificationTime)
 
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
+import Polysemy.State (get)
 
 import UniversalLLM (Message(..))
 import UniversalLLM (ProviderOf)
@@ -58,7 +59,7 @@ import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UI
 import UI.UserInterface (interpretAsWidget)
-import UI.AgentWidgets (AgentWidgets, addMessage)
+import UI.AgentWidgets (AgentWidgets, addMessage, replaceHistory)
 import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
 import UI.StreamingInterceptor (interceptStreamChunksToUI)
 import Runix.LLMStream (LLMStreaming)
@@ -66,7 +67,7 @@ import Runix.LLM.Interpreter (interpretLLMViaStreaming)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
-import UI.OutputHistory (OutputItem(..), listToZipper, addCompletedToolItems, extractMessages, emptyZipper)
+import UI.OutputHistory (OutputItem(..), OutputHistoryZipper, listToZipper, addCompletedToolItems, extractMessages, emptyZipper, zipperToList)
 
 
 --------------------------------------------------------------------------------
@@ -158,6 +159,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
             { slashCommands = [ echoCommand
                               , reloadCommand historyMessages
                               , clearCommand
+                              , showZipperCommand currentHistory
                               , let (name, fn) = ViewCmd.viewCommand historyMessages uiVars
                                 in SlashCommand { commandName = name, commandFn = fn }
                               , let (name, fn) = HistoryCmd.historyCommand historyMessages uiVars
@@ -246,6 +248,17 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       , commandFn = \_ -> embed $ sendAgentEvent uiVars (RestoreSessionEvent emptyZipper)
       }
 
+    -- | ShowZipper command: debug output of current zipper contents
+    showZipperCommand :: forall r. Member Logging r => OutputHistoryZipper (Message model) -> SlashCommand r
+    showZipperCommand zipper = SlashCommand
+      { commandName = "showzipper"
+      , commandFn = \_ -> do
+          let items = zipperToList zipper
+          info $ T.pack $ "=== Zipper Contents (" ++ show (length items) ++ " items) ==="
+          mapM_ (info . T.pack . show) items
+          info $ T.pack "=== End Zipper ==="
+      }
+
     -- | The default agent command: run runixCode with the user's input
     -- historyZipper is the current UI zipper, extract messages for the agent
     runDefaultAgentCommand historyZipper _settings userText = do
@@ -260,12 +273,28 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
               addMessage @(Message model) (UserText userText)
 
               -- Run agent (with widget isolation via interpretAsWidget)
-              _result <- runConfig baseConfigs
-                       . runHistory historyMessages
-                       . interpretAsWidget @model
-                       $ do
-                          -- Run the agent (user message already added above)
-                          runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+              -- The do-block runs inside interpretAsWidget's subsection context
+              _result <- interpretAsWidget @model $ do
+                let runWithState = runConfig baseConfigs . runHistory historyMessages
+                (result, finalHistory) <- runWithState $ do
+                  -- Run the agent (user message already added above)
+                  runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+
+                -- After agent completes, reconcile final State with subsection zipper.
+                -- The subsection should only contain messages from the agent's RESPONSE,
+                -- not the user query (which is at root level) or previous history.
+                -- Extract new messages and skip the user query.
+                -- FIXME: This is fragile! We're just counting messages and assuming:
+                --   1. The user query is always the first new message
+                --   2. History wasn't compacted/reordered by the agent
+                -- We need a proper way to identify which messages belong to the subsection,
+                -- perhaps by marking them or using a different approach entirely.
+                let allNewMessages = drop (length historyMessages) finalHistory
+                    -- Skip the user query (first new message) - it's already at root level
+                    subsectionMessages = drop 1 allNewMessages
+                replaceHistory @(Message model) subsectionMessages
+                return result
+
               -- Signal completion so UI updates status
               embed $ sendAgentEvent uiVars (AgentCompleteEvent [])
         )

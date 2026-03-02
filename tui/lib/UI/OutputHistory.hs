@@ -208,7 +208,6 @@ extractMessages zipper =
   in reverse $ foldr (\item acc -> extractFromItem item ++ acc) [] items
   where
     extractFromItem (MessageItem msg) = [msg]
-    extractFromItem (CompletedToolItem toolCallMsg toolResultMsg) = [toolCallMsg, toolResultMsg]
     extractFromItem (SectionItem subZipper) = extractMessages subZipper
     extractFromItem _ = []
 
