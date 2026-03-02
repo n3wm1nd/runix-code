@@ -29,15 +29,17 @@ newtype AgentWidgetsState msg = AgentWidgetsState
 --
 -- This interpreter maintains the output history zipper. Each semantic operation
 -- updates the zipper, then sends a ZipperUpdateEvent to the UI for immediate rendering.
+--
+-- Takes the initial zipper from the UI to ensure state is in sync.
 interpretAgentWidgets :: forall msg r a. Member (Embed IO) r
                       => UIVars msg
+                      -> OutputHistoryZipper msg  -- ^ Initial zipper from UI
                       -> Sem (AgentWidgets msg : r) a
                       -> Sem r a
-interpretAgentWidgets uiVars sem = do
-  (_finalState, result) <- runState initialState $ interpret handler $ raiseUnder sem
+interpretAgentWidgets uiVars initialZipper sem = do
+  (_finalState, result) <- runState (AgentWidgetsState initialZipper) $ interpret handler $ raiseUnder sem
   return result
   where
-    initialState = AgentWidgetsState emptyZipper
 
     handler :: AgentWidgets msg (Sem rInitial) x -> Sem (State (AgentWidgetsState msg) : r) x
     handler = \case

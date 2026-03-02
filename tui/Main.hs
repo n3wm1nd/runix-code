@@ -66,7 +66,7 @@ import Runix.LLM.Interpreter (interpretLLMViaStreaming)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
-import UI.OutputHistory (OutputItem(..), listToZipper, addCompletedToolItems)
+import UI.OutputHistory (OutputItem(..), listToZipper, addCompletedToolItems, extractMessages)
 
 
 --------------------------------------------------------------------------------
@@ -144,19 +144,22 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
 
   where
     runOneIteration = do
-      -- Wait for user request (includes text + settings + history)
+      -- Wait for user request (includes text + settings + history zipper)
       UserRequest{userText, currentHistory, requestSettings} <- embed $ atomically $ waitForUserInput (userInputQueue uiVars)
 
       -- Clear any previous cancellation flag before starting new request
       embed $ clearCancellationFlag uiVars
 
+      -- Extract messages from zipper for commands that need it
+      let historyMessages = extractMessages currentHistory
+
       -- Build command set with current settings and history
       let cmdSet = CommandSet
             { slashCommands = [ echoCommand
-                              , reloadCommand currentHistory
-                              , let (name, fn) = ViewCmd.viewCommand currentHistory uiVars
+                              , reloadCommand historyMessages
+                              , let (name, fn) = ViewCmd.viewCommand historyMessages uiVars
                                 in SlashCommand { commandName = name, commandFn = fn }
-                              , let (name, fn) = HistoryCmd.historyCommand currentHistory uiVars
+                              , let (name, fn) = HistoryCmd.historyCommand historyMessages uiVars
                                 in SlashCommand { commandName = name, commandFn = fn }
                               ]
             , defaultCommand = runDefaultAgentCommand currentHistory requestSettings
@@ -170,7 +173,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       embed $ clearCancellationFlag uiVars
 
       -- Check if executable has been modified and reload if necessary
-      embed $ checkAndReloadOnChange currentHistory
+      embed $ checkAndReloadOnChange historyMessages
 
     -- | Perform reload: save session and exec new binary
     -- TODO: This is lossy - should save full OutputHistory (with tool calls, streaming state, etc)
@@ -236,23 +239,27 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       }
 
     -- | The default agent command: run runixCode with the user's input
-    runDefaultAgentCommand history _settings userText = do
+    -- historyZipper is the current UI zipper, extract messages for the agent
+    runDefaultAgentCommand historyZipper _settings userText = do
       catch
         (do -- Use default configs (no streaming)
             let baseConfigs = defaultConfigs @model
+                historyMessages = extractMessages historyZipper
 
-            -- Add user message BEFORE entering subsection (so it's at root level)
-            addMessage @(Message model) (UserText userText)
+            -- Initialize AgentWidgets with current zipper, then run agent
+            raiseUnder $ interpretAgentWidgets uiVars historyZipper $ do
+              -- Add user message BEFORE entering subsection (so it's at root level)
+              addMessage @(Message model) (UserText userText)
 
-            -- Run agent (with widget isolation via interpretAsWidget)
-            _result <- runConfig baseConfigs
-                     . runHistory history
-                     . interpretAsWidget @model
-                     $ do
-                        -- Run the agent (user message already added above)
-                        runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
-            -- Signal completion so UI updates status
-            embed $ sendAgentEvent uiVars (AgentCompleteEvent [])
+              -- Run agent (with widget isolation via interpretAsWidget)
+              _result <- runConfig baseConfigs
+                       . runHistory historyMessages
+                       . interpretAsWidget @model
+                       $ do
+                          -- Run the agent (user message already added above)
+                          runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+              -- Signal completion so UI updates status
+              embed $ sendAgentEvent uiVars (AgentCompleteEvent [])
         )
         (\err -> embed $ sendAgentEvent uiVars (LogEvent Error (T.pack $ "Command error: " ++ err)))
 
@@ -373,7 +380,6 @@ interpretTUIEffects :: forall msg r a.
         : Logging
         : UserInput TUIWidget
         : UI.ForegroundCmd.ForegroundCmd
-        : AgentWidgets msg
         : UI.UI
         : r
     )
@@ -381,7 +387,6 @@ interpretTUIEffects :: forall msg r a.
   Sem r a
 interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
   interpretUI uiVars
-    . interpretAgentWidgets uiVars
     . interpretForegroundCmd uiVars
     . interpretUserInput uiVars
     . interpretLoggingToUI

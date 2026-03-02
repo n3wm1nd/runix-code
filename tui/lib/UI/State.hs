@@ -97,10 +97,10 @@ data LLMSettings = LLMSettings
   {
   } deriving stock (Eq, Show)
 
--- | User request containing input text, history, and LLM settings
+-- | User request containing input text, history zipper, and LLM settings
 data UserRequest msg = UserRequest
   { userText :: Text
-  , currentHistory :: [msg]
+  , currentHistory :: Zipper (OutputItem msg)  -- ^ Current UI zipper (history structure)
   , requestSettings :: LLMSettings
   } deriving stock (Eq, Show)
 

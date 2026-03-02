@@ -696,17 +696,16 @@ sendMessage = do
   if null (filter (/= ' ') content)
     then return ()  -- Don't send empty messages
     else do
-      -- Get the UI vars, current settings, and history
+      -- Get the UI vars, current settings, and history zipper
       vars <- use uiVarsL
       settings <- use llmSettingsL
       zipper <- use outputZipperL
-      let history = extractMessages zipper
 
       -- Set status to Processing immediately
       statusL .= Text.pack "Processing..."
 
-      -- Send user request (text + settings + history) to the agent
-      let request = UserRequest { userText = Text.pack content, currentHistory = history, requestSettings = settings }
+      -- Send user request (text + settings + zipper) to the agent
+      let request = UserRequest { userText = Text.pack content, currentHistory = zipper, requestSettings = settings }
       liftIO $ atomically $ provideUserInput (userInputQueue vars) request
 
       -- Clear input
