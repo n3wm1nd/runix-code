@@ -63,11 +63,12 @@ module UI.OutputHistory
 import Data.Text (Text)
 import qualified Data.Text as T
 import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
-import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr)
+import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr, focusedItemAttr, transparentBgAttr)
 import UI.AgentWidgets (AgentStatus(..), StreamingState(..), SubsectionAddr(..))
 import Brick.Types (Widget)
-import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), (<=>), vBox, withAttr, emptyWidget, fill)
+import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), (<=>), vBox, withAttr, forceAttr, emptyWidget, fill)
 import Brick.Widgets.Core (Padding(..))
+import qualified Graphics.Vty as V
 import Runix.Logging (Level(..))
 import UniversalLLM (Message(..), ToolCall(..), ToolResult(..))
 import qualified Data.Aeson as Aeson
@@ -352,24 +353,23 @@ renderZipper opts zipper =
 -- | Render an OutputItem with optional markdown formatting
 -- Pattern matches directly on Message constructors to determine rendering
 -- Only UserText, AssistantText, AssistantReasoning, and streaming items use markdown when enabled
--- The isFocused parameter highlights the message type indicator when True
+-- The isFocused parameter applies a dark gray background to the entire item area,
+-- but the text content gets explicit transparent background
 renderItem :: forall model n. RenderOptions -> Bool -> OutputItem (Message model) -> Widget n
 renderItem opts isFocused item =
-  let focusMarker marker = if isFocused
-                           then withAttr logInfoAttr (txt marker)
-                           else txt marker
+  let renderContent marker text = renderContentWithMarker isFocused marker text
   in vBox $ case item of
   -- User messages
   MessageItem (UserText text) ->
-    [txt " ", renderContentWithMarker (focusMarker "<") text, txt " "]
+    [txt " ", renderContent (txt "<") text, txt " "]
 
   -- Assistant text
   MessageItem (AssistantText text) ->
-    [txt " ", renderContentWithMarker (focusMarker ">") text, txt " "]
+    [txt " ", renderContent (txt ">") text, txt " "]
 
   -- Assistant reasoning
   MessageItem (AssistantReasoning text) ->
-    [txt " ", renderContentWithMarker (focusMarker "?") text, txt " "]
+    [txt " ", renderContent (txt "?") text, txt " "]
 
   -- Tool calls: Don't render - they're shown via CompletedToolItem
   MessageItem (AssistantTool _toolCall) ->
@@ -412,10 +412,10 @@ renderItem opts isFocused item =
       Streaming state ->
         let thinkingWidget = case streamingThinking state of
               Nothing -> []
-              Just t -> [renderContentWithMarker (focusMarker "~") t]
+              Just t -> [renderContent (txt "~") t]
             responseWidget = case streamingResponse state of
               Nothing -> []
-              Just r -> [renderContentWithMarker (focusMarker "}") r]
+              Just r -> [renderContent (txt "}") r]
         in thinkingWidget ++ responseWidget
       WaitingForInput -> [txt "⋯ Waiting for input"]
       WaitingForToolCall -> [txt "⋯ Waiting for tool call"]
@@ -445,15 +445,15 @@ renderItem opts isFocused item =
   where
     useMd = useMarkdown opts
 
-    -- Render content with a marker on the first line
-    renderContentWithMarker :: Widget n -> Text -> Widget n
-    renderContentWithMarker marker text =
+    -- Render content with a marker on the left edge
+    -- When focused, wraps entire hBox in gray, then content gets transparent bg (creating left bar)
+    renderContentWithMarker :: Bool -> Widget n -> Text -> Widget n
+    renderContentWithMarker focused marker text =
       let content = if useMd
-                    then markdownToWidgetsWithIndent 0 text
-                    else [txtWrap text]
-      in case content of
-           [] -> marker <+> txt " "
-           (firstLine:rest) -> vBox $ (marker <+> txt " " <+> firstLine) : map (padLeft (Pad 2)) rest
+                    then vBox $ markdownToWidgetsWithIndent 0 text
+                    else txtWrap text
+          applyFocus w = if focused then withAttr focusedItemAttr w else w
+      in applyFocus (marker <+> withAttr transparentBgAttr (padLeft (Pad 1) content))
 
     -- Render a completed tool call with nice formatting
     renderCompletedTool :: ToolCall -> ToolResult -> [Widget n]

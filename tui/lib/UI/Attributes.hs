@@ -23,6 +23,8 @@ module UI.Attributes
   , logInfoAttr
   , logWarningAttr
   , logErrorAttr
+  , focusedItemAttr
+  , transparentBgAttr
     -- * Attribute map
   , theMap
   ) where
@@ -60,6 +62,12 @@ logInfoAttr = attrName "logInfo"
 logWarningAttr = attrName "logWarning"
 logErrorAttr = attrName "logError"
 
+focusedItemAttr :: AttrName
+focusedItemAttr = attrName "focusedItem"
+
+transparentBgAttr :: AttrName
+transparentBgAttr = attrName "transparentBg"
+
 -- | The attribute map defining all styles
 theMap :: AttrMap
 theMap = attrMap V.defAttr
@@ -82,4 +90,8 @@ theMap = attrMap V.defAttr
   , (logInfoAttr, V.defAttr `V.withForeColor` V.cyan)
   , (logWarningAttr, V.defAttr `V.withForeColor` V.yellow)
   , (logErrorAttr, V.defAttr `V.withForeColor` V.red)
+  -- Focused item - cyan foreground with dark gray background (used for marker and bar)
+  , (focusedItemAttr, V.defAttr `V.withForeColor` V.cyan `V.withBackColor` V.brightBlack)
+  -- Transparent background - just use default attr (no background color set)
+  , (transparentBgAttr, V.defAttr)
   ]
