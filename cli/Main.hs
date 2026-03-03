@@ -25,9 +25,10 @@ import qualified Runix.Config as ConfigEffect
 import qualified System.Directory as Dir
 
 import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
+import Data.List (find)
 import qualified Config
-import Config (RunixDataDir(..), ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..), loadConfig, cfgModelSelection, cfgSessionFile)
-import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfigHistory)
+import Config (RunixDataDir(..), ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..), modelDisplayName, loadConfig, cfgModelId, cfgSessionFile)
+import Runner (loadSystemPrompt, ModelInterpreter(..), ModelEntry(..), buildAvailableModels, entryInterpreter, runConfigHistory)
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
@@ -77,8 +78,22 @@ main = do
       hPutStr IO.stderr "Error: No input provided. Usage: echo \"prompt\" | runix-code [session-file]\n"
       exitFailure
     else do
-      -- Create model interpreter (same as TUI!)
-      modelInterp <- createModelInterpreter (cfgModelSelection cfg)
+      -- Build available models and select by ID
+      availableModels <- buildAvailableModels
+      let selectedEntry = case cfgModelId cfg of
+            Nothing -> case availableModels of
+              (first:_) -> first
+              []        -> error "No models available - set ANTHROPIC_OAUTH_TOKEN, ZAI_API_KEY, etc."
+            Just mid -> case find (\e -> meId e == mid) availableModels of
+              Just entry -> entry
+              Nothing -> error $ "Model '" ++ T.unpack (modelDisplayName mid)
+                ++ "' not available. Available: "
+                ++ T.unpack (T.intercalate ", " [meName e | e <- availableModels])
+
+      hPutStr IO.stderr $ "info: Using model: " ++ T.unpack (meName selectedEntry) ++ "\n"
+
+      -- Create interpreter from selected entry (pure)
+      let modelInterp = entryInterpreter selectedEntry
 
       -- Run the agent
       result <- runAgent modelInterp cfg userInput

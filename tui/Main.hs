@@ -12,6 +12,7 @@
 module Main (main) where
 
 import qualified Data.Text as T
+import Data.List (find)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad (forever, when)
@@ -19,6 +20,7 @@ import qualified System.Directory as Dir
 import System.Environment (getExecutablePath)
 import System.Posix.Process (executeFile)
 import System.Posix.Files (getFileStatus, modificationTime)
+import qualified System.IO as IO
 
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
@@ -29,7 +31,7 @@ import UniversalLLM (ProviderOf)
 
 import Config
 import Models
-import Runner (loadSystemPrompt, createModelInterpreter, ModelInterpreter(..), runConfig, runHistory )
+import Runner (loadSystemPrompt, ModelInterpreter(..), runConfig, runHistory, buildAvailableModels, ModelEntry(..), entryInterpreter)
 import Runix.Runner (bashIO, cmdsIO, failLog, loggingIO)
 import Runix.Grep (grepForFilesystem)
 import qualified UI.Commands.View as ViewCmd
@@ -99,11 +101,26 @@ main = do
   -- Load configuration
   cfg <- loadConfig
 
-  -- Create model interpreter
-  ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} <- createModelInterpreter (cfgModelSelection cfg)
+  -- Build available models by probing environment
+  availableModels <- buildAvailableModels
 
-  -- Run UI with the streaming interpreter
-  runUI (\refreshCallback -> buildUIRunner interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
+  -- Select model by ID from available list
+  let selectedEntry = case cfgModelId cfg of
+        Nothing -> case availableModels of
+          (first:_) -> first
+          []        -> error "No models available - set ANTHROPIC_OAUTH_TOKEN, ZAI_API_KEY, etc."
+        Just mid -> case find (\e -> meId e == mid) availableModels of
+          Just entry -> entry
+          Nothing -> error $ "Model '" ++ T.unpack (modelDisplayName mid)
+            ++ "' not available. Available: "
+            ++ T.unpack (T.intercalate ", " [meName e | e <- availableModels])
+
+  IO.hPutStr IO.stderr $ "info: Using model: " ++ T.unpack (meName selectedEntry) ++ "\n"
+
+  -- Unpack existential and run UI with full model list for interactive model switching
+  case entryInterpreter selectedEntry of
+    ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} ->
+      runUI (\refreshCallback -> buildUIRunner availableModels interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -306,22 +323,23 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
 
 -- | Build a UI runner by composing model interpreter with UI effects
 --
--- This combines:
--- 1. Model interpreter (LLM effect -> base effects)
--- 2. UI effects interpreter (base effects -> IO)
--- 3. Agent loop
+-- Takes the full list of available models and the selected entry.
+-- Unpacks the existential ModelEntry, creates interpreter, and wires
+-- everything into the UI. The available models list is threaded through
+-- for future interactive model switching.
 buildUIRunner :: forall model.
                  ( HasTools model
                  , SupportsSystemPrompt (ProviderOf model)
                  , ModelDefaults model
                  )
-              => (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter
+              => [ModelEntry]   -- All available models (for runtime switching)
+              -> (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
               -> Maybe FilePath  -- Resume session path
               -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
               -> IO (UIVars (Message model))
-buildUIRunner interpretModelStreaming miLoadSession miSaveSession maybeSessionPath refreshCallback = do
+buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSession maybeSessionPath refreshCallback = do
   -- Get current working directory for security restrictions
   cwd <- Dir.getCurrentDirectory
 
