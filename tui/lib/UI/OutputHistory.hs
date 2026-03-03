@@ -204,8 +204,8 @@ appendItemAndFocus item (Zipper back current front) =
 -- Returns messages in oldest-first order (ready to pass to agent)
 extractMessages :: OutputHistoryZipper msg -> [msg]
 extractMessages zipper =
-  let items = zipperToList zipper
-  in reverse $ foldr (\item acc -> extractFromItem item ++ acc) [] items
+  let items = reverse (zipperToList zipper)  -- oldest-first
+  in concatMap extractFromItem items
   where
     extractFromItem (MessageItem msg) = [msg]
     extractFromItem (SectionItem subZipper) = extractMessages subZipper
