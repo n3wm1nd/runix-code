@@ -33,6 +33,7 @@ import qualified UniversalLLM as ULL
 import Runix.LLM (LLM, queryLLM)
 import Runix.LLM.ToolExecution (executeTool)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite)
+import qualified Runix.FileSystem as FileSystem
 import Runix.Tools.Config (RunixToolsFS(..))
 import Runix.Cmd (Cmds, interpretCmd)
 import Runix.Logging (Logging, info)
@@ -43,6 +44,7 @@ import Runix.Tools.ToolBuilder.Types
 import Runix.FileSystem (getFileSystem)
 import Tools.ToolBuilder.Prompt (loadToolBuilderPrompt)
 import qualified Runix.Tools as Tools
+import qualified Data.Text.Encoding as T
 import Runix.LLM.ToolInstances ()
 import qualified Autodocodec
 import qualified UniversalLLM.Tools
@@ -150,11 +152,12 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
   info $ "Creating new tool module: " <> qualifiedModuleName
 
   -- Step 1: Read current state of all files (for rollback)
-  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
-  let Tools.ReadFileResult registryText = registryContent
+  -- Use FileSystem.readFile directly for internal use (need complete files)
+  registryBytes <- FileSystem.readFile @RunixToolsFS registryPath
+  let registryText = T.decodeUtf8 registryBytes
 
-  cabalContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath)
-  let Tools.ReadFileResult cabalText = cabalContent
+  cabalBytes <- FileSystem.readFile @RunixToolsFS cabalPath
+  let cabalText = T.decodeUtf8 cabalBytes
 
   -- Step 2: Create module file with proper module header
   let moduleContent = T.unlines
@@ -164,12 +167,12 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
         , code
         ]
 
-  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack moduleFilePath) (Tools.FileContent moduleContent)
+  FileSystem.writeFile @RunixToolsFS moduleFilePath (T.encodeUtf8 moduleContent)
   info $ "Created module file: " <> T.pack moduleFilePath
 
   -- Step 3: Update cabal file to add new exposed-module
   let updatedCabal = addModuleToCabal cabalText qualifiedModuleName
-  _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent updatedCabal)
+  FileSystem.writeFile @RunixToolsFS cabalPath (T.encodeUtf8 updatedCabal)
   info "Updated cabal file with new module"
 
   -- Step 4: Extract function name (with rollback on failure)
@@ -177,7 +180,7 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
     Just fname -> return fname
     Nothing -> do
       -- Rollback cabal file
-      _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
+      FileSystem.writeFile @RunixToolsFS cabalPath (T.encodeUtf8 cabalText)
       info "Rolled back cabal file due to function extraction failure"
       fail $ T.unpack $ T.unlines
         [ "ERROR: Could not extract function name from generated code."
@@ -207,15 +210,15 @@ writeToolcodeAtomic cabalPath registryPath modulesDir build (ToolName name) (Too
       info $ "Compilation failed for tool: " <> name <> ", rolling back all changes"
 
       -- Restore registry file from backup
-      _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath) (Tools.FileContent registryText)
+      FileSystem.writeFile @RunixToolsFS registryPath (T.encodeUtf8 registryText)
       info "Restored registry file from backup"
 
       -- Restore cabal file from backup
-      _ <- Tools.writeFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath) (Tools.FileContent cabalText)
+      FileSystem.writeFile @RunixToolsFS cabalPath (T.encodeUtf8 cabalText)
       info "Restored cabal file from backup"
 
       -- Remove the module file
-      _ <- Tools.remove @RunixToolsFS (Tools.FilePath $ T.pack moduleFilePath) (Tools.Recursive False)
+      FileSystem.remove @RunixToolsFS False moduleFilePath
       info $ "Removed module file: " <> T.pack moduleFilePath
 
       fail $ "Compilation failed:\n" <> T.unpack stderr
@@ -440,18 +443,19 @@ toolBuilderLoopWithCount systemPrompt cabalPath registryPath modulesDir build it
 
   -- FORCED CONTEXT: Always inject GeneratedTools.hs registry content at start of loop
   -- The agent doesn't decide whether to read it - we force-feed the current state
-  registryContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack registryPath)
-  let Tools.ReadFileResult registryText = registryContent
+  -- Use FileSystem.readFile directly for internal use (need complete files)
+  registryBytes <- FileSystem.readFile @RunixToolsFS registryPath
+  let registryText = T.decodeUtf8 registryBytes
 
   -- Read cabal file and extract generated-tools sublibrary configuration
-  cabalContent <- Tools.readFile @RunixToolsFS (Tools.FilePath $ T.pack cabalPath)
-  let Tools.ReadFileResult cabalText = cabalContent
+  cabalBytes <- FileSystem.readFile @RunixToolsFS cabalPath
+  let cabalText = T.decodeUtf8 cabalBytes
       cabalSublibraryExcerpt = extractGeneratedToolsSublibrary cabalText
 
   -- Get list of existing generated tool files
-  generatedToolFiles <- Tools.glob @RunixToolsFS (Tools.Pattern "/generated-tools/**/*.hs")
-  let Tools.GlobResult fileList = generatedToolFiles
-      fileTree = T.unlines $ map (\f -> "  - " <> f) fileList
+  -- For internal use, use FileSystem.glob directly to get complete list
+  fileList <- FileSystem.glob @RunixToolsFS "/generated-tools" "**/*.hs"
+  let fileTree = T.unlines $ map (\f -> "  - " <> T.pack f) fileList
 
   let contextMessage = SystemText $ T.unlines
         [ "=== CURRENT STATE OF GeneratedTools.hs (registry) ==="
