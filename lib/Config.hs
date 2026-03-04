@@ -19,6 +19,7 @@ module Config
   , ProjectFS(..)
   , ClaudeConfigFS(..)
   , RunixToolsFS(..)
+  , RequestLogFS(..)
     -- * Configuration Loading
   , loadConfig
     -- * Model Resolution
@@ -31,6 +32,14 @@ import qualified Data.Text as T
 import System.IO (hPutStr)
 import qualified System.IO as IO
 import Runix.Tools.Config (ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..))
+import Runix.FileSystem (HasProjectPath(..))
+
+-- | Request logging filesystem - writes HTTP request/response logs
+newtype RequestLogFS = RequestLogFS FilePath
+  deriving stock (Show, Eq)
+
+instance HasProjectPath RequestLogFS where
+  getProjectPath (RequestLogFS path) = path
 
 --------------------------------------------------------------------------------
 -- Configuration Types

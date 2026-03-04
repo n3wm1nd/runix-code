@@ -71,6 +71,8 @@ import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 import UI.OutputHistory (OutputItem(..), OutputHistoryZipper, listToZipper, addCompletedToolItems, extractMessages, emptyZipper, zipperToList)
 import qualified Runix.LLM.Context
+import Runix.Time (Time, timeIO)
+import Runix.HTTP.RequestLogger (withHTTPRequestLogging)
 
 
 --------------------------------------------------------------------------------
@@ -458,6 +460,7 @@ interpretTUIEffects :: forall msg r a.
         : FileSystem ProjectFS
         : Runix.FileSystem.System.FileSystemRead
         : Runix.FileSystem.System.FileSystemWrite
+        : Time
         : Fail
         : Logging
         : UserInput TUIWidget
@@ -473,6 +476,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . interpretUserInput uiVars
     . interpretLoggingToUI
     . failLog
+    . timeIO
     -- Base System filesystem
     . Runix.FileSystem.System.filesystemIO
     -- ProjectFS: user's project with chroot, filters, logging, and file watching
@@ -491,8 +495,11 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     -- RunixToolsFS: runix-code source directory
     . fileSystemLocal (RunixToolsFS runixCodeDir)
     . loggingWrite @RunixToolsFS "runix-tools"
+    -- HTTP interpreters
     . httpIO (withRequestTimeout 300)
     . httpIOStreaming (withRequestTimeout 300)
+    -- HTTP request logging (after interpreters, so it actually intercepts requests)
+    . withHTTPRequestLogging cwd
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
     . promptStoreIO
     . cmdsIO
