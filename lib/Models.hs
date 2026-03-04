@@ -20,22 +20,29 @@ module Models
   , GLM47(..)
   , GLM5(..)
   , ZAI(..)
+  , AlibabaCloud(..)
   , MinimaxM25(..)
   , Qwen35_122B(..)
   , Qwen3CoderNext(..)
+  , Qwen35Plus(..)
+  , KimiK25(..)
   , Universal(..)
     -- * Tested providers from universal-llm
   , claudeSonnet45OAuth
   , claudeHaiku45OAuth
   , claudeOpus46OAuth
   , minimaxM25LlamaCpp
+  , minimaxM25AlibabaCloud
   , qwen35_122B
+  , qwen35Plus
   , glm45AirLlamaCpp
   , glm45AirZAI
   , glm46
   , glm47
   , glm5
+  , glm5AlibabaCloud
   , qwen3Coder
+  , kimiK25AlibabaCloud
   , universal
     -- * Runix-code specific models
   , UniversalWithTools(..)
@@ -49,14 +56,15 @@ import GHC.Generics (Generic)
 import UniversalLLM
 import UniversalLLM.Settings
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
 import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
-import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5)
-import UniversalLLM.Models.Minimax.M (MinimaxM25(..), minimaxM25LlamaCpp)
-import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), qwen35_122B, qwen3Coder)
+import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5, glm5AlibabaCloud)
+import UniversalLLM.Models.Minimax.M (MinimaxM25(..), minimaxM25LlamaCpp, minimaxM25AlibabaCloud)
+import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), qwen35_122B, qwen3Coder, qwen35Plus)
+import UniversalLLM.Models.Moonshot.Kimi (KimiK25(..), kimiK25AlibabaCloud)
 import UniversalLLM.Models.OpenRouter (Universal(..))
 
 --------------------------------------------------------------------------------
@@ -161,6 +169,18 @@ instance ModelDefaults (Model GLM5 ZAI) where
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
+instance ModelDefaults (Model MinimaxM25 AlibabaCloud) where
+  defaultConfigs = []
+
+instance ModelDefaults (Model KimiK25 AlibabaCloud) where
+  defaultConfigs = []
+
+instance ModelDefaults (Model Qwen35Plus AlibabaCloud) where
+  defaultConfigs = []
+
+instance ModelDefaults (Model GLM5 AlibabaCloud) where
+  defaultConfigs = []
+
 --------------------------------------------------------------------------------
 -- Model Configuration Types
 --------------------------------------------------------------------------------
@@ -179,6 +199,10 @@ type instance ConfigFor (Model GLM45Air ZAI) = GLM45AirZAIConfig
 type instance ConfigFor (Model GLM46 ZAI) = GLM46Config
 type instance ConfigFor (Model GLM47 ZAI) = GLM47Config
 type instance ConfigFor (Model GLM5 ZAI) = GLM5Config
+type instance ConfigFor (Model MinimaxM25 AlibabaCloud) = MinimaxM25AlibabaCloudConfig
+type instance ConfigFor (Model KimiK25 AlibabaCloud) = KimiK25AlibabaCloudConfig
+type instance ConfigFor (Model Qwen35Plus AlibabaCloud) = Qwen35PlusConfig
+type instance ConfigFor (Model GLM5 AlibabaCloud) = GLM5AlibabaCloudConfig
 
 -- Claude Sonnet 4.5 configuration
 data ClaudeSonnet45Config = ClaudeSonnet45Config
@@ -265,5 +289,29 @@ data GLM47Config = GLM47Config
 data GLM5Config = GLM5Config
   { reasoning :: ReasoningSetting
   , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- MiniMax M2.5 (AlibabaCloud) configuration
+data MinimaxM25AlibabaCloudConfig = MinimaxM25AlibabaCloudConfig
+  { temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- Kimi K2.5 (AlibabaCloud) configuration
+data KimiK25AlibabaCloudConfig = KimiK25AlibabaCloudConfig
+  { temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- Qwen 3.5 Plus (AlibabaCloud) configuration
+data Qwen35PlusConfig = Qwen35PlusConfig
+  { temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- GLM-5 (AlibabaCloud) configuration
+data GLM5AlibabaCloudConfig = GLM5AlibabaCloudConfig
+  { temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)

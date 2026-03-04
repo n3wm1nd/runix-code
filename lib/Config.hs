@@ -62,6 +62,11 @@ data ModelId
   | GLM46ZAI
   | GLM47ZAI
   | GLM5ZAI
+  -- AlibabaCloud
+  | MinimaxM25AlibabaCloud
+  | KimiK25AlibabaCloud
+  | Qwen35PlusAlibabaCloud
+  | GLM5AlibabaCloud
   -- OpenRouter
   | OpenRouterModel
   deriving stock (Show, Eq)
@@ -69,18 +74,22 @@ data ModelId
 -- | Display name for a ModelId (used in UI and error messages)
 modelDisplayName :: ModelId -> T.Text
 modelDisplayName = \case
-  ClaudeSonnet45     -> "Claude Sonnet 4.5"
-  ClaudeHaiku45      -> "Claude Haiku 4.5"
-  ClaudeOpus46       -> "Claude Opus 4.6"
-  GLM45AirLlamaCpp   -> "GLM 4.5 Air (LlamaCpp)"
-  MinimaxM25LlamaCpp -> "MiniMax M2.5 (LlamaCpp)"
-  Qwen35LlamaCpp     -> "Qwen 3.5 122B (LlamaCpp)"
-  Qwen3CoderLlamaCpp -> "Qwen3 Coder (LlamaCpp)"
-  GLM45AirZAI        -> "GLM 4.5 Air (ZAI)"
-  GLM46ZAI           -> "GLM 4.6 (ZAI)"
-  GLM47ZAI           -> "GLM 4.7 (ZAI)"
-  GLM5ZAI            -> "GLM 5 (ZAI)"
-  OpenRouterModel    -> "OpenRouter"
+  ClaudeSonnet45           -> "Claude Sonnet 4.5"
+  ClaudeHaiku45            -> "Claude Haiku 4.5"
+  ClaudeOpus46             -> "Claude Opus 4.6"
+  GLM45AirLlamaCpp         -> "GLM 4.5 Air (LlamaCpp)"
+  MinimaxM25LlamaCpp       -> "MiniMax M2.5 (LlamaCpp)"
+  Qwen35LlamaCpp           -> "Qwen 3.5 122B (LlamaCpp)"
+  Qwen3CoderLlamaCpp       -> "Qwen3 Coder (LlamaCpp)"
+  GLM45AirZAI              -> "GLM 4.5 Air (ZAI)"
+  GLM46ZAI                 -> "GLM 4.6 (ZAI)"
+  GLM47ZAI                 -> "GLM 4.7 (ZAI)"
+  GLM5ZAI                  -> "GLM 5 (ZAI)"
+  MinimaxM25AlibabaCloud   -> "MiniMax M2.5 (AlibabaCloud)"
+  KimiK25AlibabaCloud      -> "Kimi K2.5 (AlibabaCloud)"
+  Qwen35PlusAlibabaCloud   -> "Qwen 3.5 Plus (AlibabaCloud)"
+  GLM5AlibabaCloud         -> "GLM 5 (AlibabaCloud)"
+  OpenRouterModel          -> "OpenRouter"
 
 -- | Path to the runix-code data directory (apps/runix-code during development)
 -- This is where source files live (lib/GeneratedTools.hs, etc.), not the Cabal installation data directory
@@ -176,6 +185,23 @@ resolveModelId input = case T.toLower input of
   "glm-5"           -> Just GLM5ZAI
   "glm5"            -> Just GLM5ZAI
   "zai"             -> Just GLM47ZAI
+  -- AlibabaCloud
+  "minimax-m25-alibabacloud"   -> Just MinimaxM25AlibabaCloud
+  "minimax-m2.5-alibabacloud"  -> Just MinimaxM25AlibabaCloud
+  "minimaxm25-alibabacloud"    -> Just MinimaxM25AlibabaCloud
+  "alibabacloud-minimax"       -> Just MinimaxM25AlibabaCloud
+  "kimi-k25-alibabacloud"      -> Just KimiK25AlibabaCloud
+  "kimi-k2.5-alibabacloud"     -> Just KimiK25AlibabaCloud
+  "kimik25-alibabacloud"       -> Just KimiK25AlibabaCloud
+  "alibabacloud-kimi"          -> Just KimiK25AlibabaCloud
+  "qwen3.5-plus-alibabacloud"  -> Just Qwen35PlusAlibabaCloud
+  "qwen35plus-alibabacloud"    -> Just Qwen35PlusAlibabaCloud
+  "alibabacloud-qwen35plus"    -> Just Qwen35PlusAlibabaCloud
+  "qwen3.5-plus"               -> Just Qwen35PlusAlibabaCloud
+  "glm-5-alibabacloud"         -> Just GLM5AlibabaCloud
+  "glm5-alibabacloud"          -> Just GLM5AlibabaCloud
+  "alibabacloud-glm5"          -> Just GLM5AlibabaCloud
+  "alibabacloud"               -> Just Qwen35PlusAlibabaCloud
   -- OpenRouter
   "openrouter"           -> Just OpenRouterModel
   "openrouter-universal" -> Just OpenRouterModel

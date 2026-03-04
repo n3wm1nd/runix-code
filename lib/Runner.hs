@@ -73,17 +73,17 @@ import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserial
 import UniversalLLM (ProviderOf, Model(..), HasTools, SupportsSystemPrompt)
 import UniversalLLM.Settings (SettingField, SettingValue, ConfigFor, GSettingFields, GSetField, GToggleField, GDefault, ModelSettings, settingFields, setField, toggleField, defaultConfig, toModelConfigs)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
 import Runix.LLM (LLM)
 import Runix.LLMStream (LLMStreaming)
 import Runix.HTTP (HTTPStreaming)
-import Runix.LLM.Interpreter (interpretLLMWith, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), ProviderProtocol, EnableStreaming, ProtocolRequest)
+import Runix.LLM.Interpreter (interpretLLMWith, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..), ProviderProtocol, EnableStreaming, ProtocolRequest)
 import Runix.RestAPI (RestEndpoint)
 import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Config (ModelId)
 import qualified Config
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, qwen35_122B, qwen3Coder, universalWithTools, glm45AirZAI, glm46, glm47, glm5)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), AlibabaCloud(..), ModelDefaults(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, minimaxM25AlibabaCloud, qwen35_122B, qwen35Plus, qwen3Coder, kimiK25AlibabaCloud, universalWithTools, glm45AirZAI, glm46, glm47, glm5, glm5AlibabaCloud)
 import qualified Runix.FileSystem.System as System.Effects
 
 --------------------------------------------------------------------------------
@@ -338,7 +338,7 @@ mkEntry mid name auth provider model = ModelEntry
 -- Models whose auth is unavailable are silently skipped.
 buildAvailableModels :: IO [ModelEntry]
 buildAvailableModels = catMaybes . concat <$> sequence
-  [ probeAnthropic, probeLlamaCpp, probeZAI, probeOpenRouter ]
+  [ probeAnthropic, probeLlamaCpp, probeZAI, probeAlibabaCloud, probeOpenRouter ]
 
 probeAnthropic :: IO [Maybe ModelEntry]
 probeAnthropic = do
@@ -378,6 +378,20 @@ probeZAI = do
         , mkEntry Config.GLM46ZAI    "GLM 4.6 (ZAI)"     auth glm46       (Model GLM46 ZAI)
         , mkEntry Config.GLM47ZAI    "GLM 4.7 (ZAI)"     auth glm47       (Model GLM47 ZAI)
         , mkEntry Config.GLM5ZAI     "GLM 5 (ZAI)"       auth glm5        (Model GLM5 ZAI)
+        ]
+
+probeAlibabaCloud :: IO [Maybe ModelEntry]
+probeAlibabaCloud = do
+  mKey <- lookupEnv "ALIBABACLOUD_API_KEY"
+  case mKey of
+    Nothing -> return [Nothing, Nothing, Nothing, Nothing]
+    Just key ->
+      let auth = AlibabaCloudAuth key
+      in return $ map Just
+        [ mkEntry Config.MinimaxM25AlibabaCloud "MiniMax M2.5 (AlibabaCloud)" auth minimaxM25AlibabaCloud (Model MinimaxM25 AlibabaCloud)
+        , mkEntry Config.KimiK25AlibabaCloud    "Kimi K2.5 (AlibabaCloud)"    auth kimiK25AlibabaCloud    (Model KimiK25 AlibabaCloud)
+        , mkEntry Config.Qwen35PlusAlibabaCloud "Qwen 3.5 Plus (AlibabaCloud)" auth qwen35Plus             (Model Qwen35Plus AlibabaCloud)
+        , mkEntry Config.GLM5AlibabaCloud       "GLM 5 (AlibabaCloud)"        auth glm5AlibabaCloud       (Model GLM5 AlibabaCloud)
         ]
 
 probeOpenRouter :: IO [Maybe ModelEntry]
