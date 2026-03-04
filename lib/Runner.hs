@@ -83,7 +83,7 @@ import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Config (ModelId)
 import qualified Config
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), AlibabaCloud(..), ModelDefaults(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth, glm45AirLlamaCpp, minimaxM25LlamaCpp, minimaxM25AlibabaCloud, qwen35_122B, qwen35Plus, qwen3Coder, kimiK25AlibabaCloud, universalWithTools, glm45AirZAI, glm46, glm47, glm5, glm5AlibabaCloud)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), AlibabaCloud(..), AnthropicOAuth(..), LlamaCpp(..), OpenRouter(..), ModelDefaults(..), route, via)
 import qualified Runix.FileSystem.System as System.Effects
 
 --------------------------------------------------------------------------------
@@ -348,9 +348,9 @@ probeAnthropic = do
     Just token ->
       let auth = AnthropicOAuthAuth token
       in return $ map Just
-        [ mkEntry Config.ClaudeSonnet45 "Claude Sonnet 4.5" auth claudeSonnet45OAuth (Model ClaudeSonnet45 AnthropicOAuth)
-        , mkEntry Config.ClaudeHaiku45  "Claude Haiku 4.5"  auth claudeHaiku45OAuth  (Model ClaudeHaiku45 AnthropicOAuth)
-        , mkEntry Config.ClaudeOpus46   "Claude Opus 4.6"   auth claudeOpus46OAuth   (Model ClaudeOpus46 AnthropicOAuth)
+        [ mkEntry Config.ClaudeSonnet45 "Claude Sonnet 4.5" auth route (ClaudeSonnet45 `via` AnthropicOAuth)
+        , mkEntry Config.ClaudeHaiku45  "Claude Haiku 4.5"  auth route (ClaudeHaiku45 `via` AnthropicOAuth)
+        , mkEntry Config.ClaudeOpus46   "Claude Opus 4.6"   auth route (ClaudeOpus46 `via` AnthropicOAuth)
         ]
 
 probeLlamaCpp :: IO [Maybe ModelEntry]
@@ -360,10 +360,10 @@ probeLlamaCpp = do
       auth = LlamaCppAuth endpoint
   -- LlamaCpp is always available (defaults to localhost)
   return $ map Just
-    [ mkEntry Config.GLM45AirLlamaCpp   "GLM 4.5 Air (LlamaCpp)"  auth glm45AirLlamaCpp   (Model GLM45Air LlamaCpp)
-    , mkEntry Config.MinimaxM25LlamaCpp "MiniMax M2.5 (LlamaCpp)" auth minimaxM25LlamaCpp (Model MinimaxM25 LlamaCpp)
-    , mkEntry Config.Qwen35LlamaCpp     "Qwen 3.5 122B (LlamaCpp)" auth qwen35_122B       (Model Qwen35_122B LlamaCpp)
-    , mkEntry Config.Qwen3CoderLlamaCpp "Qwen3 Coder (LlamaCpp)"  auth qwen3Coder         (Model Qwen3CoderNext LlamaCpp)
+    [ mkEntry Config.GLM45AirLlamaCpp   "GLM 4.5 Air (LlamaCpp)"  auth route (GLM45Air `via` LlamaCpp)
+    , mkEntry Config.MinimaxM25LlamaCpp "MiniMax M2.5 (LlamaCpp)" auth route (MinimaxM25 `via` LlamaCpp)
+    , mkEntry Config.Qwen35LlamaCpp     "Qwen 3.5 122B (LlamaCpp)" auth route (Qwen35_122B `via` LlamaCpp)
+    , mkEntry Config.Qwen3CoderLlamaCpp "Qwen3 Coder (LlamaCpp)"  auth route (Qwen3CoderNext `via` LlamaCpp)
     ]
 
 probeZAI :: IO [Maybe ModelEntry]
@@ -374,10 +374,10 @@ probeZAI = do
     Just key ->
       let auth = ZAIAuth key
       in return $ map Just
-        [ mkEntry Config.GLM45AirZAI "GLM 4.5 Air (ZAI)" auth glm45AirZAI (Model GLM45Air ZAI)
-        , mkEntry Config.GLM46ZAI    "GLM 4.6 (ZAI)"     auth glm46       (Model GLM46 ZAI)
-        , mkEntry Config.GLM47ZAI    "GLM 4.7 (ZAI)"     auth glm47       (Model GLM47 ZAI)
-        , mkEntry Config.GLM5ZAI     "GLM 5 (ZAI)"       auth glm5        (Model GLM5 ZAI)
+        [ mkEntry Config.GLM45AirZAI "GLM 4.5 Air (ZAI)" auth route (GLM45Air `via` ZAI)
+        , mkEntry Config.GLM46ZAI    "GLM 4.6 (ZAI)"     auth route (GLM46 `via` ZAI)
+        , mkEntry Config.GLM47ZAI    "GLM 4.7 (ZAI)"     auth route (GLM47 `via` ZAI)
+        , mkEntry Config.GLM5ZAI     "GLM 5 (ZAI)"       auth route (GLM5 `via` ZAI)
         ]
 
 probeAlibabaCloud :: IO [Maybe ModelEntry]
@@ -388,10 +388,10 @@ probeAlibabaCloud = do
     Just key ->
       let auth = AlibabaCloudAuth key
       in return $ map Just
-        [ mkEntry Config.MinimaxM25AlibabaCloud "MiniMax M2.5 (AlibabaCloud)" auth minimaxM25AlibabaCloud (Model MinimaxM25 AlibabaCloud)
-        , mkEntry Config.KimiK25AlibabaCloud    "Kimi K2.5 (AlibabaCloud)"    auth kimiK25AlibabaCloud    (Model KimiK25 AlibabaCloud)
-        , mkEntry Config.Qwen35PlusAlibabaCloud "Qwen 3.5 Plus (AlibabaCloud)" auth qwen35Plus             (Model Qwen35Plus AlibabaCloud)
-        , mkEntry Config.GLM5AlibabaCloud       "GLM 5 (AlibabaCloud)"        auth glm5AlibabaCloud       (Model GLM5 AlibabaCloud)
+        [ mkEntry Config.MinimaxM25AlibabaCloud "MiniMax M2.5 (AlibabaCloud)" auth route (MinimaxM25 `via` AlibabaCloud)
+        , mkEntry Config.KimiK25AlibabaCloud    "Kimi K2.5 (AlibabaCloud)"    auth route (KimiK25 `via` AlibabaCloud)
+        , mkEntry Config.Qwen35PlusAlibabaCloud "Qwen 3.5 Plus (AlibabaCloud)" auth route (Qwen35Plus `via` AlibabaCloud)
+        , mkEntry Config.GLM5AlibabaCloud       "GLM 5 (AlibabaCloud)"        auth route (GLM5 `via` AlibabaCloud)
         ]
 
 probeOpenRouter :: IO [Maybe ModelEntry]
@@ -401,7 +401,7 @@ probeOpenRouter = do
   case (mKey, mModel) of
     (Just key, Just modelName) ->
       let auth = OpenRouterAuth key
-      in return [Just $ mkEntry Config.OpenRouterModel (T.pack $ "OpenRouter: " ++ modelName) auth universalWithTools (Model (UniversalWithTools (T.pack modelName)) OpenRouter)]
+      in return [Just $ mkEntry Config.OpenRouterModel (T.pack $ "OpenRouter: " ++ modelName) auth route (UniversalWithTools (T.pack modelName) `via` OpenRouter)]
     _ -> return [Nothing]
 
 --------------------------------------------------------------------------------

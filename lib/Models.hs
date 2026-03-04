@@ -1,4 +1,5 @@
 {-# LANGUAGE TypeApplications #-}
+{-# LANGUAGE TypeOperators #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE InstanceSigs #-}
@@ -11,8 +12,11 @@
 -- This module re-exports tested models from UniversalLLM.Models and adds
 -- runix-code-specific configuration defaults.
 module Models
-  ( -- * Re-exported from UniversalLLM.Models
-    ClaudeSonnet45(..)
+  ( -- * Core re-exports
+    route
+  , via
+    -- * Re-exported from UniversalLLM.Models
+  , ClaudeSonnet45(..)
   , ClaudeHaiku45(..)
   , ClaudeOpus46(..)
   , GLM45Air(..)
@@ -26,74 +30,49 @@ module Models
   , Qwen3CoderNext(..)
   , Qwen35Plus(..)
   , KimiK25(..)
-  , Universal(..)
-    -- * Tested providers from universal-llm
-  , claudeSonnet45OAuth
-  , claudeHaiku45OAuth
-  , claudeOpus46OAuth
-  , minimaxM25LlamaCpp
-  , minimaxM25AlibabaCloud
-  , qwen35_122B
-  , qwen35Plus
-  , glm45AirLlamaCpp
-  , glm45AirZAI
-  , glm46
-  , glm47
-  , glm5
-  , glm5AlibabaCloud
-  , qwen3Coder
-  , kimiK25AlibabaCloud
-  , universal
     -- * Runix-code specific models
   , UniversalWithTools(..)
-  , universalWithTools
+  , OpenRouter(..)
+  , AnthropicOAuth(..)
+  , LlamaCpp(..)
     -- * Runix-code specific
   , ModelDefaults(..)
   ) where
 
 import Data.Text (Text)
 import GHC.Generics (Generic)
-import UniversalLLM
+import UniversalLLM (route, via, Via, Model(..), ModelName(..), HasTools(..), Routing(..), ModelConfig(..), chainProviders)
 import UniversalLLM.Settings
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
-import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), claudeSonnet45OAuth, claudeHaiku45OAuth, claudeOpus46OAuth)
-import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), glm45AirLlamaCpp, glm45AirZAI, glm46, glm47, glm5, glm5AlibabaCloud)
-import UniversalLLM.Models.Minimax.M (MinimaxM25(..), minimaxM25LlamaCpp, minimaxM25AlibabaCloud)
-import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), qwen35_122B, qwen3Coder, qwen35Plus)
-import UniversalLLM.Models.Moonshot.Kimi (KimiK25(..), kimiK25AlibabaCloud)
-import UniversalLLM.Models.OpenRouter (Universal(..))
+import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..))
+import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..))
+import UniversalLLM.Models.Minimax.M (MinimaxM25(..))
+import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..))
+import UniversalLLM.Models.Moonshot.Kimi (KimiK25(..))
 
 --------------------------------------------------------------------------------
--- Runix-Code Specific Providers
+-- Runix-Code Specific Models
 --------------------------------------------------------------------------------
-
--- | Universal OpenRouter provider - text-only base provider
---
--- Universal is intentionally text-only for safety since not all OpenRouter
--- models support tools/reasoning/JSON.
-universal :: ComposableProvider (Model Universal OpenRouter) ()
-universal = OpenAI.baseComposableProvider @(Model Universal OpenRouter)
 
 -- | UniversalWithTools - OpenRouter model with tools support
 --
 -- This is the runix-code-specific variant that assumes the OpenRouter model
--- supports tools (required for a coding assistant). Use this instead of
--- Universal when you need tool calling support.
+-- supports tools (required for a coding assistant).
 data UniversalWithTools = UniversalWithTools Text deriving (Show, Eq)
 
-instance ModelName (Model UniversalWithTools OpenRouter) where
+instance ModelName (UniversalWithTools `Via` OpenRouter) where
   modelName (Model (UniversalWithTools name) _) = name
 
-instance HasTools (Model UniversalWithTools OpenRouter) where
+instance HasTools (UniversalWithTools `Via` OpenRouter) where
   withTools = OpenAI.openAITools
 
--- | Composable provider for UniversalWithTools
-universalWithTools :: ComposableProvider (Model UniversalWithTools OpenRouter) ((), ())
-universalWithTools = withTools `chainProviders` OpenAI.baseComposableProvider @(Model UniversalWithTools OpenRouter)
+instance Routing (UniversalWithTools `Via` OpenRouter) where
+  type RoutingState (UniversalWithTools `Via` OpenRouter) = ((), ())
+  route = withTools `chainProviders` OpenAI.baseComposableProvider @(UniversalWithTools `Via` OpenRouter)
 
 --------------------------------------------------------------------------------
 -- Default Configuration Class
@@ -107,78 +86,75 @@ class ModelDefaults model where
 -- Runix-Code Specific Default Configurations
 --------------------------------------------------------------------------------
 
-instance ModelDefaults (Model ClaudeSonnet45 AnthropicOAuth) where
-  defaultConfigs :: [ModelConfig (Model ClaudeSonnet45 AnthropicOAuth)]
+instance ModelDefaults (ClaudeSonnet45 `Via` AnthropicOAuth) where
+  defaultConfigs :: [ModelConfig (ClaudeSonnet45 `Via` AnthropicOAuth)]
   defaultConfigs =
     [ Reasoning True    -- Enable extended thinking
     ]
 
-instance ModelDefaults (Model ClaudeHaiku45 AnthropicOAuth) where
-  defaultConfigs :: [ModelConfig (Model ClaudeHaiku45 AnthropicOAuth)]
+instance ModelDefaults (ClaudeHaiku45 `Via` AnthropicOAuth) where
+  defaultConfigs :: [ModelConfig (ClaudeHaiku45 `Via` AnthropicOAuth)]
   defaultConfigs =
     [ Reasoning True    -- Enable extended thinking
     ]
 
-instance ModelDefaults (Model ClaudeOpus46 AnthropicOAuth) where
-  defaultConfigs :: [ModelConfig (Model ClaudeOpus46 AnthropicOAuth)]
+instance ModelDefaults (ClaudeOpus46 `Via` AnthropicOAuth) where
+  defaultConfigs :: [ModelConfig (ClaudeOpus46 `Via` AnthropicOAuth)]
   defaultConfigs =
     [ Reasoning True    -- Enable adaptive reasoning
     ]
 
-instance ModelDefaults (Model GLM45Air LlamaCpp) where
+instance ModelDefaults (GLM45Air `Via` LlamaCpp) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model MinimaxM25 LlamaCpp) where
+instance ModelDefaults (MinimaxM25 `Via` LlamaCpp) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model Qwen35_122B LlamaCpp) where
+instance ModelDefaults (Qwen35_122B `Via` LlamaCpp) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model Qwen3CoderNext LlamaCpp) where
+instance ModelDefaults (Qwen3CoderNext `Via` LlamaCpp) where
   defaultConfigs = []
 
-instance ModelDefaults (Model Universal OpenRouter) where
+instance ModelDefaults (UniversalWithTools `Via` OpenRouter) where
   defaultConfigs = []
 
-instance ModelDefaults (Model UniversalWithTools OpenRouter) where
-  defaultConfigs = []
-
-instance ModelDefaults (Model GLM45Air ZAI) where
+instance ModelDefaults (GLM45Air `Via` ZAI) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model GLM46 ZAI) where
+instance ModelDefaults (GLM46 `Via` ZAI) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model GLM47 ZAI) where
+instance ModelDefaults (GLM47 `Via` ZAI) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model GLM5 ZAI) where
+instance ModelDefaults (GLM5 `Via` ZAI) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (Model MinimaxM25 AlibabaCloud) where
+instance ModelDefaults (MinimaxM25 `Via` AlibabaCloud) where
   defaultConfigs = []
 
-instance ModelDefaults (Model KimiK25 AlibabaCloud) where
+instance ModelDefaults (KimiK25 `Via` AlibabaCloud) where
   defaultConfigs = []
 
-instance ModelDefaults (Model Qwen35Plus AlibabaCloud) where
+instance ModelDefaults (Qwen35Plus `Via` AlibabaCloud) where
   defaultConfigs = []
 
-instance ModelDefaults (Model GLM5 AlibabaCloud) where
+instance ModelDefaults (GLM5 `Via` AlibabaCloud) where
   defaultConfigs = []
 
 --------------------------------------------------------------------------------
@@ -186,23 +162,22 @@ instance ModelDefaults (Model GLM5 AlibabaCloud) where
 --------------------------------------------------------------------------------
 
 -- | Type instances for ConfigFor - each model's canonical configuration
-type instance ConfigFor (Model ClaudeSonnet45 AnthropicOAuth) = ClaudeSonnet45Config
-type instance ConfigFor (Model ClaudeHaiku45 AnthropicOAuth) = ClaudeHaiku45Config
-type instance ConfigFor (Model ClaudeOpus46 AnthropicOAuth) = ClaudeOpus46Config
-type instance ConfigFor (Model GLM45Air LlamaCpp) = GLM45AirConfig
-type instance ConfigFor (Model MinimaxM25 LlamaCpp) = MinimaxM25Config
-type instance ConfigFor (Model Qwen35_122B LlamaCpp) = Qwen35Config
-type instance ConfigFor (Model Qwen3CoderNext LlamaCpp) = Qwen3CoderConfig
-type instance ConfigFor (Model Universal OpenRouter) = UniversalConfig
-type instance ConfigFor (Model UniversalWithTools OpenRouter) = UniversalWithToolsConfig
-type instance ConfigFor (Model GLM45Air ZAI) = GLM45AirZAIConfig
-type instance ConfigFor (Model GLM46 ZAI) = GLM46Config
-type instance ConfigFor (Model GLM47 ZAI) = GLM47Config
-type instance ConfigFor (Model GLM5 ZAI) = GLM5Config
-type instance ConfigFor (Model MinimaxM25 AlibabaCloud) = MinimaxM25AlibabaCloudConfig
-type instance ConfigFor (Model KimiK25 AlibabaCloud) = KimiK25AlibabaCloudConfig
-type instance ConfigFor (Model Qwen35Plus AlibabaCloud) = Qwen35PlusConfig
-type instance ConfigFor (Model GLM5 AlibabaCloud) = GLM5AlibabaCloudConfig
+type instance ConfigFor (ClaudeSonnet45 `Via` AnthropicOAuth) = ClaudeSonnet45Config
+type instance ConfigFor (ClaudeHaiku45 `Via` AnthropicOAuth) = ClaudeHaiku45Config
+type instance ConfigFor (ClaudeOpus46 `Via` AnthropicOAuth) = ClaudeOpus46Config
+type instance ConfigFor (GLM45Air `Via` LlamaCpp) = GLM45AirConfig
+type instance ConfigFor (MinimaxM25 `Via` LlamaCpp) = MinimaxM25Config
+type instance ConfigFor (Qwen35_122B `Via` LlamaCpp) = Qwen35Config
+type instance ConfigFor (Qwen3CoderNext `Via` LlamaCpp) = Qwen3CoderConfig
+type instance ConfigFor (UniversalWithTools `Via` OpenRouter) = UniversalWithToolsConfig
+type instance ConfigFor (GLM45Air `Via` ZAI) = GLM45AirZAIConfig
+type instance ConfigFor (GLM46 `Via` ZAI) = GLM46Config
+type instance ConfigFor (GLM47 `Via` ZAI) = GLM47Config
+type instance ConfigFor (GLM5 `Via` ZAI) = GLM5Config
+type instance ConfigFor (MinimaxM25 `Via` AlibabaCloud) = MinimaxM25AlibabaCloudConfig
+type instance ConfigFor (KimiK25 `Via` AlibabaCloud) = KimiK25AlibabaCloudConfig
+type instance ConfigFor (Qwen35Plus `Via` AlibabaCloud) = Qwen35PlusConfig
+type instance ConfigFor (GLM5 `Via` AlibabaCloud) = GLM5AlibabaCloudConfig
 
 -- Claude Sonnet 4.5 configuration
 data ClaudeSonnet45Config = ClaudeSonnet45Config
@@ -248,12 +223,6 @@ data Qwen35Config = Qwen35Config
 
 -- Qwen3-Coder configuration (no reasoning)
 data Qwen3CoderConfig = Qwen3CoderConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Universal (OpenRouter) configuration - text-only, no reasoning
-data UniversalConfig = UniversalConfig
   { temperature :: Maybe TemperatureSetting
   , maxTokens :: Maybe MaxTokensSetting
   } deriving stock (Show, Eq, Generic)

@@ -110,7 +110,7 @@ data Config = Config
 -- | Load configuration from CLI args and environment variables
 --
 -- Environment variables:
--- - RUNIX_MODEL: Model selection (aliases resolved to 'ModelId' via 'resolveModelId')
+-- - RUNIX_MODEL: Model selection (format: provider/model or provider/variant/model)
 --
 -- CLI arguments:
 -- - First positional argument: session file path (optional, legacy)
@@ -138,8 +138,87 @@ parseArgs [] = (Nothing, Nothing)
 
 -- | Resolve a user-provided model string to a 'ModelId'.
 -- Returns 'Nothing' for unrecognized strings.
+--
+-- New format: "provider/model" (e.g., "llamacpp/glm45-air", "zai/glm-4.7", "anthropic/sonnet")
+-- Legacy formats still supported for backwards compatibility
 resolveModelId :: T.Text -> Maybe ModelId
-resolveModelId input = case T.toLower input of
+resolveModelId input =
+  let normalized = T.toLower . T.strip $ input
+  in case T.split (=='/') normalized of
+    -- New provider/model format
+    ["anthropic", model] -> resolveAnthropicModel model
+    ["llamacpp", model] -> resolveLlamaCppModel model
+    ["zai", model] -> resolveZAIModel model
+    ["alibabacloud", model] -> resolveAlibabaCloudModel model
+    ["openrouter"] -> Just OpenRouterModel
+    ["openrouter", _] -> Just OpenRouterModel  -- provider/variant/model for future
+
+    -- Legacy single-word aliases (backwards compatibility)
+    [single] -> resolveLegacyAlias single
+
+    _ -> Nothing
+
+-- Provider-specific model resolvers
+resolveAnthropicModel :: T.Text -> Maybe ModelId
+resolveAnthropicModel = \case
+  "sonnet" -> Just ClaudeSonnet45
+  "sonnet-4.5" -> Just ClaudeSonnet45
+  "claude-sonnet-4.5" -> Just ClaudeSonnet45
+  "haiku" -> Just ClaudeHaiku45
+  "haiku-4.5" -> Just ClaudeHaiku45
+  "claude-haiku-4.5" -> Just ClaudeHaiku45
+  "opus" -> Just ClaudeOpus46
+  "opus-4.6" -> Just ClaudeOpus46
+  "claude-opus-4.6" -> Just ClaudeOpus46
+  _ -> Nothing
+
+resolveLlamaCppModel :: T.Text -> Maybe ModelId
+resolveLlamaCppModel = \case
+  "glm45-air" -> Just GLM45AirLlamaCpp
+  "glm-45-air" -> Just GLM45AirLlamaCpp
+  "glm-4.5-air" -> Just GLM45AirLlamaCpp
+  "minimax" -> Just MinimaxM25LlamaCpp
+  "minimax-m25" -> Just MinimaxM25LlamaCpp
+  "minimax-m2.5" -> Just MinimaxM25LlamaCpp
+  "qwen35" -> Just Qwen35LlamaCpp
+  "qwen-3.5" -> Just Qwen35LlamaCpp
+  "qwen3.5-122b" -> Just Qwen35LlamaCpp
+  "qwen3-coder" -> Just Qwen3CoderLlamaCpp
+  "qwen-3-coder" -> Just Qwen3CoderLlamaCpp
+  _ -> Nothing
+
+resolveZAIModel :: T.Text -> Maybe ModelId
+resolveZAIModel = \case
+  "glm45-air" -> Just GLM45AirZAI
+  "glm-45-air" -> Just GLM45AirZAI
+  "glm-4.5-air" -> Just GLM45AirZAI
+  "glm46" -> Just GLM46ZAI
+  "glm-46" -> Just GLM46ZAI
+  "glm-4.6" -> Just GLM46ZAI
+  "glm47" -> Just GLM47ZAI
+  "glm-47" -> Just GLM47ZAI
+  "glm-4.7" -> Just GLM47ZAI
+  "glm5" -> Just GLM5ZAI
+  "glm-5" -> Just GLM5ZAI
+  _ -> Nothing
+
+resolveAlibabaCloudModel :: T.Text -> Maybe ModelId
+resolveAlibabaCloudModel = \case
+  "minimax" -> Just MinimaxM25AlibabaCloud
+  "minimax-m25" -> Just MinimaxM25AlibabaCloud
+  "minimax-m2.5" -> Just MinimaxM25AlibabaCloud
+  "kimi" -> Just KimiK25AlibabaCloud
+  "kimi-k25" -> Just KimiK25AlibabaCloud
+  "kimi-k2.5" -> Just KimiK25AlibabaCloud
+  "qwen35-plus" -> Just Qwen35PlusAlibabaCloud
+  "qwen-3.5-plus" -> Just Qwen35PlusAlibabaCloud
+  "glm5" -> Just GLM5AlibabaCloud
+  "glm-5" -> Just GLM5AlibabaCloud
+  _ -> Nothing
+
+-- Legacy single-word aliases for backwards compatibility
+resolveLegacyAlias :: T.Text -> Maybe ModelId
+resolveLegacyAlias = \case
   -- Anthropic
   "claude-sonnet-45"  -> Just ClaudeSonnet45
   "claude-sonnet-4-5" -> Just ClaudeSonnet45
