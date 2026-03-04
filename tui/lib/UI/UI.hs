@@ -46,6 +46,7 @@ import UI.UserInput.InputWidget (isWidgetComplete)
 import qualified UI.Attributes as Attrs
 import qualified UI.Widgets.MessageHistory as MH
 import qualified UI.InputPanel as IP
+import qualified Runix.LLM.Context as Context
 
 -- | Custom events for the TUI
 data CustomEvent msg
@@ -265,6 +266,11 @@ drawUI st = [indicatorLayer, baseLayer]
     mPendingInput = _pendingInput st
     wzipper = _widgetZipper st
     _vars = _uiVars st
+    ozipper = _outputZipper st
+
+    -- Calculate token count from history
+    historyMessages = extractMessages ozipper
+    Context.TokenCount tokens = Context.tokenCount historyMessages
 
     -- Extract pre-rendered widgets from the widget zipper
     -- Zipper structure: front is reversed (newest at head), back is natural order (oldest at head)
@@ -344,7 +350,7 @@ drawUI st = [indicatorLayer, baseLayer]
                           padLeft (Pad 1) (padRight (Pad 1) $
                             renderEditor (vBox . map renderLine) True (_inputEditor st))
                     , hBorder
-                    , renderStatusBar (_inputMode st) (_markdownMode st)
+                    , renderStatusBar (_inputMode st) (_markdownMode st) tokens
                     ]
       T.render ui
 
@@ -365,8 +371,8 @@ drawUI st = [indicatorLayer, baseLayer]
       in withAttr promptAttr (txt ">")
 
     -- Render a structured status bar with colors
-    renderStatusBar :: InputMode -> MarkdownMode -> T.Widget Name
-    renderStatusBar inputMode mdMode =
+    renderStatusBar :: InputMode -> MarkdownMode -> Int -> T.Widget Name
+    renderStatusBar inputMode mdMode tokenCount =
       let -- Mode indicators
           inputModeWidget = case inputMode of
             EnterSends -> txt "Enter: send"
@@ -376,9 +382,14 @@ drawUI st = [indicatorLayer, baseLayer]
             RenderMarkdown -> txt "markdown"
             ShowRaw -> txt "raw"
 
+          -- Token count widget
+          tokenWidget = withAttr Attrs.codeAttr (txt $ Text.pack (show tokenCount) <> " tokens")
+
           modesWidget = withAttr Attrs.boldAttr inputModeWidget
                     <+> txt "  "
                     <+> withAttr Attrs.boldAttr mdModeWidget
+                    <+> txt "  "
+                    <+> tokenWidget
 
           -- Keybindings section (right side)
           keybinding key desc = withAttr Attrs.codeAttr (txt key) <+> txt (" " <> desc)
