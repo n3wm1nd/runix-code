@@ -70,6 +70,7 @@ import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 import UI.OutputHistory (OutputItem(..), OutputHistoryZipper, listToZipper, addCompletedToolItems, extractMessages, emptyZipper, zipperToList)
+import qualified Runix.LLM.Context
 
 
 --------------------------------------------------------------------------------
@@ -176,6 +177,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
             { slashCommands = [ echoCommand
                               , reloadCommand historyMessages
                               , clearCommand
+                              , compactQuickCommand currentHistory
                               , showZipperCommand currentHistory
                               , let (name, fn) = ViewCmd.viewCommand historyMessages uiVars
                                 in SlashCommand { commandName = name, commandFn = fn }
@@ -263,6 +265,31 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
     clearCommand = SlashCommand
       { commandName = "clear"
       , commandFn = \_ -> embed $ sendAgentEvent uiVars (RestoreSessionEvent emptyZipper)
+      }
+
+    -- | CompactQuick command: compress history by stripping tool results
+    compactQuickCommand :: forall r. (Member (Embed IO) r, Member Logging r) => OutputHistoryZipper (Message model) -> SlashCommand r
+    compactQuickCommand zipper = SlashCommand
+      { commandName = "compactquick"
+      , commandFn = \_ -> do
+          -- Extract messages from zipper
+          let historyMessages = extractMessages zipper
+              beforeCount = length historyMessages
+
+          -- Apply quick compression
+          let compressedMessages = Runix.LLM.Context.compactQuick historyMessages
+              afterCount = length compressedMessages
+
+          -- Convert back to zipper (reverse for newest-first)
+          let items = map MessageItem (reverse compressedMessages)
+              itemsWithTools = addCompletedToolItems items
+              newZipper = listToZipper itemsWithTools
+
+          -- Send event to update UI (this replaces the zipper)
+          embed $ sendAgentEvent uiVars (RestoreSessionEvent newZipper)
+
+          -- Log the compression stats AFTER the restore, so the log message persists
+          info $ T.pack $ "Compressed history: " ++ show beforeCount ++ " → " ++ show afterCount ++ " messages"
       }
 
     -- | ShowZipper command: debug output of current zipper contents
