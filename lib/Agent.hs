@@ -186,6 +186,7 @@ runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
               [ LLMTool (Tools.grep @ProjectFS)
               , LLMTool (Tools.glob @ProjectFS)
               , LLMTool (Tools.readFile @ProjectFS)
+              , LLMTool (Tools.sedPrint @ProjectFS)
               , LLMTool (Tools.getCwd @ProjectFS)
               , LLMTool (LocalTools.ask @widget)
               , LLMTool Tools.todoWrite
