@@ -27,14 +27,13 @@ module UI.UserInterface
   ) where
 
 import Polysemy
-import Polysemy.State (State, get, put, evalState)
 import Polysemy.Fail (Fail(..))
 import qualified Data.Text as T
 
 import Runix.LLM (LLM(..))
 import Runix.Logging (Logging(..))
 import UniversalLLM (Message)
-import UI.AgentWidgets (AgentWidgets(..), AgentStatus(..), SubsectionAddr(..), addMessage, logMessage, setStatus, replaceHistory, startSubsection)
+import UI.AgentWidgets (AgentWidgets(..), AgentStatus(..), SubsectionAddr(..), addMessage, logMessage, setStatus, startSubsection)
 
 -- | Interpret LLM, Logging, and inner AgentWidgets effects as AgentWidgets operations
 --

@@ -13,10 +13,9 @@ module UI.StreamingInterceptor
   ) where
 
 import Polysemy
-import Polysemy.State
 
-import Runix.LLMStream (LLMStreaming(..), StreamEvent)
-import Runix.Streaming (Streaming(..), fetchNext)
+import Runix.LLMStream (LLMStreaming, StreamEvent)
+import Runix.Streaming (Streaming(..))
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 import UniversalLLM (Message, ModelConfig)
 

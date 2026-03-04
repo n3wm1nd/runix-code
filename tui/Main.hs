@@ -24,7 +24,6 @@ import qualified System.IO as IO
 
 import Polysemy
 import Polysemy.Error (runError, Error, catch)
-import Polysemy.State (get)
 
 import UniversalLLM (Message(..))
 import UniversalLLM (ProviderOf)
@@ -38,7 +37,6 @@ import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
-import Runix.LLM (LLM)
 import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher)
 import qualified Runix.FileSystem.Simple
 import qualified Runix.FileSystem.System
@@ -61,7 +59,7 @@ import Polysemy.Fail (Fail)
 import UniversalLLM (HasTools, SupportsSystemPrompt)
 import qualified UI
 import UI.UserInterface (interpretAsWidget)
-import UI.AgentWidgets (AgentWidgets, addMessage, replaceHistory)
+import UI.AgentWidgets (addMessage, replaceHistory)
 import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
 import UI.StreamingInterceptor (interceptStreamChunksToUI)
 import Runix.LLMStream (LLMStreaming)

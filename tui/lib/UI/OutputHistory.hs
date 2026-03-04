@@ -66,9 +66,8 @@ import UI.Rendering (markdownToWidgets, markdownToWidgetsWithIndent)
 import UI.Attributes (logInfoAttr, logWarningAttr, logErrorAttr, focusedItemAttr, transparentBgAttr)
 import UI.AgentWidgets (AgentStatus(..), StreamingState(..), SubsectionAddr(..))
 import Brick.Types (Widget)
-import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), (<=>), vBox, withAttr, forceAttr, emptyWidget, fill)
+import Brick.Widgets.Core (txt, txtWrap, padLeft, (<+>), vBox, withAttr, emptyWidget)
 import Brick.Widgets.Core (Padding(..))
-import qualified Graphics.Vty as V
 import Runix.Logging (Level(..))
 import UniversalLLM (Message(..), ToolCall(..), ToolResult(..))
 import qualified Data.Aeson as Aeson
