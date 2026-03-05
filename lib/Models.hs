@@ -6,6 +6,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 -- | Model definitions for runix-code
 --
@@ -146,141 +147,59 @@ instance ModelDefaults (GLM5 `Via` ZAI) where
     ]
 
 instance ModelDefaults (MinimaxM25 `Via` AlibabaCloud) where
-  defaultConfigs = []
+  defaultConfigs =
+    [ Reasoning True    -- Enable reasoning extraction
+    ]
 
 instance ModelDefaults (KimiK25 `Via` AlibabaCloud) where
-  defaultConfigs = []
+  defaultConfigs =
+    [ Reasoning True    -- Enable Deep Thinking (reasoning content not returned)
+    ]
 
 instance ModelDefaults (Qwen35Plus `Via` AlibabaCloud) where
-  defaultConfigs = []
+  defaultConfigs =
+    [ Reasoning True    -- Enable reasoning extraction
+    ]
 
 instance ModelDefaults (GLM5 `Via` AlibabaCloud) where
-  defaultConfigs = []
+  defaultConfigs =
+    [ Reasoning True    -- Enable reasoning extraction
+    ]
 
 --------------------------------------------------------------------------------
 -- Model Configuration Types
 --------------------------------------------------------------------------------
 
+-- | Configuration for models with reasoning support
+data ConfigWithReasoning = ConfigWithReasoning
+  { reasoning :: ReasoningSetting
+  , temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
+-- | Configuration for models without reasoning support
+data ConfigBasic = ConfigBasic
+  { temperature :: Maybe TemperatureSetting
+  , maxTokens :: Maybe MaxTokensSetting
+  } deriving stock (Show, Eq, Generic)
+
 -- | Type instances for ConfigFor - each model's canonical configuration
-type instance ConfigFor (ClaudeSonnet45 `Via` AnthropicOAuth) = ClaudeSonnet45Config
-type instance ConfigFor (ClaudeHaiku45 `Via` AnthropicOAuth) = ClaudeHaiku45Config
-type instance ConfigFor (ClaudeOpus46 `Via` AnthropicOAuth) = ClaudeOpus46Config
-type instance ConfigFor (GLM45Air `Via` LlamaCpp) = GLM45AirConfig
-type instance ConfigFor (MinimaxM25 `Via` LlamaCpp) = MinimaxM25Config
-type instance ConfigFor (Qwen35_122B `Via` LlamaCpp) = Qwen35Config
-type instance ConfigFor (Qwen3CoderNext `Via` LlamaCpp) = Qwen3CoderConfig
-type instance ConfigFor (UniversalWithTools `Via` OpenRouter) = UniversalWithToolsConfig
-type instance ConfigFor (GLM45Air `Via` ZAI) = GLM45AirZAIConfig
-type instance ConfigFor (GLM46 `Via` ZAI) = GLM46Config
-type instance ConfigFor (GLM47 `Via` ZAI) = GLM47Config
-type instance ConfigFor (GLM5 `Via` ZAI) = GLM5Config
-type instance ConfigFor (MinimaxM25 `Via` AlibabaCloud) = MinimaxM25AlibabaCloudConfig
-type instance ConfigFor (KimiK25 `Via` AlibabaCloud) = KimiK25AlibabaCloudConfig
-type instance ConfigFor (Qwen35Plus `Via` AlibabaCloud) = Qwen35PlusConfig
-type instance ConfigFor (GLM5 `Via` AlibabaCloud) = GLM5AlibabaCloudConfig
+-- Models with reasoning support
+type instance ConfigFor (ClaudeSonnet45 `Via` AnthropicOAuth) = ConfigWithReasoning
+type instance ConfigFor (ClaudeHaiku45 `Via` AnthropicOAuth) = ConfigWithReasoning
+type instance ConfigFor (ClaudeOpus46 `Via` AnthropicOAuth) = ConfigWithReasoning
+type instance ConfigFor (GLM45Air `Via` LlamaCpp) = ConfigWithReasoning
+type instance ConfigFor (MinimaxM25 `Via` LlamaCpp) = ConfigWithReasoning
+type instance ConfigFor (Qwen35_122B `Via` LlamaCpp) = ConfigWithReasoning
+type instance ConfigFor (GLM45Air `Via` ZAI) = ConfigWithReasoning
+type instance ConfigFor (GLM46 `Via` ZAI) = ConfigWithReasoning
+type instance ConfigFor (GLM47 `Via` ZAI) = ConfigWithReasoning
+type instance ConfigFor (GLM5 `Via` ZAI) = ConfigWithReasoning
+type instance ConfigFor (MinimaxM25 `Via` AlibabaCloud) = ConfigWithReasoning
+type instance ConfigFor (KimiK25 `Via` AlibabaCloud) = ConfigWithReasoning  -- Hidden reasoning (parameter accepted, content not returned)
+type instance ConfigFor (Qwen35Plus `Via` AlibabaCloud) = ConfigWithReasoning
+type instance ConfigFor (GLM5 `Via` AlibabaCloud) = ConfigWithReasoning
 
--- Claude Sonnet 4.5 configuration
-data ClaudeSonnet45Config = ClaudeSonnet45Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Claude Haiku 4.5 configuration
-data ClaudeHaiku45Config = ClaudeHaiku45Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Claude Opus 4.6 configuration
-data ClaudeOpus46Config = ClaudeOpus46Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- GLM-4.5-Air (LlamaCpp) configuration
-data GLM45AirConfig = GLM45AirConfig
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- MiniMax M2.5 (LlamaCpp) configuration
-data MinimaxM25Config = MinimaxM25Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Qwen 3.5 122B configuration
-data Qwen35Config = Qwen35Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Qwen3-Coder configuration (no reasoning)
-data Qwen3CoderConfig = Qwen3CoderConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- UniversalWithTools (OpenRouter) configuration - tools support
-data UniversalWithToolsConfig = UniversalWithToolsConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- GLM-4.5-Air (ZAI) configuration
-data GLM45AirZAIConfig = GLM45AirZAIConfig
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- GLM-4.6 configuration
-data GLM46Config = GLM46Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- GLM-4.7 configuration
-data GLM47Config = GLM47Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- GLM-5 configuration
-data GLM5Config = GLM5Config
-  { reasoning :: ReasoningSetting
-  , temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- MiniMax M2.5 (AlibabaCloud) configuration
-data MinimaxM25AlibabaCloudConfig = MinimaxM25AlibabaCloudConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Kimi K2.5 (AlibabaCloud) configuration
-data KimiK25AlibabaCloudConfig = KimiK25AlibabaCloudConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- Qwen 3.5 Plus (AlibabaCloud) configuration
-data Qwen35PlusConfig = Qwen35PlusConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
-
--- GLM-5 (AlibabaCloud) configuration
-data GLM5AlibabaCloudConfig = GLM5AlibabaCloudConfig
-  { temperature :: Maybe TemperatureSetting
-  , maxTokens :: Maybe MaxTokensSetting
-  } deriving stock (Show, Eq, Generic)
+-- Models without reasoning support
+type instance ConfigFor (Qwen3CoderNext `Via` LlamaCpp) = ConfigBasic
+type instance ConfigFor (UniversalWithTools `Via` OpenRouter) = ConfigBasic
