@@ -18,6 +18,7 @@ module UI.RichInput
   , segmentsLast
   , segmentsInit
   , segmentsLines
+  , rotateMatches
   ) where
 
 import qualified Data.Text as T
@@ -34,7 +35,7 @@ data InputSegment
   = TextSegment Text
   | FileRefSegment
       { refTypedText :: Text      -- ^ What user typed (e.g., "ReadMe")
-      , refFilePath :: FilePath    -- ^ Resolved file path
+      , refMatches :: [FilePath]   -- ^ All matching file paths (head is current selection)
       , refState :: RefState       -- ^ Reference state
       }
   deriving stock (Eq, Show)
@@ -42,6 +43,11 @@ data InputSegment
 -- | State of a file reference
 data RefState = RefPending | RefAccepted | RefRejected
   deriving stock (Eq, Show)
+
+-- | Rotate to next match in a FileRefSegment (moves head to tail)
+rotateMatches :: InputSegment -> InputSegment
+rotateMatches (FileRefSegment typed (m:ms) state) = FileRefSegment typed (ms ++ [m]) state
+rotateMatches seg = seg  -- No rotation for TextSegment or empty matches
 
 -- | Type alias for clarity: a line is a list of segments
 type SegmentLine = [InputSegment]
@@ -55,7 +61,10 @@ segmentsToText :: [InputSegment] -> Text
 segmentsToText = mconcat . map segToText
   where
     segToText (TextSegment t) = t
-    segToText (FileRefSegment _ path _) = "@" <> T.pack path
+    segToText (FileRefSegment _ matches _) =
+      case matches of
+        (path:_) -> "@" <> T.pack path
+        [] -> "@"  -- Shouldn't happen, but handle gracefully
 
 -- | Get character length of segments
 segmentsLength :: [InputSegment] -> Int
@@ -70,7 +79,8 @@ segmentsTake n segs = go n segs
     go remaining (seg:rest) =
       let segText = case seg of
                       TextSegment t -> t
-                      FileRefSegment _ p _ -> "@" <> T.pack p
+                      FileRefSegment _ (p:_) _ -> "@" <> T.pack p
+                      FileRefSegment _ [] _ -> "@"
           segLen = T.length segText
       in if remaining >= segLen
          then seg : go (remaining - segLen) rest
@@ -87,7 +97,8 @@ segmentsDrop n segs = go n segs
     go remaining (seg:rest) =
       let segText = case seg of
                       TextSegment t -> t
-                      FileRefSegment _ p _ -> "@" <> T.pack p
+                      FileRefSegment _ (p:_) _ -> "@" <> T.pack p
+                      FileRefSegment _ [] _ -> "@"
           segLen = T.length segText
       in if remaining >= segLen
          then go (remaining - segLen) rest

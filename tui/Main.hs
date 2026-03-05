@@ -12,10 +12,11 @@
 module Main (main) where
 
 import qualified Data.Text as T
-import Data.List (find)
+import Data.List (find, nub)
 import Control.Concurrent (forkIO)
 import Control.Concurrent.STM
 import Control.Monad (forever, when)
+import qualified Control.Exception as Ex
 import qualified System.Directory as Dir
 import System.Environment (getExecutablePath)
 import System.Posix.Process (executeFile)
@@ -37,7 +38,7 @@ import qualified UI.Commands.View as ViewCmd
 import qualified UI.Commands.History as HistoryCmd
 import UI.UI (runUI)
 import Agent (runixCode, UserPrompt (UserPrompt), SystemPrompt (SystemPrompt))
-import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher)
+import Runix.FileSystem (FileSystem, FileSystemRead, FileSystemWrite, FileWatcher, glob)
 import qualified Runix.FileSystem.Simple
 import qualified Runix.FileSystem.System
 import Runix.Grep (Grep)
@@ -47,7 +48,7 @@ import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTime
 import Runix.Logging (Logging(..), info, Level(..), loggingNull)
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..))
+import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), waitForCompletion, completionQueue, CompletionRequest(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
@@ -122,6 +123,67 @@ main = do
   case entryInterpreter selectedEntry of
     ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} ->
       runUI selectedEntry (\refreshCallback -> buildUIRunner availableModels interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
+
+--------------------------------------------------------------------------------
+-- Completion Handler
+--------------------------------------------------------------------------------
+
+-- | Handler for file completion requests (runs in separate thread)
+completionHandler :: FilePath -> RunixDataDir -> UIVars msg -> IO ()
+completionHandler cwd _dataDir uiVars = forever $ do
+  -- Wait for completion request
+  CompletionRequest pattern responseVar <- atomically $ waitForCompletion (completionQueue uiVars)
+
+  -- DEBUG: Log that we received a request
+  sendAgentEvent uiVars (LogEvent Info $ "Completion request for: " <> pattern)
+
+  -- Handle the request using filesystem effects
+  -- Copy the pattern from interpretTUIEffects: base effects last
+  let runToIO = runM
+              . runError @String
+              . loggingNull
+              . failLog
+              . Runix.FileSystem.System.filesystemIO
+              . fileSystemLocal (ProjectFS cwd)
+              . filterFileSystem @ProjectFS (hideGit)
+
+  -- Ensure we ALWAYS write to the TVar, even on exceptions
+  result <- runToIO (handleCompletionRequest pattern) `Ex.catch` \(e :: Ex.SomeException) -> do
+    sendAgentEvent uiVars (LogEvent Error $ "Completion exception: " <> T.pack (show e))
+    return (Left (show e))
+
+  -- Write response to TVar
+  case result of
+    Left err -> do
+      sendAgentEvent uiVars (LogEvent Error $ "Completion error: " <> T.pack err)
+      atomically $ writeTVar responseVar (Just [])
+    Right files -> do
+      sendAgentEvent uiVars (LogEvent Info $ "Found " <> T.pack (show (length files)) <> " matches")
+      atomically $ writeTVar responseVar (Just files)
+
+-- | Handle a single completion request with filesystem access
+-- Tries multiple glob patterns to find matches
+-- TODO: case-insensitivity needs to be added to glob itself
+handleCompletionRequest :: Members '[FileSystem ProjectFS, Fail] r
+                        => T.Text
+                        -> Sem r [T.Text]
+handleCompletionRequest pattern = do
+  let pat = T.unpack pattern
+      -- Try multiple patterns in order of specificity
+      patterns = [ pat ++ "*"              -- Files starting with pattern in current dir
+                 , "**/" ++ pat ++ "*"     -- Files starting with pattern anywhere
+                 , "*" ++ pat ++ "*"       -- Files containing pattern in current dir
+                 , "**/*" ++ pat ++ "*"    -- Files containing pattern anywhere
+                 ]
+
+  -- Run all globs and collect results
+  allResults <- mapM (\p -> glob @ProjectFS "." p) patterns
+
+  -- Combine results, convert to Text, and remove duplicates
+  let allPaths = concat allResults
+      uniquePaths = nub $ map T.pack allPaths
+
+  return uniquePaths
 
 --------------------------------------------------------------------------------
 -- Agent Loop
@@ -413,6 +475,10 @@ buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSessi
   stat <- getFileStatus exePath
   let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
 
+  -- Start completion handler thread
+  _ <- forkIO $ completionHandler cwd dataDir uiVars
+
+  -- Start agent loop thread
   _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exePath initialMTime
   return uiVars
 

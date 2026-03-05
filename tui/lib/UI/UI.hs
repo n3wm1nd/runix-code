@@ -29,13 +29,14 @@ import qualified Graphics.Vty as V
 import Graphics.Vty.CrossPlatform (mkVty)
 import qualified Data.Text as Text
 import Data.Text (Text)
-import Data.Text.Zipper (TextZipper, cursorPosition, breakLine, deletePrevChar, moveLeft, moveRight, currentLine)
+import Data.Text.Zipper (TextZipper, cursorPosition, breakLine, deletePrevChar, moveLeft, moveRight, currentLine, moveCursor)
+import qualified Data.Text.Zipper.Generic as TZ
 import Lens.Micro
 import Lens.Micro.Mtl
 import Control.Monad.IO.Class (liftIO)
 import Control.Monad (when, void)
 import Control.Concurrent.STM
-import Data.List (intersperse, dropWhileEnd)
+import Data.List (dropWhileEnd)
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
@@ -48,7 +49,9 @@ import qualified UI.Attributes as Attrs
 import qualified UI.Widgets.MessageHistory as MH
 import qualified UI.InputPanel as IP
 import qualified Runix.LLM.Context as Context
-import UI.RichInput (InputSegment(..), RefState(..), SegmentLine, segmentsToText)
+import UI.RichInput (InputSegment(..), RefState(..), SegmentLine, segmentsToText, segmentsTake, segmentsDrop, segmentsLength, rotateMatches)
+import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..), requestCompletion, CompletionRequest(..), sendAgentEvent)
+import Runix.Logging (Level(..))
 
 -- | Custom events for the TUI
 data CustomEvent msg
@@ -262,6 +265,62 @@ moveWordForwards z =
     applyN n f x = iterate f x !! max 0 n
 
 --------------------------------------------------------------------------------
+-- Tab Completion
+--------------------------------------------------------------------------------
+
+-- | Get the current word at cursor position (returns word and its start/end positions)
+getCurrentWord :: Editor SegmentLine Name -> Maybe (Text, Int, Int)
+getCurrentWord ed =
+  let z = ed ^. editContentsL
+      (row, col) = cursorPosition z
+      contentLines = getEditContents ed
+  in if row < length contentLines
+     then
+       let line = segmentsToText (contentLines !! row)
+           lineStr = Text.unpack line
+           -- Find word boundaries
+           beforeCursor = take col lineStr
+           afterCursor = drop col lineStr
+           -- Expand left to word start
+           wordStart = length $ takeWhile (\c -> c /= ' ' && c /= '\n') $ reverse beforeCursor
+           -- Expand right to word end
+           wordEnd = length $ takeWhile (\c -> c /= ' ' && c /= '\n') afterCursor
+           startPos = col - wordStart
+           endPos = col + wordEnd
+           word = take (wordStart + wordEnd) $ drop startPos lineStr
+       in if null word
+          then Nothing
+          else Just (Text.pack word, startPos, endPos)
+     else Nothing
+
+-- | Replace the current word with a FileRefSegment containing all matches
+replaceCurrentWord :: Int -> Int -> Text -> [FilePath] -> Editor SegmentLine Name -> Editor SegmentLine Name
+replaceCurrentWord startPos endPos _typedText filePaths ed =
+  let z = ed ^. editContentsL
+      (row, col) = cursorPosition z
+      contentLines = getEditContents ed
+  in if row < length contentLines && not (null filePaths)
+     then
+       let line = contentLines !! row
+           -- Strip "./" prefix from all file paths
+           cleanPaths = map (\case '.':'/':rest -> rest; p -> p) filePaths
+           -- Split line into before/replacement/after segments
+           beforeSegs = segmentsTake startPos line
+           afterSegs = segmentsDrop endPos line
+           -- Create file reference segment with all matches (head is current)
+           fileSegment = FileRefSegment _typedText cleanPaths RefAccepted
+           newLine = beforeSegs ++ [fileSegment] ++ afterSegs
+           -- Replace line in editor
+           newLines = take row contentLines ++ [newLine] ++ drop (row + 1) contentLines
+           -- Calculate new cursor position (after the file reference)
+           firstPath = head cleanPaths
+           newCol = Text.length (segmentsToText beforeSegs) + length ("@" ++ firstPath)
+           -- Create new zipper with updated content and cursor position
+           newZipper = moveCursor (row, newCol) $ TZ.textZipper newLines Nothing
+       in ed & editContentsL .~ newZipper
+     else ed
+
+--------------------------------------------------------------------------------
 -- UI Rendering
 --------------------------------------------------------------------------------
 
@@ -376,12 +435,15 @@ drawUI st = [indicatorLayer, baseLayer]
 
     renderSegment :: InputSegment -> T.Widget Name
     renderSegment (TextSegment t) = txt t
-    renderSegment (FileRefSegment _ path RefPending) =
-      withAttr Attrs.fileRefPendingAttr $ txt ("@" <> Text.pack path)
-    renderSegment (FileRefSegment _ path RefAccepted) =
-      withAttr Attrs.fileRefAcceptedAttr $ txt ("@" <> Text.pack path)
-    renderSegment (FileRefSegment _ path RefRejected) =
-      withAttr Attrs.fileRefRejectedAttr $ txt ("@" <> Text.pack path)
+    renderSegment (FileRefSegment _ matches RefPending) =
+      let path = case matches of (p:_) -> p; [] -> ""
+      in withAttr Attrs.fileRefPendingAttr $ txt ("@" <> Text.pack path)
+    renderSegment (FileRefSegment _ matches RefAccepted) =
+      let path = case matches of (p:_) -> p; [] -> ""
+      in withAttr Attrs.fileRefAcceptedAttr $ txt ("@" <> Text.pack path)
+    renderSegment (FileRefSegment _ matches RefRejected) =
+      let path = case matches of (p:_) -> p; [] -> ""
+      in withAttr Attrs.fileRefRejectedAttr $ txt ("@" <> Text.pack path)
 
     -- Render input prompt with color based on status
     renderPrompt :: Text -> T.Widget Name
@@ -716,6 +778,116 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'b') [V.MMeta])) = do
 -- Alt-F: Jump word forwards (Emacs-style, fallback for Ctrl-Right)
 handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar 'f') [V.MMeta])) = do
   inputEditorL %= applyEdit moveWordForwards
+
+-- Tab: File completion for @file references (or cycle through existing matches)
+handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar '\t') [])) = do
+  vars <- use uiVarsL
+  ed <- use inputEditorL
+  let z = ed ^. editContentsL
+      (row, col) = cursorPosition z
+      contentLines = getEditContents ed
+
+  -- Check if cursor is right after a FileRefSegment - if so, rotate it
+  if row < length contentLines && col > 0
+    then do
+      let line = contentLines !! row
+      -- Find segment at cursor
+      case findSegmentAtCursor col 0 line of
+        Just idx ->
+          case line !! idx of
+            FileRefSegment{} -> do
+              -- Rotate this segment's matches
+              let rotated = rotateMatches (line !! idx)
+                  newLine = take idx line ++ [rotated] ++ drop (idx + 1) line
+                  newLines = take row contentLines ++ [newLine] ++ drop (row + 1) contentLines
+                  newZipper = moveCursor (row, col) $ TZ.textZipper newLines Nothing
+              inputEditorL .= (ed & editContentsL .~ newZipper)
+            _ -> performCompletion vars  -- Not a FileRef, try completion
+        Nothing -> performCompletion vars  -- Not at segment boundary, try completion
+    else performCompletion vars  -- Not in valid position, try completion
+  where
+    performCompletion vars = do
+      ed <- use inputEditorL
+      case getCurrentWord ed of
+        Nothing -> return ()  -- No word at cursor
+        Just (word, startPos, endPos) ->
+          if Text.isPrefixOf "@" word
+            then do
+              let pattern = Text.drop 1 word
+              -- Request completion (blocks until response)
+              matches <- liftIO $ requestCompletion vars pattern
+              case matches of
+                [] -> return ()  -- No matches
+                _ -> do
+                  -- Replace word with file reference segment containing all matches
+                  let matchPaths = map Text.unpack matches
+                  inputEditorL %= replaceCurrentWord startPos endPos word matchPaths
+            else return ()  -- Not a @ reference
+
+    -- Reuse the same helper from backspace handler
+    findSegmentAtCursor :: Int -> Int -> [InputSegment] -> Maybe Int
+    findSegmentAtCursor cursorCol = go 0
+      where
+        go _ _ [] = Nothing
+        go idx pos (seg:rest) =
+          let segLen = case seg of
+                         TextSegment t -> Text.length t
+                         FileRefSegment _ (p:_) _ -> length ("@" ++ p)
+                         FileRefSegment _ [] _ -> 1
+              newPos = pos + segLen
+          in if newPos == cursorCol
+             then Just idx  -- Return index of any segment type
+             else if newPos > cursorCol
+                  then Nothing  -- Cursor is inside this segment
+                  else go (idx + 1) newPos rest
+
+-- Backspace: Delete whole FileRefSegment if cursor is right after one
+handleNormalEvent (T.VtyEvent (V.EvKey V.KBS [])) = do
+  ed <- use inputEditorL
+  let z = ed ^. editContentsL
+      (row, col) = cursorPosition z
+      contentLines = getEditContents ed
+
+  -- Check if we're right after a FileRefSegment
+  if row < length contentLines && col > 0
+    then do
+      let line = contentLines !! row
+      -- Walk through segments and check if cursor is exactly at segment boundary
+      case findSegmentAtCursor col 0 line of
+        Just idx ->
+          -- Cursor is right after a FileRefSegment at index idx - delete it
+          let beforeSegs = take idx line
+              afterSegs = drop (idx + 1) line
+              newLine = beforeSegs ++ afterSegs
+              newLines = take row contentLines ++ [newLine] ++ drop (row + 1) contentLines
+              newCol = segmentsLength beforeSegs
+              newZipper = moveCursor (row, newCol) $ TZ.textZipper newLines Nothing
+          in inputEditorL .= (ed & editContentsL .~ newZipper)
+        Nothing ->
+          -- Not after a file ref, do normal backspace
+          zoom inputEditorL $ handleEditorEvent (T.VtyEvent (V.EvKey V.KBS []))
+    else
+      zoom inputEditorL $ handleEditorEvent (T.VtyEvent (V.EvKey V.KBS []))
+  where
+    -- Find if cursor is positioned exactly after a FileRefSegment
+    -- Returns Just index if so, Nothing otherwise
+    findSegmentAtCursor :: Int -> Int -> [InputSegment] -> Maybe Int
+    findSegmentAtCursor cursorCol = go 0
+      where
+        go _ _ [] = Nothing
+        go idx pos (seg:rest) =
+          let segLen = case seg of
+                         TextSegment t -> Text.length t
+                         FileRefSegment _ (p:_) _ -> length ("@" ++ p)
+                         FileRefSegment _ [] _ -> 1
+              newPos = pos + segLen
+          in if newPos == cursorCol
+             then case seg of
+                    FileRefSegment{} -> Just idx
+                    _ -> go (idx + 1) newPos rest
+             else if newPos > cursorCol
+                  then Nothing  -- Cursor is inside this segment
+                  else go (idx + 1) newPos rest
 
 handleNormalEvent ev = do
   -- Delegate other events to the editor

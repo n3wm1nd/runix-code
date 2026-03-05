@@ -14,6 +14,7 @@ module UI.State
   , SomeInputWidget(..)
   , LLMSettings(..)
   , UserRequest(..)
+  , CompletionRequest(..)
   , newUIVars
   , sendAgentEvent
   , waitForUserInput
@@ -21,6 +22,8 @@ module UI.State
   , requestCancelFromUI
   , readCancellationFlag
   , clearCancellationFlag
+  , requestCompletion
+  , waitForCompletion
   ) where
 
 import Control.Concurrent.STM
@@ -104,12 +107,20 @@ data UserRequest msg = UserRequest
   , requestSettings :: LLMSettings
   } deriving stock (Eq, Show)
 
+-- | File completion request from UI
+-- The TVar starts as Nothing, and the handler writes Just [results] when done
+data CompletionRequest = CompletionRequest
+  { completionPattern :: Text           -- ^ Pattern to match (e.g., "ReadMe", "src/mai")
+  , completionResponse :: TVar (Maybe [Text])  -- ^ Response written by handler
+  }
+
 -- | Shared state variables for UI communication
 -- Parametrized over message type to work with typed events
 data UIVars msg = UIVars
   { agentEventChan :: AgentEvent msg -> IO ()  -- ^ Callback to send events to UI
   , userInputQueue :: TQueue (UserRequest msg)  -- ^ User input queue (UI writes, agent reads)
   , cancellationFlag :: TVar Bool         -- ^ Cancellation flag (UI writes, agent reads)
+  , completionQueue :: TQueue CompletionRequest  -- ^ File completion requests
   }
 
 -- Note: userResponseQueue is managed per-request in SomeInputWidget callback
@@ -120,7 +131,8 @@ newUIVars :: (AgentEvent msg -> IO ()) -> IO (UIVars msg)
 newUIVars sendEventCallback = do
   inputQueue <- newTQueueIO
   cancelFlag <- newTVarIO False
-  return $ UIVars sendEventCallback inputQueue cancelFlag
+  compQueue <- newTQueueIO
+  return $ UIVars sendEventCallback inputQueue cancelFlag compQueue
 
 --------------------------------------------------------------------------------
 -- Event API
@@ -143,6 +155,24 @@ provideUserInput = writeTQueue
 -- | Request cancellation from the UI thread (sets flag)
 requestCancelFromUI :: UIVars msg -> STM ()
 requestCancelFromUI vars = writeTVar (cancellationFlag vars) True
+
+-- | Request file completion and wait for response
+-- Creates a TVar, sends request, waits for handler to fill it
+requestCompletion :: UIVars msg -> Text -> IO [Text]
+requestCompletion vars pattern = do
+  responseVar <- newTVarIO Nothing
+  let req = CompletionRequest pattern responseVar
+  atomically $ writeTQueue (completionQueue vars) req
+  -- Wait for response
+  atomically $ do
+    result <- readTVar responseVar
+    case result of
+      Nothing -> retry  -- Block until response is written
+      Just files -> return files
+
+-- | Wait for a completion request (for interpreter/handler)
+waitForCompletion :: TQueue CompletionRequest -> STM CompletionRequest
+waitForCompletion = readTQueue
 
 -- | Check the cancellation flag (non-blocking read)
 readCancellationFlag :: UIVars msg -> STM Bool
