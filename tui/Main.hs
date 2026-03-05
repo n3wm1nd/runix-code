@@ -121,7 +121,7 @@ main = do
   -- Unpack existential and run UI with full model list for interactive model switching
   case entryInterpreter selectedEntry of
     ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} ->
-      runUI (\refreshCallback -> buildUIRunner availableModels interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
+      runUI selectedEntry (\refreshCallback -> buildUIRunner availableModels interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Agent Loop

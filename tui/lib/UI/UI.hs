@@ -40,6 +40,7 @@ import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
 import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..))
+import Runner (ModelEntry(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, extractMessages)
 import UniversalLLM (Message(..))
 import UI.UserInput.InputWidget (isWidgetComplete)
@@ -90,6 +91,7 @@ data AppState msg = AppState
   , _eventChan :: Brick.BChan.BChan (CustomEvent msg)  -- Event channel for sending custom events
   , _llmSettings :: LLMSettings            -- Current LLM settings for display
   , _activeStreams :: [StreamInfo]         -- Active LLM streams (in order of creation)
+  , _modelEntry :: ModelEntry              -- Active model entry (for name, config, etc.)
   }
 
 --------------------------------------------------------------------------------
@@ -132,6 +134,9 @@ llmSettingsL = lens _llmSettings (\st s -> st { _llmSettings = s })
 activeStreamsL :: Lens' (AppState msg) [StreamInfo]
 activeStreamsL = lens _activeStreams (\st s -> st { _activeStreams = s })
 
+modelEntryL :: Lens' (AppState msg) ModelEntry
+modelEntryL = lens _modelEntry (\st m -> st { _modelEntry = m })
+
 --------------------------------------------------------------------------------
 -- Display Rendering
 --------------------------------------------------------------------------------
@@ -147,9 +152,10 @@ activeStreamsL = lens _activeStreams (\st s -> st { _activeStreams = s })
 --
 -- Refreshes are triggered by the effect interpreters, not by polling.
 runUI :: forall model. Eq (Message model) =>
-         ((AgentEvent (Message model) -> IO ()) -> IO (UIVars (Message model)))  -- ^ Function to create UIVars with send callback
+         ModelEntry  -- ^ Model entry for display (name, config, etc.)
+      -> ((AgentEvent (Message model) -> IO ()) -> IO (UIVars (Message model)))  -- ^ Function to create UIVars with send callback
       -> IO ()
-runUI mkUIVars = do
+runUI modelEntry mkUIVars = do
   -- Create event channel - agent events and UI events use same channel
   -- Small buffer since batching happens in interpretStreamChunkToUI
   eventChan <- newBChan 8
@@ -172,6 +178,7 @@ runUI mkUIVars = do
         , _eventChan = eventChan
         , _llmSettings = LLMSettings  -- Default settings
         , _activeStreams = []
+        , _modelEntry = modelEntry
         }
 
   -- Create vty with bracketed paste enabled
@@ -382,10 +389,15 @@ drawUI st = [indicatorLayer, baseLayer]
             RenderMarkdown -> txt "markdown"
             ShowRaw -> txt "raw"
 
+          -- Model name widget
+          modelNameWidget = withAttr Attrs.boldAttr (txt $ meName (_modelEntry st))
+
           -- Token count widget
           tokenWidget = withAttr Attrs.codeAttr (txt $ Text.pack (show tokenCount) <> " tokens")
 
-          modesWidget = withAttr Attrs.boldAttr inputModeWidget
+          modesWidget = modelNameWidget
+                    <+> txt "  "
+                    <+> withAttr Attrs.boldAttr inputModeWidget
                     <+> txt "  "
                     <+> withAttr Attrs.boldAttr mdModeWidget
                     <+> txt "  "
