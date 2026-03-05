@@ -27,6 +27,9 @@ module UI.Attributes
   , transparentBgAttr
   , promptReadyAttr
   , promptBusyAttr
+  , fileRefPendingAttr
+  , fileRefAcceptedAttr
+  , fileRefRejectedAttr
     -- * Attribute map
   , theMap
   ) where
@@ -74,6 +77,11 @@ promptReadyAttr, promptBusyAttr :: AttrName
 promptReadyAttr = attrName "promptReady"
 promptBusyAttr = attrName "promptBusy"
 
+fileRefPendingAttr, fileRefAcceptedAttr, fileRefRejectedAttr :: AttrName
+fileRefPendingAttr = attrName "fileRefPending"
+fileRefAcceptedAttr = attrName "fileRefAccepted"
+fileRefRejectedAttr = attrName "fileRefRejected"
+
 -- | The attribute map defining all styles
 theMap :: AttrMap
 theMap = attrMap V.defAttr
@@ -103,4 +111,8 @@ theMap = attrMap V.defAttr
   -- Prompt indicators - green when ready, gray background with yellow text when busy
   , (promptReadyAttr, V.defAttr `V.withForeColor` V.green `V.withStyle` V.bold)
   , (promptBusyAttr, V.defAttr `V.withForeColor` V.yellow `V.withBackColor` V.brightBlack `V.withStyle` V.bold)
+  -- File reference states
+  , (fileRefPendingAttr, V.defAttr `V.withForeColor` V.yellow)
+  , (fileRefAcceptedAttr, V.defAttr `V.withForeColor` V.green)
+  , (fileRefRejectedAttr, V.defAttr `V.withForeColor` V.red `V.withStyle` V.strikethrough)
   ]

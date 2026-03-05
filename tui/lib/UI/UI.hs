@@ -48,6 +48,7 @@ import qualified UI.Attributes as Attrs
 import qualified UI.Widgets.MessageHistory as MH
 import qualified UI.InputPanel as IP
 import qualified Runix.LLM.Context as Context
+import UI.RichInput (InputSegment(..), RefState(..), SegmentLine, segmentsToText)
 
 -- | Custom events for the TUI
 data CustomEvent msg
@@ -84,7 +85,7 @@ data AppState msg = AppState
   , _widgetZipper :: Zipper (T.Widget Name)  -- Pre-rendered widgets (parallel structure)
   , _status :: Text                         -- Current status message
   , _pendingInput :: Maybe SomeInputWidget  -- Active input widget (cached from TVar)
-  , _inputEditor :: Editor String Name     -- Input field
+  , _inputEditor :: Editor SegmentLine Name -- Input field with rich content
   , _inputMode :: InputMode                -- Current input mode
   , _markdownMode :: MarkdownMode          -- Whether to render markdown or show raw
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
@@ -113,7 +114,7 @@ statusL = lens _status (\st s -> st { _status = s })
 pendingInputL :: Lens' (AppState msg) (Maybe SomeInputWidget)
 pendingInputL = lens _pendingInput (\st p -> st { _pendingInput = p })
 
-inputEditorL :: Lens' (AppState msg) (Editor String Name)
+inputEditorL :: Lens' (AppState msg) (Editor SegmentLine Name)
 inputEditorL = lens _inputEditor (\st e -> st { _inputEditor = e })
 
 inputModeL :: Lens' (AppState msg) InputMode
@@ -171,7 +172,7 @@ runUI modelEntry mkUIVars = do
         , _widgetZipper = emptyZipper
         , _status = Text.pack "Ready"
         , _pendingInput = Nothing
-        , _inputEditor = editor InputEditor Nothing ""
+        , _inputEditor = editor InputEditor Nothing []
         , _inputMode = EnterSends
         , _markdownMode = RenderMarkdown
         , _lastViewport = Nothing
@@ -208,15 +209,15 @@ app = M.App
 --------------------------------------------------------------------------------
 
 -- | Delete the word before the cursor (Ctrl-W behavior)
-deleteWordBackwards :: Editor String Name -> Editor String Name
+deleteWordBackwards :: Editor SegmentLine Name -> Editor SegmentLine Name
 deleteWordBackwards ed =
   let z = ed ^. editContentsL
       (row, col) = cursorPosition z
       currentLine = case drop row (getEditContents ed) of
-                      (line:_) -> line
+                      (line:_) -> segmentsToText line
                       [] -> ""
       -- Find the start of the word (skip back over non-whitespace, then over whitespace)
-      beforeCursor = take col currentLine
+      beforeCursor = Text.unpack $ Text.take col currentLine
       -- Skip trailing whitespace
       afterWhitespace = dropWhileEnd (== ' ') beforeCursor
       -- Skip the word
@@ -229,11 +230,11 @@ deleteWordBackwards ed =
 
 -- | Move cursor backwards by one word (Ctrl-Left behavior)
 -- Works on TextZipper, can be used with applyEdit
-moveWordBackwards :: TextZipper String -> TextZipper String
+moveWordBackwards :: TextZipper SegmentLine -> TextZipper SegmentLine
 moveWordBackwards z =
   let (_row, col) = cursorPosition z
-      line = currentLine z
-      beforeCursor = take col line
+      line = segmentsToText (currentLine z)
+      beforeCursor = Text.unpack $ Text.take col line
       -- Skip trailing whitespace
       afterWhitespace = dropWhileEnd (== ' ') beforeCursor
       -- Skip the word
@@ -246,11 +247,11 @@ moveWordBackwards z =
 
 -- | Move cursor forwards by one word (Ctrl-Right behavior)
 -- Works on TextZipper, can be used with applyEdit
-moveWordForwards :: TextZipper String -> TextZipper String
+moveWordForwards :: TextZipper SegmentLine -> TextZipper SegmentLine
 moveWordForwards z =
   let (_row, col) = cursorPosition z
-      line = currentLine z
-      afterCursor = drop col line
+      line = segmentsToText (currentLine z)
+      afterCursor = Text.unpack $ Text.drop col line
       -- Skip whitespace
       afterWhitespace = dropWhile (== ' ') afterCursor
       -- Skip the word
@@ -355,7 +356,7 @@ drawUI st = [indicatorLayer, baseLayer]
                     , vLimit inputHeight $
                         renderPrompt status <+>
                           padLeft (Pad 1) (padRight (Pad 1) $
-                            renderEditor (vBox . map renderLine) True (_inputEditor st))
+                            renderEditor renderSegmentLines True (_inputEditor st))
                     , hBorder
                     , renderStatusBar (_inputMode st) (_markdownMode st) tokens
                     ]
@@ -364,10 +365,23 @@ drawUI st = [indicatorLayer, baseLayer]
     -- Indicator layer: rendered on top by Brick's renderFinal
     indicatorLayer = historyIndicators
 
-    -- Render a line, showing empty lines as a space to preserve them
-    renderLine :: String -> T.Widget Name
-    renderLine "" = str " "
-    renderLine s = str s
+    -- Render segment lines with highlighting
+    renderSegmentLines :: [SegmentLine] -> T.Widget Name
+    renderSegmentLines segLines =
+      vBox $ map renderSegmentLine segLines
+
+    renderSegmentLine :: SegmentLine -> T.Widget Name
+    renderSegmentLine [] = str " "  -- Empty lines shown as space to preserve them
+    renderSegmentLine segs = hBox $ map renderSegment segs
+
+    renderSegment :: InputSegment -> T.Widget Name
+    renderSegment (TextSegment t) = txt t
+    renderSegment (FileRefSegment _ path RefPending) =
+      withAttr Attrs.fileRefPendingAttr $ txt ("@" <> Text.pack path)
+    renderSegment (FileRefSegment _ path RefAccepted) =
+      withAttr Attrs.fileRefAcceptedAttr $ txt ("@" <> Text.pack path)
+    renderSegment (FileRefSegment _ path RefRejected) =
+      withAttr Attrs.fileRefRejectedAttr $ txt ("@" <> Text.pack path)
 
     -- Render input prompt with color based on status
     renderPrompt :: Text -> T.Widget Name
@@ -663,8 +677,8 @@ handleNormalEvent (T.VtyEvent (V.EvKey V.KEnter [])) = do
   -- Check if we're after a backslash
   if row < length contentLines && col > 0
     then do
-      let currentLine = contentLines !! row
-      if col <= length currentLine && col > 0 && currentLine !! (col - 1) == '\\'
+      let currentLineText = segmentsToText (contentLines !! row)
+      if col <= Text.length currentLineText && col > 0 && Text.index currentLineText (col - 1) == '\\'
         then do
           -- Replace \<Enter> with actual newline
           let newZipper = breakLine $ deletePrevChar zipper
@@ -714,8 +728,8 @@ handleNormalEvent ev = do
 sendMessage :: T.EventM Name (AppState msg) ()
 sendMessage = do
   ed <- use inputEditorL
-  let contentLines = getEditContents ed
-      content = concat $ intersperse "\n" contentLines  -- Don't add trailing newline
+  let contentLines = getEditContents ed  -- :: [SegmentLine]
+      content = Text.unpack $ Text.intercalate "\n" $ map segmentsToText contentLines
   if null (filter (/= ' ') content)
     then return ()  -- Don't send empty messages
     else do
@@ -732,7 +746,7 @@ sendMessage = do
       liftIO $ atomically $ provideUserInput (userInputQueue vars) request
 
       -- Clear input
-      inputEditorL .= editor InputEditor Nothing ""
+      inputEditorL .= editor InputEditor Nothing []
 
       -- Scroll viewport to bottom
       M.vScrollToEnd (M.viewportScroll HistoryViewport)
