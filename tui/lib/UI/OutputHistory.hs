@@ -123,7 +123,7 @@ emptyZipper = Zipper [] Nothing []
 -- | Convert zipper to a list (newest first)
 zipperToList :: Zipper a -> [a]
 zipperToList (Zipper back current front) =
-  back ++ maybe [] (:[]) current ++ front
+  reverse back ++ maybe [] (:[]) current ++ front
 
 -- | Create a zipper from a list (items in newest-first order)
 -- Focus will be on the newest item (head of list), rest go to front

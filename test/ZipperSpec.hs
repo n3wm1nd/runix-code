@@ -154,3 +154,153 @@ spec = do
           z3 = onRewoundZipper (onForwardUntil isMessage (appendItem (LogItem Info "found"))) z2
       -- Should be unchanged
       zipperToList z3 `shouldBe` (zipperToList z2 :: [OutputItem TestMsg])
+
+  describe "extractMessages" $ do
+    it "extracts nothing from empty zipper" $ do
+      let z = emptyZipper :: Zipper (OutputItem TestMsg)
+      extractMessages z `shouldBe` ([] :: [TestMsg])
+
+    it "extracts single message" $ do
+      let z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+      extractMessages z1 `shouldBe` ["msg1"]
+
+    it "extracts multiple messages in oldest-first order" $ do
+      let z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z    -- oldest
+          z2 = appendItem (MessageItem "msg2") z1
+          z3 = appendItem (MessageItem "msg3") z2   -- newest
+      extractMessages z3 `shouldBe` ["msg1", "msg2", "msg3"]
+
+    it "skips non-message items (logs, status, etc)" $ do
+      let z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (LogItem Info "log1") z1
+          z3 = appendItem (MessageItem "msg2") z2
+          z4 = appendItem (StatusItem Idle) z3
+          z5 = appendItem (MessageItem "msg3") z4
+          z6 = appendItem (SystemEventItem "event") z5
+      extractMessages z6 `shouldBe` ["msg1", "msg2", "msg3"]
+
+    it "extracts messages from subsection" $ do
+      let subZ = emptyZipper :: Zipper (OutputItem TestMsg)
+          subZ1 = appendItem (MessageItem "submsg1") subZ
+          subZ2 = appendItem (MessageItem "submsg2") subZ1
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (SectionItem subZ2) z
+      extractMessages z1 `shouldBe` ["submsg1", "submsg2"]
+
+    it "extracts messages from root and subsection in order" $ do
+      let subZ = emptyZipper :: Zipper (OutputItem TestMsg)
+          subZ1 = appendItem (MessageItem "submsg1") subZ
+          subZ2 = appendItem (MessageItem "submsg2") subZ1
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z        -- oldest at root
+          z2 = appendItem (SectionItem subZ2) z1        -- subsection
+          z3 = appendItem (MessageItem "msg2") z2       -- newest at root
+      -- Order should be: root oldest, subsection messages, root newest
+      extractMessages z3 `shouldBe` ["msg1", "submsg1", "submsg2", "msg2"]
+
+    it "extracts messages from multiple subsections in order" $ do
+      let subZ1 = emptyZipper :: Zipper (OutputItem TestMsg)
+          subZ1a = appendItem (MessageItem "sub1msg1") subZ1
+          subZ1b = appendItem (MessageItem "sub1msg2") subZ1a
+          subZ2 = emptyZipper :: Zipper (OutputItem TestMsg)
+          subZ2a = appendItem (MessageItem "sub2msg1") subZ2
+          subZ2b = appendItem (MessageItem "sub2msg2") subZ2a
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (SectionItem subZ1b) z1       -- first subsection (older)
+          z3 = appendItem (MessageItem "msg2") z2
+          z4 = appendItem (SectionItem subZ2b) z3       -- second subsection (newer)
+          z5 = appendItem (MessageItem "msg3") z4
+      extractMessages z5 `shouldBe`
+        ["msg1", "sub1msg1", "sub1msg2", "msg2", "sub2msg1", "sub2msg2", "msg3"]
+
+    it "extracts messages from nested subsections" $ do
+      let nestedZ = emptyZipper :: Zipper (OutputItem TestMsg)
+          nestedZ1 = appendItem (MessageItem "nestedmsg") nestedZ
+          subZ = emptyZipper :: Zipper (OutputItem TestMsg)
+          subZ1 = appendItem (MessageItem "submsg1") subZ
+          subZ2 = appendItem (SectionItem nestedZ1) subZ1
+          subZ3 = appendItem (MessageItem "submsg2") subZ2
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (SectionItem subZ3) z1
+          z3 = appendItem (MessageItem "msg2") z2
+      extractMessages z3 `shouldBe`
+        ["msg1", "submsg1", "nestedmsg", "submsg2", "msg2"]
+
+    it "handles empty subsections" $ do
+      let emptySubZ = emptyZipper :: Zipper (OutputItem TestMsg)
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (SectionItem emptySubZ) z1
+          z3 = appendItem (MessageItem "msg2") z2
+      extractMessages z3 `shouldBe` ["msg1", "msg2"]
+
+    it "handles subsections with only logs (no messages)" $ do
+      let subZ = emptyZipper :: Zipper (OutputItem TestMsg)
+          subZ1 = appendItem (LogItem Info "log1") subZ
+          subZ2 = appendItem (LogItem Info "log2") subZ1
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (SectionItem subZ2) z1
+          z3 = appendItem (MessageItem "msg2") z2
+      extractMessages z3 `shouldBe` ["msg1", "msg2"]
+
+    it "preserves order when zipper focus is not at newest" $ do
+      let z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (MessageItem "msg2") z1
+          z3 = appendItem (MessageItem "msg3") z2
+          -- Move focus to older message
+          z4 = moveOlder z3
+          z5 = moveOlder z4
+      -- Should still extract in oldest-first order regardless of focus
+      extractMessages z5 `shouldBe` ["msg1", "msg2", "msg3"]
+
+    it "handles zipper with items in back, current, and front" $ do
+      let z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (MessageItem "msg2") z1
+          z3 = appendItem (MessageItem "msg3") z2
+          z4 = appendItem (MessageItem "msg4") z3
+          -- Move focus to middle
+          z5 = moveOlder z4  -- focus on msg3
+          z6 = moveOlder z5  -- focus on msg2
+      -- Now: back=[msg4, msg3], current=msg2, front=[msg1]
+      extractMessages z6 `shouldBe` ["msg1", "msg2", "msg3", "msg4"]
+
+    it "handles complex nested structure with mixed items" $ do
+      -- Create a complex structure:
+      -- msg1
+      -- log1
+      -- section1:
+      --   submsg1
+      --   log2
+      --   section1.1:
+      --     nestedmsg1
+      --   submsg2
+      -- msg2
+      -- section2:
+      --   submsg3
+      -- msg3
+      let nested1_1 = emptyZipper :: Zipper (OutputItem TestMsg)
+          nested1_1a = appendItem (MessageItem "nestedmsg1") nested1_1
+          section1 = emptyZipper :: Zipper (OutputItem TestMsg)
+          section1a = appendItem (MessageItem "submsg1") section1
+          section1b = appendItem (LogItem Info "log2") section1a
+          section1c = appendItem (SectionItem nested1_1a) section1b
+          section1d = appendItem (MessageItem "submsg2") section1c
+          section2 = emptyZipper :: Zipper (OutputItem TestMsg)
+          section2a = appendItem (MessageItem "submsg3") section2
+          z = emptyZipper :: Zipper (OutputItem TestMsg)
+          z1 = appendItem (MessageItem "msg1") z
+          z2 = appendItem (LogItem Info "log1") z1
+          z3 = appendItem (SectionItem section1d) z2
+          z4 = appendItem (MessageItem "msg2") z3
+          z5 = appendItem (SectionItem section2a) z4
+          z6 = appendItem (MessageItem "msg3") z5
+      extractMessages z6 `shouldBe`
+        ["msg1", "submsg1", "nestedmsg1", "submsg2", "msg2", "submsg3", "msg3"]
