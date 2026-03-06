@@ -78,13 +78,52 @@ import Runix.LLM (LLM)
 import Runix.LLMStream (LLMStreaming)
 import Runix.HTTP (HTTPStreaming)
 import Runix.LLM.Interpreter (interpretLLMWith, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..), ProviderProtocol, EnableStreaming, ProtocolRequest)
-import Runix.RestAPI (RestEndpoint)
+import Runix.RestAPI (RestEndpoint(..))
 import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Config (ModelId)
 import qualified Config
 import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults(..), route, via)
 import qualified Runix.FileSystem.System as System.Effects
+
+--------------------------------------------------------------------------------
+-- Auth Wrappers with runix-code User-Agent
+--------------------------------------------------------------------------------
+
+-- | Wrapper for AnthropicOAuthAuth with runix-code User-Agent
+newtype RunixCodeAnthropicAuth = RunixCodeAnthropicAuth { unwrapAnthropicAuth :: AnthropicOAuthAuth }
+instance RestEndpoint RunixCodeAnthropicAuth where
+    apiroot = apiroot . unwrapAnthropicAuth
+    authheaders = authheaders . unwrapAnthropicAuth
+    useragent _ = "runix-code/0.1"
+
+-- | Wrapper for LlamaCppAuth with runix-code User-Agent
+newtype RunixCodeLlamaCppAuth = RunixCodeLlamaCppAuth { unwrapLlamaCppAuth :: LlamaCppAuth }
+instance RestEndpoint RunixCodeLlamaCppAuth where
+    apiroot = apiroot . unwrapLlamaCppAuth
+    authheaders = authheaders . unwrapLlamaCppAuth
+    useragent _ = "runix-code/0.1"
+
+-- | Wrapper for ZAIAuth with runix-code User-Agent
+newtype RunixCodeZAIAuth = RunixCodeZAIAuth { unwrapZAIAuth :: ZAIAuth }
+instance RestEndpoint RunixCodeZAIAuth where
+    apiroot = apiroot . unwrapZAIAuth
+    authheaders = authheaders . unwrapZAIAuth
+    useragent _ = "runix-code/0.1"
+
+-- | Wrapper for AlibabaCloudAuth with runix-code User-Agent
+newtype RunixCodeAlibabaCloudAuth = RunixCodeAlibabaCloudAuth { unwrapAlibabaCloudAuth :: AlibabaCloudAuth }
+instance RestEndpoint RunixCodeAlibabaCloudAuth where
+    apiroot = apiroot . unwrapAlibabaCloudAuth
+    authheaders = authheaders . unwrapAlibabaCloudAuth
+    useragent _ = "runix-code/0.1"
+
+-- | Wrapper for OpenRouterAuth with runix-code User-Agent
+newtype RunixCodeOpenRouterAuth = RunixCodeOpenRouterAuth { unwrapOpenRouterAuth :: OpenRouterAuth }
+instance RestEndpoint RunixCodeOpenRouterAuth where
+    apiroot = apiroot . unwrapOpenRouterAuth
+    authheaders = authheaders . unwrapOpenRouterAuth
+    useragent _ = "runix-code/0.1"
 
 --------------------------------------------------------------------------------
 -- Session Management (Effect-Based)
@@ -346,7 +385,7 @@ probeAnthropic = do
   case mToken of
     Nothing -> return [Nothing, Nothing, Nothing]
     Just token ->
-      let auth = AnthropicOAuthAuth token
+      let auth = RunixCodeAnthropicAuth (AnthropicOAuthAuth token)
       in return $ map Just
         [ mkEntry Config.ClaudeSonnet45 "Claude Sonnet 4.5" auth route (ClaudeSonnet45 `via` AnthropicOAuth)
         , mkEntry Config.ClaudeHaiku45  "Claude Haiku 4.5"  auth route (ClaudeHaiku45 `via` AnthropicOAuth)
@@ -357,7 +396,7 @@ probeLlamaCpp :: IO [Maybe ModelEntry]
 probeLlamaCpp = do
   mEndpoint <- lookupEnv "LLAMACPP_ENDPOINT"
   let endpoint = maybe "http://localhost:8080/v1" id mEndpoint
-      auth = LlamaCppAuth endpoint
+      auth = RunixCodeLlamaCppAuth (LlamaCppAuth endpoint)
   -- LlamaCpp is always available (defaults to localhost)
   return $ map Just
     [ mkEntry Config.GLM45AirLlamaCpp   "GLM 4.5 Air (LlamaCpp)"  auth route (GLM45Air `via` LlamaCpp)
@@ -372,7 +411,7 @@ probeZAI = do
   case mKey of
     Nothing -> return [Nothing, Nothing, Nothing, Nothing]
     Just key ->
-      let auth = ZAIAuth key
+      let auth = RunixCodeZAIAuth (ZAIAuth key)
       in return $ map Just
         [ mkEntry Config.GLM45AirZAI "GLM 4.5 Air (ZAI)" auth route (GLM45Air `via` ZAI)
         , mkEntry Config.GLM46ZAI    "GLM 4.6 (ZAI)"     auth route (GLM46 `via` ZAI)
@@ -386,7 +425,7 @@ probeAlibabaCloud = do
   case mKey of
     Nothing -> return [Nothing, Nothing, Nothing, Nothing]
     Just key ->
-      let auth = AlibabaCloudAuth key
+      let auth = RunixCodeAlibabaCloudAuth (AlibabaCloudAuth key)
       in return $ map Just
         [ mkEntry Config.MinimaxM25AlibabaCloud "MiniMax M2.5 (AlibabaCloud)" auth route (MinimaxM25 `via` AlibabaCloud)
         , mkEntry Config.KimiK25AlibabaCloud    "Kimi K2.5 (AlibabaCloud)"    auth route (KimiK25 `via` AlibabaCloud)
@@ -400,7 +439,7 @@ probeOpenRouter = do
   mModel <- lookupEnv "OPENROUTER_MODEL"
   case (mKey, mModel) of
     (Just key, Just modelName) ->
-      let auth = OpenRouterAuth key
+      let auth = RunixCodeOpenRouterAuth (OpenRouterAuth key)
       in return [Just $ mkEntry Config.OpenRouterModel (T.pack $ "OpenRouter: " ++ modelName) auth route (UniversalWithTools (T.pack modelName) `via` OpenRouter)]
     _ -> return [Nothing]
 
