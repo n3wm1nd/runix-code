@@ -253,12 +253,21 @@ getSegmentBeforeCursor ed = case edLineBefore ed of
 segmentLineToText :: SegmentLine -> Text
 segmentLineToText = mconcat . map segmentToText
 
--- | Convert a single segment to text
+-- | Generate display text for paste segment
+-- Single-line: shows actual text, Multi-line: shows placeholder
+pasteDisplayText :: Text -> Text
+pasteDisplayText t
+  | T.any (== '\n') t =
+      let lineCount = length (T.lines t)
+      in "[paste: " <> T.pack (show lineCount) <> " lines]"
+  | otherwise = t
+
+-- | Convert a single segment to text (actual content, not display)
 segmentToText :: InputSegment -> Text
 segmentToText (CharSegment c) = T.singleton c
 segmentToText (FileRefSegment {segRefPaths = (path:_)}) = "@" <> T.pack path
 segmentToText (FileRefSegment {segRefPaths = []}) = "@"  -- Shouldn't happen
-segmentToText (PastedSegment t) = t
+segmentToText (PastedSegment t) = t  -- Always return actual content
 
 -- | Get display length of a segment line
 segmentLineLength :: SegmentLine -> Int
@@ -269,7 +278,7 @@ segmentLength :: InputSegment -> Int
 segmentLength (CharSegment _) = 1
 segmentLength (FileRefSegment {segRefPaths = (path:_)}) = 1 + length path
 segmentLength (FileRefSegment {segRefPaths = []}) = 1
-segmentLength (PastedSegment t) = T.length t
+segmentLength (PastedSegment t) = T.length (pasteDisplayText t)
 
 -- | Check if a segment is a word character (for word navigation)
 isWordSegment :: InputSegment -> Bool
@@ -769,7 +778,9 @@ renderSegment (FileRefSegment {segRefPaths = (path:_), segRefState = RefRejected
 renderSegment (FileRefSegment {segRefPaths = []}) =
   txt "@"  -- Shouldn't happen
 renderSegment (PastedSegment t) =
-  withAttr pastedAttr $ txt t
+  let displayText = pasteDisplayText t
+      attr = if T.any (== '\n') t then pastedMarkerAttr else pastedAttr
+  in withAttr attr $ txt displayText
 
 -- | Attribute for unfocused editor
 editAttr :: AttrName
@@ -794,3 +805,7 @@ fileRefRejectedAttr = attrName "fileRefRejected"
 -- | Attribute for pasted content
 pastedAttr :: AttrName
 pastedAttr = attrName "pasted"
+
+-- | Attribute for multi-line paste marker/placeholder
+pastedMarkerAttr :: AttrName
+pastedMarkerAttr = attrName "pastedMarker"
