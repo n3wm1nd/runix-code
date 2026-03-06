@@ -764,6 +764,7 @@ renderEditorWithPrompt prompt hasFocus ed =
 
 -- | Render a line of segments with appropriate styling
 renderSegmentLine :: SegmentLine -> Widget n
+renderSegmentLine [] = txt " "  -- Empty line must render something to maintain height
 renderSegmentLine segs = hBox (map renderSegment segs)
 
 -- | Render a single segment with appropriate styling
