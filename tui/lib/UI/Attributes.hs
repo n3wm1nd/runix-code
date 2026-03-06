@@ -30,6 +30,7 @@ module UI.Attributes
   , fileRefPendingAttr
   , fileRefAcceptedAttr
   , fileRefRejectedAttr
+  , pastedAttr
     -- * Attribute map
   , theMap
   ) where
@@ -77,10 +78,11 @@ promptReadyAttr, promptBusyAttr :: AttrName
 promptReadyAttr = attrName "promptReady"
 promptBusyAttr = attrName "promptBusy"
 
-fileRefPendingAttr, fileRefAcceptedAttr, fileRefRejectedAttr :: AttrName
+fileRefPendingAttr, fileRefAcceptedAttr, fileRefRejectedAttr, pastedAttr :: AttrName
 fileRefPendingAttr = attrName "fileRefPending"
 fileRefAcceptedAttr = attrName "fileRefAccepted"
 fileRefRejectedAttr = attrName "fileRefRejected"
+pastedAttr = attrName "pasted"
 
 -- | The attribute map defining all styles
 theMap :: AttrMap
@@ -115,4 +117,6 @@ theMap = attrMap V.defAttr
   , (fileRefPendingAttr, V.defAttr `V.withForeColor` V.yellow)
   , (fileRefAcceptedAttr, V.defAttr `V.withForeColor` V.green)
   , (fileRefRejectedAttr, V.defAttr `V.withForeColor` V.red `V.withStyle` V.strikethrough)
+  -- Pasted content
+  , (pastedAttr, V.defAttr `V.withForeColor` V.cyan `V.withStyle` V.dim)
   ]
