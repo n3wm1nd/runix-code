@@ -57,8 +57,12 @@ interceptStreamChunksToUI uiVars = intercept handler
       return mItem
 
     handler (CloseStream sid) = do
-      -- Send end event
-      embed $ sendAgentEvent uiVars (StreamEndEvent 0)
+      -- Forward close with type application and check result
+      result <- send @(Streaming StreamEvent (Either String [Message model]) ([ModelConfig model], [Message model])) (CloseStream sid)
 
-      -- Forward close with type application
-      send @(Streaming StreamEvent (Either String [Message model]) ([ModelConfig model], [Message model])) (CloseStream sid)
+      -- Send appropriate end event based on result
+      case result of
+        Left _err -> embed $ sendAgentEvent uiVars (StreamErrorEvent 0)
+        Right _msgs -> embed $ sendAgentEvent uiVars (StreamEndEvent 0)
+
+      return result

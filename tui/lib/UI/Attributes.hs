@@ -31,6 +31,7 @@ module UI.Attributes
   , fileRefAcceptedAttr
   , fileRefRejectedAttr
   , pastedAttr
+  , streamErrorAttr
     -- * Attribute map
   , theMap
   ) where
@@ -84,6 +85,9 @@ fileRefAcceptedAttr = attrName "fileRefAccepted"
 fileRefRejectedAttr = attrName "fileRefRejected"
 pastedAttr = attrName "pasted"
 
+streamErrorAttr :: AttrName
+streamErrorAttr = attrName "streamError"
+
 -- | The attribute map defining all styles
 theMap :: AttrMap
 theMap = attrMap V.defAttr
@@ -119,4 +123,6 @@ theMap = attrMap V.defAttr
   , (fileRefRejectedAttr, V.defAttr `V.withForeColor` V.red `V.withStyle` V.strikethrough)
   -- Pasted content
   , (pastedAttr, V.defAttr `V.withForeColor` V.cyan `V.withStyle` V.dim)
+  -- Stream error indicator
+  , (streamErrorAttr, V.defAttr `V.withForeColor` V.red `V.withStyle` V.bold)
   ]

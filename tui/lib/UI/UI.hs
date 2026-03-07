@@ -75,6 +75,7 @@ data MarkdownMode = RenderMarkdown | ShowRaw
 data StreamInfo = StreamInfo
   { streamId :: Int       -- ^ Stream identifier
   , chunkCount :: Int     -- ^ Number of chunks received
+  , streamErrored :: Bool -- ^ Whether the stream ended with an error
   } deriving stock (Eq, Show)
 
 data AppState msg = AppState
@@ -265,8 +266,13 @@ drawUI st = [indicatorLayer, baseLayer]
                           then emptyWidget
                           else vBox $ map renderStream (_activeStreams st)
       where
-        renderStream si = txt $ "⋯ Stream #" <> Text.pack (show (streamId si))
-                                <> ": " <> Text.pack (show (chunkCount si)) <> " chunks"
+        renderStream si =
+          let indicator = if streamErrored si
+                          then withAttr Attrs.streamErrorAttr $ txt "> "
+                          else txt "⋯ "
+              streamText = "Stream #" <> Text.pack (show (streamId si))
+                        <> ": " <> Text.pack (show (chunkCount si)) <> " chunks"
+          in indicator <+> txt streamText
 
     statusText = Text.unpack status
 
@@ -502,8 +508,9 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         invalidateCacheEntry CachedCurrent
 
       AgentCompleteEvent _msgs -> do
-        -- Agent completed, update status
+        -- Agent completed, update status and clear any errored streams
         statusL .= Text.pack "Ready"
+        activeStreamsL %= filter (not . streamErrored)
 
       RestoreSessionEvent zipper -> do
         -- Restore session: update UI zipper and re-render
@@ -534,7 +541,7 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
 
       StreamStartEvent sid -> do
         -- Add new stream to active streams
-        activeStreamsL %= (++ [StreamInfo sid 0])
+        activeStreamsL %= (++ [StreamInfo sid 0 False])
 
       StreamChunkEvent sid _ -> do
         -- Increment chunk count for this stream
@@ -543,6 +550,10 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
       StreamEndEvent sid -> do
         -- Remove stream from active streams
         activeStreamsL %= filter (\si -> streamId si /= sid)
+
+      StreamErrorEvent sid -> do
+        -- Mark stream as errored (keep it visible with error indicator)
+        activeStreamsL %= map (\si -> if streamId si == sid then si { streamErrored = True } else si)
 
   -- After processing the event, scroll viewport and request viewport update
   M.vScrollToEnd (M.viewportScroll HistoryViewport)

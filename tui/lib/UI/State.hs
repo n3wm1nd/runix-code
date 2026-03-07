@@ -63,7 +63,8 @@ data AgentEvent msg
   | RunExternalCommandEvent (IO ())  -- ^ Run external command (suspends/resumes Vty)
   | StreamStartEvent Int          -- ^ Stream started (stream ID)
   | StreamChunkEvent Int Int      -- ^ Chunk received (stream ID, total chunks for this stream)
-  | StreamEndEvent Int            -- ^ Stream completed (stream ID)
+  | StreamEndEvent Int            -- ^ Stream completed successfully (stream ID)
+  | StreamErrorEvent Int          -- ^ Stream failed with error (stream ID)
 
 -- Manual Eq instance (SomeInputWidget can't derive Eq due to callback function)
 instance Eq msg => Eq (AgentEvent msg) where
@@ -78,6 +79,7 @@ instance Eq msg => Eq (AgentEvent msg) where
   StreamStartEvent id1 == StreamStartEvent id2 = id1 == id2
   StreamChunkEvent id1 c1 == StreamChunkEvent id2 c2 = id1 == id2 && c1 == c2
   StreamEndEvent id1 == StreamEndEvent id2 = id1 == id2
+  StreamErrorEvent id1 == StreamErrorEvent id2 = id1 == id2
   _ == _ = False
 
 -- Manual Show instance
@@ -93,6 +95,7 @@ instance Show msg => Show (AgentEvent msg) where
   show (StreamStartEvent sid) = "StreamStartEvent " ++ show sid
   show (StreamChunkEvent sid c) = "StreamChunkEvent " ++ show sid ++ " " ++ show c
   show (StreamEndEvent sid) = "StreamEndEvent " ++ show sid
+  show (StreamErrorEvent sid) = "StreamErrorEvent " ++ show sid
 
 -- | Runtime LLM configuration settings
 -- Currently empty but can hold maxLength, reasoning effort, temperature, etc.
