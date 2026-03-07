@@ -320,11 +320,11 @@ drawUI st = [indicatorLayer, baseLayer]
     indicatorLayer = historyIndicators
 
     -- Render segment lines with highlighting
-    renderSegmentLines :: [SE.SegmentLine SE.InputSegment] -> T.Widget Name
+    renderSegmentLines :: [Z.GapZipper SE.InputSegment] -> T.Widget Name
     renderSegmentLines segLines =
       vBox $ map renderSegmentLine segLines
 
-    renderSegmentLine :: SE.SegmentLine SE.InputSegment -> T.Widget Name
+    renderSegmentLine :: Z.GapZipper SE.InputSegment -> T.Widget Name
     renderSegmentLine line' =
       let allSegs = Z.toList line'
       in if null allSegs

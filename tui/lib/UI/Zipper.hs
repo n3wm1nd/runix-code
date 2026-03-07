@@ -262,29 +262,26 @@ class Zippable z where
   -- For Zipper: deletes from front. For GapZipper: deletes after gap (delete key).
   deleteForward :: z a -> Maybe (z a)
 
--- | Zipper instance: forward moves to newer (back), back moves to older (front)
+-- | Zipper instance for document semantics:
+-- forward = move down/right in document (toward older items in front)
+-- back = move up/left in document (toward newer items in back)
+-- start = beginning of document (newest, back empty)
+-- end = end of document (oldest, front empty)
 instance Zippable Zipper where
-  forward z@(Zipper [] _ _) = z  -- No newer items
-  forward (Zipper (b:bs) current front) =
-    Zipper bs b (current : front)
-
-  back z@(Zipper _ _ []) = z  -- No older items
-  back (Zipper back current (f:fs)) =
+  -- Forward moves to older (from front) - moving DOWN in document
+  forward z@(Zipper _ _ []) = z  -- At end, can't move forward
+  forward (Zipper back current (f:fs)) =
     Zipper (current : back) f fs
 
-  -- Efficient O(1) start: move all to front
-  start (Zipper [] cur front) = Zipper [] cur front
-  start (Zipper back cur front) =
-    -- Move all back items to front in correct order
-    Zipper [] (last back) (reverse (init back) ++ [cur] ++ front)
+  -- Back moves to newer (from back) - moving UP in document
+  back z@(Zipper [] _ _) = z  -- At start, can't move back
+  back (Zipper (b:bs) current front) =
+    Zipper bs b (current : front)
 
-  -- Efficient O(1) end: move all to back
-  end (Zipper back cur []) = Zipper back cur []
-  end (Zipper back cur front) =
-    -- Move all front items to back in correct order
-    Zipper (reverse (init front) ++ [cur] ++ back) (last front) []
-
+  -- Start is at newest (back empty)
   atStart (Zipper back _ _) = null back
+
+  -- End is at oldest (front empty)
   atEnd (Zipper _ _ front) = null front
 
   toList = zipperToList

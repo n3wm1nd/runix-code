@@ -3,6 +3,7 @@
 module SegmentEditorSpec (spec) where
 
 import Test.Hspec
+import Test.QuickCheck
 import qualified Data.Text as T
 import UI.SegmentEditor
 
@@ -36,7 +37,7 @@ spec = do
     it "deletes character backward" $ do
       let ed = emptyEditor noWrapConfig
           ed' = insertText "abc" ed
-          ed'' = deleteBackward ed'
+          ed'' = delBackward ed'
       getEditorContent ed'' `shouldBe` "ab"
 
   describe "Newline Handling" $ do
@@ -45,10 +46,10 @@ spec = do
           ed' = insertText "line1\nline2\nline3" ed
       getEditorContent ed' `shouldBe` "line1\nline2\nline3"
 
-    it "preserves newlines inserted via breakLine" $ do
+    it "preserves newlines inserted via typeChar" $ do
       let ed = emptyEditor noWrapConfig
           ed' = insertText "line1" ed
-          ed'' = breakLine ed'
+          ed'' = typeChar '\n' ed'
           ed''' = insertText "line2" ed''
       getEditorContent ed''' `shouldBe` "line1\nline2"
 
@@ -79,21 +80,21 @@ spec = do
           ed3 = insertChar 'l' ed2
           ed4 = insertChar 'l' ed3
           ed5 = insertChar 'o' ed4
-          ed6 = breakLine ed5  -- Insert newline via breakLine
+          ed6 = typeChar '\n' ed5  -- Insert newline via typeChar
           ed7 = insertChar 'w' ed6
           ed8 = insertChar 'o' ed7
           ed9 = insertChar 'r' ed8
           ed10 = insertChar 'l' ed9
           ed11 = insertChar 'd' ed10
       getEditorContent ed11 `shouldBe` "hello\nworld"
-      -- Also verify the segments contain an actual newline CharSegment
-      let allSegs = getEditorSegmentLines ed11
-      length allSegs `shouldBe` 2  -- Should be 2 lines
+      -- Also verify we have 2 lines
+      let allLines = getEditorLines ed11
+      length allLines `shouldBe` 2  -- Should be 2 lines
 
-    it "breakLine actually inserts CharSegment newline" $ do
+    it "typeChar newline actually inserts CharSegment newline" $ do
       let ed = emptyEditor noWrapConfig
           ed' = insertText "hello" ed
-          ed'' = breakLine ed'
+          ed'' = typeChar '\n' ed'
           ed''' = insertText "world" ed''
       -- Verify content has newline
       getEditorContent ed''' `shouldBe` "hello\nworld"
@@ -122,9 +123,9 @@ spec = do
           ed6 = insertChar '\\' ed5
       -- Now press Enter (should trigger backslash+Enter logic)
       -- Simulate VtyEvent (EvKey KEnter [])
-      -- This should: delete backslash, insert newline
-      let ed7 = deleteBackward ed6  -- Remove backslash
-          ed8 = breakLine ed7        -- Insert newline
+      -- This should: delete backslash, type newline
+      let ed7 = delBackward ed6  -- Remove backslash
+          ed8 = typeChar '\n' ed7  -- Type newline
       -- Type "world"
       let ed9 = insertChar 'w' ed8
           ed10 = insertChar 'o' ed9
@@ -134,3 +135,58 @@ spec = do
       -- Check content
       getEditorContent ed13 `shouldBe` "hello\nworld"
       length (getEditorLines ed13) `shouldBe` 2
+
+  describe "Empty Line Handling" $ do
+    it "handles empty line in the middle via typeChar" $ do
+      let ed = emptyEditor noWrapConfig
+          ed1 = insertText "line1" ed
+          ed2 = typeChar '\n' ed1
+          ed3 = typeChar '\n' ed2  -- Empty line
+          ed4 = insertText "line3" ed3
+      getEditorContent ed4 `shouldBe` "line1\n\nline3"
+      length (getEditorLines ed4) `shouldBe` 3
+
+    it "handles empty line via insertText" $ do
+      let ed = emptyEditor noWrapConfig
+          ed' = insertText "a\n\nb" ed
+      getEditorContent ed' `shouldBe` "a\n\nb"
+      length (getEditorLines ed') `shouldBe` 3
+
+    it "handles empty line at start via typeChar" $ do
+      let ed = emptyEditor noWrapConfig
+          ed1 = typeChar '\n' ed
+          ed2 = insertText "text" ed1
+      getEditorContent ed2 `shouldBe` "\ntext"
+      length (getEditorLines ed2) `shouldBe` 2
+
+    it "handles multiple consecutive empty lines via typeChar" $ do
+      let ed = emptyEditor noWrapConfig
+          ed1 = insertText "a" ed
+          ed2 = typeChar '\n' ed1
+          ed3 = typeChar '\n' ed2
+          ed4 = typeChar '\n' ed3
+          ed5 = insertText "b" ed4
+      getEditorContent ed5 `shouldBe` "a\n\n\nb"
+      length (getEditorLines ed5) `shouldBe` 4
+
+    it "typing characters then newlines creates empty lines" $ do
+      let ed = emptyEditor noWrapConfig
+          ed1 = typeChar 'a' ed
+          ed2 = typeChar '\n' ed1
+          ed3 = typeChar '\n' ed2  -- Empty line
+          ed4 = typeChar 'b' ed3
+      getEditorContent ed4 `shouldBe` "a\n\nb"
+      length (getEditorLines ed4) `shouldBe` 3
+
+  describe "Property: typing preserves content" $ do
+    it "typing string char-by-char equals insertText" $ property $
+      \(str :: String) ->
+        let edTyped = foldr (flip (.)) id [insertChar c | c <- str] (emptyEditor noWrapConfig)
+            edInserted = insertText (T.pack str) (emptyEditor noWrapConfig)
+        in getEditorContent edTyped == getEditorContent edInserted
+
+    it "typing with typeChar for newlines preserves content" $ property $
+      \(str :: String) ->
+        let edTyped = foldl (\e c -> typeChar c e) (emptyEditor noWrapConfig) str
+            edInserted = insertText (T.pack str) (emptyEditor noWrapConfig)
+        in getEditorContent edTyped == getEditorContent edInserted

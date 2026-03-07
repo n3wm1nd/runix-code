@@ -27,12 +27,13 @@
 --
 module UI.SegmentEditor
   ( -- * Editor type
-    SegmentEditor
+    SegmentEditor(..)
   , EditorConfig(..)
   , NewlineMode(..)
   , InputSegment(..)
-  , SegmentLine
+  , GapZipper
   , RefState(..)
+  , HasLinebreak(..)
     -- * Construction
   , emptyEditor
   , editorFromText
@@ -40,7 +41,6 @@ module UI.SegmentEditor
     -- * Reading content
   , getEditorContent
   , getEditorLines
-  , getEditorSegmentLines
   , getCursorPos
   , isEmpty
   , getSegmentAtCursor
@@ -49,6 +49,7 @@ module UI.SegmentEditor
   , handleEditorEvent
     -- * Editing operations
   , insertChar
+  , typeChar
   , insertText
   , insertSegment
   , insertFileRef
@@ -101,11 +102,32 @@ data InputSegment
       , segRefState :: RefState        -- ^ Reference state
       }
   | PastedSegment Text              -- ^ Pasted content (deleted as unit)
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
 
 -- | State of a file reference
 data RefState = RefPending | RefAccepted | RefRejected
-  deriving (Eq, Show)
+  deriving (Eq, Show, Ord)
+
+-- | Typeclass for segments that can represent linebreaks
+class HasLinebreak a where
+  -- | Check if a segment is any kind of linebreak (hard or soft)
+  isLinebreak :: a -> Bool
+
+  -- | Check if a segment is specifically a hard linebreak (explicit newline)
+  isHardBreak :: a -> Bool
+
+  -- | Check if a segment is specifically a soft linebreak (word-wrapping)
+  isSoftBreak :: a -> Bool
+
+-- | Instance for InputSegment
+instance HasLinebreak InputSegment where
+  isLinebreak (CharSegment '\n') = True
+  isLinebreak _ = False
+
+  isHardBreak (CharSegment '\n') = True
+  isHardBreak _ = False
+
+  isSoftBreak _ = False  -- Not implemented yet for InputSegment
 
 -- | How the editor handles newline input
 data NewlineMode
@@ -121,30 +143,31 @@ data EditorConfig n = EditorConfig
   , newlineMode :: NewlineMode    -- ^ How to handle Enter key
   } deriving (Eq, Show)
 
--- | A line is a gap zipper of segments (cursor between segments)
-type SegmentLine a = GapZipper a
-
--- | The editor state - A 2D ZIPPER
+-- | The editor state - A 2D structure with cursor
 --
 -- ARCHITECTURE:
 -- =============
--- The editor is a Zipper of SegmentLines (GapZippers).
--- - Outer Zipper: focuses on current line among all lines
--- - Inner GapZipper: cursor position within current line
+-- The editor stores lines in three parts:
+-- - Lines above current: stored as Zippers at END (non-empty, reversed order)
+-- - Current line: stored as GapZipper (can be empty only if no other lines)
+-- - Lines below current: stored as Zippers at START (non-empty, forward order)
+--
+-- INVARIANTS:
+-- ===========
+-- 1. Lines in edLinesAbove are non-empty Zippers positioned at END
+-- 2. Lines in edLinesBelow are non-empty Zippers positioned at START
+-- 3. edCurrentLine can be empty, but in the context of how we're using it,
+--    this only happens when starting a new line after a newline
 --
 -- This provides efficient local edits while maintaining 2D structure.
---
--- OPERATIONS:
--- ===========
--- - Within-line operations: work on the current GapZipper via Zippable
--- - Between-line operations: work on the outer Zipper via Zippable
--- - All raw zipper manipulation goes through UI.Zipper module
 --
 -- The type parameter 'a' is the segment type (typically InputSegment)
 -- The 'n' parameter is for the Brick widget name
 data SegmentEditor n a = SegmentEditor
   { edConfig :: EditorConfig n
-  , edLines :: Zipper (SegmentLine a)   -- ^ Zipper of lines (current line is focused)
+  , edLinesAbove :: [Zipper a]     -- ^ Lines above cursor (at END, reversed)
+  , edCurrentLine :: GapZipper a   -- ^ Current line with cursor
+  , edLinesBelow :: [Zipper a]     -- ^ Lines below cursor (at START, forward)
   } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -155,32 +178,29 @@ data SegmentEditor n a = SegmentEditor
 emptyEditor :: EditorConfig n -> SegmentEditor n a
 emptyEditor config = SegmentEditor
   { edConfig = config
-  , edLines = Z.singletonZipper Z.emptyGap
+  , edLinesAbove = []
+  , edCurrentLine = Z.emptyGap
+  , edLinesBelow = []
   }
 
 -- | Create an editor from plain text
 editorFromText :: EditorConfig n -> Text -> SegmentEditor n InputSegment
 editorFromText cfg txt =
-  let textLines = T.lines txt
-      -- Convert each line to a GapZipper with cursor at end
-      segmentLines = map (\t -> Z.listToGap (map CharSegment (T.unpack t))) textLines
-  in case segmentLines of
-       [] -> emptyEditor cfg
-       lines' -> case Z.listToZipper lines' of
-         Nothing -> emptyEditor cfg  -- Shouldn't happen
-         Just zipper -> SegmentEditor
-           { edConfig = cfg
-           , edLines = zipper
-           }
+  -- Just use insertText which handles newlines correctly via typeChar
+  insertText txt (emptyEditor cfg)
 
 -- | Create an editor from segment lines (cursor at start of first line)
-editorFromSegments :: EditorConfig n -> [SegmentLine a] -> SegmentEditor n a
+editorFromSegments :: EditorConfig n -> [Z.GapZipper a] -> SegmentEditor n a
 editorFromSegments config [] = emptyEditor config
-editorFromSegments config lines' = case Z.listToZipper lines' of
-  Nothing -> emptyEditor config  -- Shouldn't happen
-  Just zipper -> SegmentEditor
+editorFromSegments config (firstLine:restLines) =
+  let linesBelow = map (\gap -> case Z.listToZipper (toList gap) of
+                           Nothing -> error "Empty line in editorFromSegments"
+                           Just z -> z) restLines
+  in SegmentEditor
     { edConfig = config
-    , edLines = zipper
+    , edLinesAbove = []
+    , edCurrentLine = firstLine
+    , edLinesBelow = linesBelow
     }
 
 --------------------------------------------------------------------------------
@@ -190,49 +210,47 @@ editorFromSegments config lines' = case Z.listToZipper lines' of
 -- | Get all content as a single text string
 getEditorContent :: SegmentEditor n InputSegment -> Text
 getEditorContent ed =
-  let allLines = toList (edLines ed)
-      lineTexts = map segmentLineToText allLines
-  in T.intercalate "\n" lineTexts
+  let aboveTexts = map (segmentLineToText . toZipperAsGap) (reverse (edLinesAbove ed))
+      currentText = segmentLineToText (edCurrentLine ed)
+      belowTexts = map (segmentLineToText . toZipperAsGap) (edLinesBelow ed)
+      allTexts = aboveTexts ++ [currentText] ++ belowTexts
+  in T.concat allTexts  -- Just concatenate - newlines come from CharSegment '\n'
+  where
+    toZipperAsGap z = Z.GapZipper [] (toList z)
 
 -- | Get content as list of lines (as Text)
 getEditorLines :: SegmentEditor n InputSegment -> [Text]
 getEditorLines ed =
-  let allLines = toList (edLines ed)
-  in map segmentLineToText allLines
+  let aboveTexts = map (segmentLineToText . toZipperAsGap) (reverse (edLinesAbove ed))
+      currentText = segmentLineToText (edCurrentLine ed)
+      belowTexts = map (segmentLineToText . toZipperAsGap) (edLinesBelow ed)
+  in aboveTexts ++ [currentText] ++ belowTexts
+  where
+    toZipperAsGap z = Z.GapZipper [] (toList z)
 
--- | Get content as list of segment lines (preserves structure)
-getEditorSegmentLines :: SegmentEditor n a -> [SegmentLine a]
-getEditorSegmentLines ed = toList (edLines ed)
 
 -- | Get cursor position (row, col) - 0-indexed
 getCursorPos :: SegmentEditor n InputSegment -> (Int, Int)
 getCursorPos ed =
-  let allLines = toList (edLines ed)
-      currentLine = Z.getCurrent (edLines ed)
-      -- Row is how many lines come before current
-      row = length $ takeWhile (/= currentLine) allLines
-      -- Col is sum of segment lengths before cursor in current line
-      col = sum (map segmentLength (Z.gapBefore currentLine))
+  let row = length (edLinesAbove ed)
+      col = sum (map segmentLength (Z.gapBefore (edCurrentLine ed)))
   in (row, col)
 
 -- | Check if editor is empty (single line with no segments)
 isEmpty :: SegmentEditor n a -> Bool
 isEmpty ed =
-  let allLines = toList (edLines ed)
-  in case allLines of
-       [singleLine] -> null (toList singleLine)
-       _ -> False
+  null (edLinesAbove ed) && null (edLinesBelow ed) && null (toList (edCurrentLine ed))
 
 -- | Get the segment immediately after the cursor (if any)
 getSegmentAtCursor :: SegmentEditor n a -> Maybe a
 getSegmentAtCursor ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
   in Z.getAfterGap currentLine
 
 -- | Get the segment immediately before the cursor (if any)
 getSegmentBeforeCursor :: SegmentEditor n a -> Maybe a
 getSegmentBeforeCursor ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
   in Z.getBeforeGap currentLine
 
 --------------------------------------------------------------------------------
@@ -241,139 +259,119 @@ getSegmentBeforeCursor ed =
 
 -- | SegmentEditor is a Zippable that navigates through segments
 -- Forward/back move within current line; at boundaries, move between lines
+-- Invariant: lines in edLinesAbove/Below are Zippers (non-empty) stored at END/START
 instance Zippable (SegmentEditor n) where
-  -- Move forward one segment (within line or to next line)
+  -- Move forward one segment (right, or to next line if at end of line)
   forward ed =
-    let currentLine = Z.getCurrent (edLines ed)
-    in if not (atEnd currentLine)
-       then
-         -- Move forward within current line
-         let newLine = Z.forward currentLine
-         in ed { edLines = Z.updateCurrent newLine (edLines ed) }
-       else
-         -- At end of line, move to start of next line
-         if atEnd (edLines ed)
-         then ed  -- At end of document
-         else
-           let newLines = Z.forward (edLines ed)
-               nextLine = Z.getCurrent newLines
-               newLine = start nextLine
-           in ed { edLines = Z.updateCurrent newLine newLines }
+    if not (atEnd (edCurrentLine ed))
+    then
+      -- Move forward within current line
+      ed { edCurrentLine = Z.forward (edCurrentLine ed) }
+    else
+      -- At end of line, move to next line (which is stored at START)
+      case edLinesBelow ed of
+        [] -> ed  -- No next line
+        (Z.Zipper [] cur front : rest) ->
+          -- nextLine is at START: Zipper [] cur front
+          -- Convert to GapZipper at START: GapZipper [] (cur:front)
+          let nextAsGap = Z.GapZipper [] (cur : front)
+          in case edCurrentLine ed of
+            Z.GapZipper [] [] ->
+              -- Current line is empty, don't store it
+              ed { edCurrentLine = nextAsGap, edLinesBelow = rest }
+            Z.GapZipper before [] ->
+              -- Current line at END, convert to Zipper at END
+              let (b:bs) = before
+                  currentAsZipper = Z.Zipper bs b []
+              in ed { edLinesAbove = currentAsZipper : edLinesAbove ed
+                    , edCurrentLine = nextAsGap
+                    , edLinesBelow = rest }
+        _ -> error "Invariant violated: line in edLinesBelow not at START"
 
-  -- Move backward one segment (within line or to previous line)
+  -- Move backward one segment (left, or to previous line if at start of line)
   back ed =
-    let currentLine = Z.getCurrent (edLines ed)
-    in if not (atStart currentLine)
-       then
-         -- Move back within current line
-         let newLine = Z.back currentLine
-         in ed { edLines = Z.updateCurrent newLine (edLines ed) }
-       else
-         -- At start of line, move to end of previous line
-         if atStart (edLines ed)
-         then ed  -- At start of document
-         else
-           let newLines = Z.back (edLines ed)
-               prevLine = Z.getCurrent newLines
-               newLine = end prevLine
-           in ed { edLines = Z.updateCurrent newLine newLines }
+    if not (atStart (edCurrentLine ed))
+    then
+      -- Move back within current line
+      ed { edCurrentLine = Z.back (edCurrentLine ed) }
+    else
+      -- At start of line, move to previous line (which is stored at END)
+      case edLinesAbove ed of
+        [] -> ed  -- No previous line
+        (Z.Zipper back cur [] : rest) ->
+          -- prevLine is at END: Zipper back cur []
+          -- Convert to GapZipper at END: GapZipper (cur:back) []
+          let prevAsGap = Z.GapZipper (cur : back) []
+          in case edCurrentLine ed of
+            Z.GapZipper [] [] ->
+              -- Current line is empty, don't store it
+              ed { edLinesAbove = rest, edCurrentLine = prevAsGap }
+            Z.GapZipper [] after ->
+              -- Current line at START, convert to Zipper at START
+              let (a:as) = after
+                  currentAsZipper = Z.Zipper [] a as
+              in ed { edLinesAbove = rest
+                    , edCurrentLine = prevAsGap
+                    , edLinesBelow = currentAsZipper : edLinesBelow ed }
+        _ -> error "Invariant violated: line in edLinesAbove not at END"
 
   -- Move to start of document (first line, first position)
-  start ed =
-    let newLines = start (edLines ed)
-        firstLine = Z.getCurrent newLines
-        newLine = start firstLine
-    in ed { edLines = Z.updateCurrent newLine newLines }
+  start ed = if atStart ed then ed else start (back ed)
 
   -- Move to end of document (last line, last position)
-  end ed =
-    let newLines = end (edLines ed)
-        lastLine = Z.getCurrent newLines
-        newLine = end lastLine
-    in ed { edLines = Z.updateCurrent newLine newLines }
+  end ed = if atEnd ed then ed else end (forward ed)
 
-  -- Check if at start of document
-  atStart ed =
-    let currentLine = Z.getCurrent (edLines ed)
-    in atStart (edLines ed) && atStart currentLine
+  -- Check if at start of document (first line, start of line)
+  atStart ed = null (edLinesAbove ed) && atStart (edCurrentLine ed)
 
-  -- Check if at end of document
-  atEnd ed =
-    let currentLine = Z.getCurrent (edLines ed)
-    in atEnd (edLines ed) && atEnd currentLine
+  -- Check if at end of document (last line, end of line)
+  atEnd ed = null (edLinesBelow ed) && atEnd (edCurrentLine ed)
 
   -- Convert to list of all segments (across all lines)
   toList ed =
-    let allLines = toList (edLines ed)
-        allSegments = concatMap toList allLines
-    in allSegments
+    let linesAboveSegs = concatMap toList (reverse (edLinesAbove ed))
+        currentSegs = toList (edCurrentLine ed)
+        linesBelowSegs = concatMap toList (edLinesBelow ed)
+    in linesAboveSegs ++ currentSegs ++ linesBelowSegs
 
   -- Insert segment before cursor
   insertBackward seg ed =
-    let currentLine = Z.getCurrent (edLines ed)
-        newLine = insertBackward seg currentLine
-    in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+    ed { edCurrentLine = insertBackward seg (edCurrentLine ed) }
 
   -- Insert segment after cursor
   insertForward seg ed =
-    let currentLine = Z.getCurrent (edLines ed)
-        newLine = insertForward seg currentLine
-    in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+    ed { edCurrentLine = insertForward seg (edCurrentLine ed) }
 
-  -- Delete segment before cursor (with line joining)
+  -- Delete segment before cursor (just navigate and delete, ignore line structure)
   deleteBackward ed =
-    let currentLine = Z.getCurrent (edLines ed)
-    in case deleteBackward currentLine of
+    case deleteBackward (edCurrentLine ed) of
       Just newLine ->
         -- Deleted within current line
-        Just (ed { edLines = Z.updateCurrent newLine (edLines ed) })
+        Just (ed { edCurrentLine = newLine })
       Nothing ->
-        -- At start of line, need to join with previous line
-        if atStart (edLines ed)
-        then Nothing  -- At start of document, can't delete
-        else
-          -- Join current line to end of previous line
-          let currentSegments = toList currentLine
-              prevLines = back (edLines ed)
-              prevLine = Z.getCurrent prevLines
-              -- Append all segments to end of previous line
-              joinedLine = end $ foldr insertBackward prevLine (reverse currentSegments)
-              linesWithJoin = Z.updateCurrent joinedLine prevLines
-          in case forward linesWithJoin of
-            lineZipper -> case Z.deleteCurrent lineZipper of
-              Nothing -> Just (ed { edLines = linesWithJoin })
-              Just z -> Just (ed { edLines = back z })
+        -- At start of current line, move back to previous line and delete there
+        if null (edLinesAbove ed)
+        then Nothing  -- At start of document
+        else deleteBackward (back ed)  -- Move back and try again
 
-  -- Delete segment after cursor (with line joining)
+  -- Delete segment after cursor (just navigate and delete, ignore line structure)
   deleteForward ed =
-    let currentLine = Z.getCurrent (edLines ed)
-    in case deleteForward currentLine of
+    case deleteForward (edCurrentLine ed) of
       Just newLine ->
         -- Deleted within current line
-        Just (ed { edLines = Z.updateCurrent newLine (edLines ed) })
+        Just (ed { edCurrentLine = newLine })
       Nothing ->
-        -- At end of line, need to join with next line
-        if atEnd (edLines ed)
-        then Nothing  -- At end of document, can't delete
-        else
-          -- Join next line to end of current line
-          let nextLines = forward (edLines ed)
-              nextLine = Z.getCurrent nextLines
-              nextSegments = toList nextLine
-              -- Append all segments to end of current line
-              joinedLine = end $ foldr insertBackward currentLine (reverse nextSegments)
-              linesWithJoin = Z.updateCurrent joinedLine (edLines ed)
-          in case forward linesWithJoin of
-            lineZipper -> case Z.deleteCurrent lineZipper of
-              Nothing -> Just (ed { edLines = linesWithJoin })
-              Just z -> Just (ed { edLines = back z })
+        -- At end of current line, move forward to next line and delete there
+        if null (edLinesBelow ed)
+        then Nothing  -- At end of document
+        else deleteForward (forward ed)  -- Move forward and try again
 
 --------------------------------------------------------------------------------
 -- Helper functions
 --------------------------------------------------------------------------------
 
 -- | Convert a segment line to text
-segmentLineToText :: SegmentLine InputSegment -> Text
+segmentLineToText :: GapZipper InputSegment -> Text
 segmentLineToText line' =
   let allSegs = toList line'
   in mconcat (map segmentToText allSegs)
@@ -427,23 +425,23 @@ handleEditorEvent (VtyEvent (EvKey KEnter [])) ed =
            Just (CharSegment '\\') ->
              -- Remove backslash and insert newline
              let ed' = delBackward ed
-                 ed'' = breakLine ed'
+                 ed'' = typeChar '\n' ed'
              in return (False, ed'')
            _ -> return (True, ed)  -- Normal enter submits
-    EnterNewline -> return (False, breakLine ed)
+    EnterNewline -> return (False, typeChar '\n' ed)
     BackslashEscape ->
       -- Check if cursor is right after backslash
       case getSegmentBeforeCursor ed of
            Just (CharSegment '\\') ->
              -- Remove backslash and insert newline
              let ed' = delBackward ed
-                 ed'' = breakLine ed'
+                 ed'' = typeChar '\n' ed'
              in return (False, ed'')
            _ -> return (True, ed)  -- Normal enter submits
 
 handleEditorEvent (VtyEvent (EvKey KEnter [MShift])) ed =
   -- Shift+Enter always inserts newline
-  return (False, breakLine ed)
+  return (False, typeChar '\n' ed)
 
 handleEditorEvent (VtyEvent (EvKey (KChar c) [])) ed
   | c /= '\t' = return (False, insertChar c ed)
@@ -483,15 +481,15 @@ handleEditorEvent (VtyEvent (EvKey (KChar 'w') [MCtrl])) ed =
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'k') [MCtrl])) ed =
   -- Kill to end of line
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
       newLine = Z.GapZipper (Z.gapBefore currentLine) []
-  in return (False, ed { edLines = Z.updateCurrent newLine (edLines ed) })
+  in return (False, ed { edCurrentLine = newLine })
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'u') [MCtrl])) ed =
   -- Kill to start of line
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
       newLine = Z.GapZipper [] (Z.gapAfter currentLine)
-  in return (False, ed { edLines = Z.updateCurrent newLine (edLines ed) })
+  in return (False, ed { edCurrentLine = newLine })
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'b') [MMeta])) ed =
   return (False, moveWordLeft ed)
@@ -527,9 +525,16 @@ handleEditorEvent _ ed = return (False, ed)
 insertChar :: Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 insertChar c ed = forward $ insertBackward (CharSegment c) ed
 
--- | Insert text at cursor (as CharSegments)
+-- | Type a character - handles linebreaks by calling breakLine after inserting
+typeChar :: HasLinebreak InputSegment => Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
+typeChar c ed =
+  if isHardBreak (CharSegment c)
+  then breakLine (insertChar c ed)  -- Insert newline, then break line
+  else insertChar c ed
+
+-- | Insert text at cursor (as if typing each character)
 insertText :: Text -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertText txt ed = foldl (\e c -> forward $ insertBackward (CharSegment c) e) ed (T.unpack txt)
+insertText txt ed = foldl (\e c -> typeChar c e) ed (T.unpack txt)
 
 -- | Insert a segment at cursor
 insertSegment :: InputSegment -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
@@ -548,7 +553,7 @@ insertFileRef paths query state ed =
 -- Useful for updating file refs after tab completion
 replaceSegmentAtCursor :: InputSegment -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 replaceSegmentAtCursor newSeg ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
   in case Z.getAfterGap currentLine of
        Nothing -> ed  -- Nothing to replace
        Just _ ->
@@ -556,12 +561,12 @@ replaceSegmentAtCursor newSeg ed =
          let line' = Z.deleteAfterGap currentLine
              line'' = Z.insertAtGap newSeg line'
              line''' = forward line''  -- Move cursor past new segment
-         in ed { edLines = Z.updateCurrent line''' (edLines ed) }
+         in ed { edCurrentLine = line'' }
 
 -- | Rotate file reference alternatives (looks at segment BEFORE cursor)
 rotateFileRefAtCursor :: SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 rotateFileRefAtCursor ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
   in case Z.getBeforeGap currentLine of
        Just (FileRefSegment {segRefPaths = (current:rest), segRefQuery = query, segRefState = state}) ->
          case rest of
@@ -575,7 +580,7 @@ rotateFileRefAtCursor ed =
                  -- Delete old ref, insert rotated
                  line' = Z.deleteBeforeGap currentLine
                  line'' = Z.insertAtGap rotated line'
-             in ed { edLines = Z.updateCurrent line'' (edLines ed) }
+             in ed { edCurrentLine = line'' }
        _ -> ed  -- Not a file ref or empty paths
 
 -- | Clear the entire editor
@@ -592,7 +597,7 @@ setNewlineMode mode ed =
 -- Returns the word text and the number of segments it spans
 getWordBeforeCursor :: SegmentEditor n InputSegment -> Maybe (Text, Int)
 getWordBeforeCursor ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
       before = Z.gapBefore currentLine  -- Already reversed
   in go before [] 0
   where
@@ -615,24 +620,54 @@ deleteNSegments :: Int -> SegmentEditor n a -> SegmentEditor n a
 deleteNSegments 0 ed = ed
 deleteNSegments n ed = deleteNSegments (n - 1) (delBackward ed)
 
--- | Delete backward (delete segment before cursor)
+-- | Delete backward (delete segment before cursor, join lines if at line start)
 delBackward :: SegmentEditor n a -> SegmentEditor n a
-delBackward ed = case deleteBackward ed of
-  Just ed' -> ed'
-  Nothing -> ed  -- At start of document, can't delete
+delBackward ed =
+  let currentLine = edCurrentLine ed
+  in if atStart currentLine
+     then
+       -- At start of line - join with previous line
+       case edLinesAbove ed of
+         [] -> ed  -- At start of document (no previous line)
+         (Z.Zipper back prevCur [] : rest) ->
+           -- Previous line is at END: Zipper back prevCur []
+           -- Join: (prevCur:back) + current line's after
+           let joinedLine = Z.GapZipper (prevCur : back) (Z.gapAfter currentLine)
+           in ed { edLinesAbove = rest, edCurrentLine = joinedLine }
+         _ -> error "Invariant violated: line in edLinesAbove not at END"
+     else
+       -- Not at line start, just delete the segment
+       case deleteBackward ed of
+         Just ed' -> ed'
+         Nothing -> ed
 
--- | Delete forward (delete segment after cursor)
+-- | Delete forward (delete segment after cursor, join lines if at line end)
 delForward :: SegmentEditor n a -> SegmentEditor n a
-delForward ed = case deleteForward ed of
-  Just ed' -> ed'
-  Nothing -> ed  -- At end of document, can't delete
+delForward ed =
+  let currentLine = edCurrentLine ed
+  in if atEnd currentLine
+     then
+       -- At end of line - join with next line
+       case edLinesBelow ed of
+         [] -> ed  -- At end of document (no next line)
+         (Z.Zipper [] nextCur front : rest) ->
+           -- Next line is at START: Zipper [] nextCur front
+           -- Join: current line's before + (nextCur:front)
+           let joinedLine = Z.GapZipper (Z.gapBefore currentLine) (nextCur : front)
+           in ed { edLinesBelow = rest, edCurrentLine = joinedLine }
+         _ -> error "Invariant violated: line in edLinesBelow not at START"
+     else
+       -- Not at line end, just delete the segment
+       case deleteForward ed of
+         Just ed' -> ed'
+         Nothing -> ed
 
 -- | Delete word backward
 delWordBackward :: SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 delWordBackward ed = goSpaces ed
   where
     goSpaces edCurrent =
-      let currentLine = Z.getCurrent (edLines edCurrent)
+      let currentLine = edCurrentLine edCurrent
       in case Z.getBeforeGap currentLine of
         Nothing ->
           -- At start of current line, check if at start of document
@@ -651,7 +686,7 @@ delWordBackward ed = goSpaces ed
               delBackward edCurrent
 
     deleteWord edCurrent =
-      let currentLine = Z.getCurrent (edLines edCurrent)
+      let currentLine = edCurrentLine edCurrent
       in case Z.getBeforeGap currentLine of
         Nothing -> edCurrent
         Just seg
@@ -663,7 +698,7 @@ breakLine :: SegmentEditor n a -> SegmentEditor n a
 breakLine ed =
   case lineLimit (edConfig ed) of
     Just lim ->
-      let totalLines = length (toList (edLines ed))
+      let totalLines = 1 + length (edLinesAbove ed) + length (edLinesBelow ed)
       in if totalLines >= lim
          then ed  -- Don't exceed line limit
          else doBreak ed
@@ -671,119 +706,84 @@ breakLine ed =
   where
     doBreak ed' =
       -- Split current line at cursor
-      let currentLine = Z.getCurrent (edLines ed')
-          afterSegments = Z.gapAfter currentLine
-          -- Complete current line (move cursor to end)
-          completedLine = end currentLine
-          -- Create new line with after segments (cursor at start)
+      let currentLine = edCurrentLine ed'
+          afterSegments = Z.gapAfter currentLine  -- normal order
+          beforeSegments = Z.gapBefore currentLine  -- reversed order: [3,2,1] means segments 1,2,3
+          -- New line gets after segments (at START)
           newLine = Z.listToGap afterSegments
-          -- Insert new line after current
-          newLines = Z.updateCurrent completedLine (edLines ed')
-          newLines' = Z.appendItemAndFocus newLine newLines
-      in ed' { edLines = newLines' }
+      in case beforeSegments of
+        [] ->
+          -- Current line before cursor is empty - nothing to move to edLinesAbove
+          -- Just move to new line (afterSegments becomes current line)
+          ed' { edCurrentLine = newLine }
+        (b:bs) ->
+          -- Move completed line (beforeSegments) to edLinesAbove
+          -- Create Zipper at END directly: Zipper [2,1] 3 [] for beforeSegments = [3,2,1]
+          let completedAsZipper = Z.Zipper bs b []
+          in ed' { edLinesAbove = completedAsZipper : edLinesAbove ed'
+                 , edCurrentLine = newLine
+                 }
 
 --------------------------------------------------------------------------------
 -- Cursor movement
 --------------------------------------------------------------------------------
 
--- | Move cursor left (by one segment within current line)
+-- | Move cursor left (by one segment, crossing line boundaries)
 moveCursorLeft :: SegmentEditor n a -> SegmentEditor n a
-moveCursorLeft ed =
-  let currentLine = Z.getCurrent (edLines ed)
-      newLine = back currentLine
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+moveCursorLeft = back
 
--- | Move cursor right (by one segment within current line)
+-- | Move cursor right (by one segment, crossing line boundaries)
 moveCursorRight :: SegmentEditor n a -> SegmentEditor n a
-moveCursorRight ed =
-  let currentLine = Z.getCurrent (edLines ed)
-      newLine = forward currentLine
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+moveCursorRight = forward
 
 -- | Move cursor up one line (maintaining column position)
+-- TODO: Preserve column position when moving between lines
+-- For now, just move to end of previous line
 moveCursorUp :: SegmentEditor n a -> SegmentEditor n a
-moveCursorUp ed = rewindAndUp ed
-  where
-    rewindAndUp e
-      | atStart (Z.getCurrent (edLines e)) =
-          -- At start of line, move to previous line
-          if atStart (edLines e)
-          then e  -- No previous line
-          else
-            let currentLine = Z.getCurrent (edLines e)
-                afterSegments = Z.gapAfter currentLine
-                prevLines = back (edLines e)
-                -- Keep after segments for potential re-positioning
-                newLines = prevLines  -- TODO: reposition cursor
-            in e { edLines = newLines }
-      | otherwise =
-          -- Recurse back within line, then forward on return
-          let e' = rewindAndUp (moveCursorLeft e)
-              currentLine = Z.getCurrent (edLines e')
-          in if atEnd currentLine
-             then e'
-             else moveCursorRight e'
+moveCursorUp ed =
+  case edLinesAbove ed of
+    [] -> ed  -- No previous line
+    _ -> let ed' = start ed  -- Move to start of current line
+         in back ed'  -- Move to previous line (which is at END)
 
 -- | Move cursor down one line (maintaining column position)
+-- TODO: Preserve column position when moving between lines
+-- For now, just move to start of next line
 moveCursorDown :: SegmentEditor n a -> SegmentEditor n a
-moveCursorDown ed = forwardAndDown ed
-  where
-    forwardAndDown e
-      | atEnd (Z.getCurrent (edLines e)) =
-          -- At end of line, move to next line
-          if atEnd (edLines e)
-          then e  -- No next line
-          else
-            let currentLine = Z.getCurrent (edLines e)
-                beforeSegments = Z.gapBefore currentLine
-                nextLines = forward (edLines e)
-                -- Keep before segments for potential re-positioning
-                newLines = nextLines  -- TODO: reposition cursor
-            in e { edLines = newLines }
-      | otherwise =
-          -- Recurse forward within line, then back on return
-          let e' = forwardAndDown (moveCursorRight e)
-              currentLine = Z.getCurrent (edLines e')
-          in if atStart currentLine
-             then e'
-             else moveCursorLeft e'
+moveCursorDown ed =
+  case edLinesBelow ed of
+    [] -> ed  -- No next line
+    _ -> let ed' = end ed  -- Move to end of current line
+         in forward ed'  -- Move to next line (which is at START)
 
 -- | Move cursor to start of current line
 moveCursorToLineStart :: SegmentEditor n a -> SegmentEditor n a
 moveCursorToLineStart ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
       newLine = start currentLine
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+  in ed { edCurrentLine = newLine }
 
 -- | Move cursor to end of current line
 moveCursorToLineEnd :: SegmentEditor n a -> SegmentEditor n a
 moveCursorToLineEnd ed =
-  let currentLine = Z.getCurrent (edLines ed)
+  let currentLine = edCurrentLine ed
       newLine = end currentLine
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+  in ed { edCurrentLine = newLine }
 
 -- | Move cursor to start of document
 moveCursorToStart :: SegmentEditor n a -> SegmentEditor n a
-moveCursorToStart ed =
-  let newLines = start (edLines ed)
-      currentLine = Z.getCurrent newLines
-      newLine = start currentLine
-  in ed { edLines = Z.updateCurrent newLine newLines }
+moveCursorToStart = start
 
 -- | Move cursor to end of document
 moveCursorToEnd :: SegmentEditor n a -> SegmentEditor n a
-moveCursorToEnd ed =
-  let newLines = end (edLines ed)
-      currentLine = Z.getCurrent newLines
-      newLine = end currentLine
-  in ed { edLines = Z.updateCurrent newLine newLines }
+moveCursorToEnd = end
 
 -- | Move cursor one word to the left
 moveWordLeft :: SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 moveWordLeft ed = goSpaces ed
   where
     goSpaces edCurrent =
-      let currentLine = Z.getCurrent (edLines edCurrent)
+      let currentLine = edCurrentLine edCurrent
       in case Z.getBeforeGap currentLine of
         Nothing ->
           -- At start of current line, check if at start of document
@@ -796,7 +796,7 @@ moveWordLeft ed = goSpaces ed
           | otherwise -> moveCursorLeft edCurrent
 
     skipWord edCurrent =
-      let currentLine = Z.getCurrent (edLines edCurrent)
+      let currentLine = edCurrentLine edCurrent
       in case Z.getBeforeGap currentLine of
         Nothing -> edCurrent
         Just seg
@@ -808,7 +808,7 @@ moveWordRight :: SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 moveWordRight ed = goSpaces ed
   where
     goSpaces edCurrent =
-      let currentLine = Z.getCurrent (edLines edCurrent)
+      let currentLine = edCurrentLine edCurrent
       in case Z.getAfterGap currentLine of
         Nothing ->
           -- At end of current line, check if at end of document
@@ -821,7 +821,7 @@ moveWordRight ed = goSpaces ed
           | otherwise -> moveCursorRight edCurrent
 
     skipWord edCurrent =
-      let currentLine = Z.getCurrent (edLines edCurrent)
+      let currentLine = edCurrentLine edCurrent
       in case Z.getAfterGap currentLine of
         Nothing -> edCurrent
         Just seg
@@ -839,8 +839,10 @@ renderEditor :: (Ord n, Show n)
              -> SegmentEditor n InputSegment
              -> Widget n
 renderEditor hasFocus ed =
-  let allLines = getEditorSegmentLines ed
-      lineWidgets = map renderSegmentLine allLines
+  let aboveWidgets = map renderZipperLine (reverse (edLinesAbove ed))
+      currentWidget = renderGapZipper (edCurrentLine ed)
+      belowWidgets = map renderZipperLine (edLinesBelow ed)
+      lineWidgets = aboveWidgets ++ [currentWidget] ++ belowWidgets
       content = vBox lineWidgets
       (row, col) = getCursorPos ed
       cursorLoc = Location (col, row)
@@ -849,6 +851,8 @@ renderEditor hasFocus ed =
      viewport name Both $
      (if hasFocus then showCursor name cursorLoc else id) $
      content
+  where
+    renderZipperLine z = renderGapZipper (Z.GapZipper [] (toList z))
 
 -- | Render the editor with a prompt prefix
 renderEditorWithPrompt :: (Ord n, Show n)
@@ -857,12 +861,15 @@ renderEditorWithPrompt :: (Ord n, Show n)
                        -> SegmentEditor n InputSegment
                        -> Widget n
 renderEditorWithPrompt prompt hasFocus ed =
-  let allLines = getEditorSegmentLines ed
+  let aboveLines = map renderZipperLine (reverse (edLinesAbove ed))
+      currentLine = renderGapZipper (edCurrentLine ed)
+      belowLines = map renderZipperLine (edLinesBelow ed)
+      allLines = aboveLines ++ [currentLine] ++ belowLines
       renderedLines = case allLines of
         [] -> [txt prompt <+> txt " "]
         (firstLine:restLines) ->
-          (txt prompt <+> txt " " <+> renderSegmentLine firstLine)
-          : map (\ln -> txt (T.replicate (T.length prompt + 1) " ") <+> renderSegmentLine ln) restLines
+          (txt prompt <+> txt " " <+> firstLine)
+          : map (\ln -> txt (T.replicate (T.length prompt + 1) " ") <+> ln) restLines
       content = vBox renderedLines
       (row, col) = getCursorPos ed
       -- Adjust cursor location for prompt
@@ -872,10 +879,12 @@ renderEditorWithPrompt prompt hasFocus ed =
      viewport name Both $
      (if hasFocus then showCursor name cursorLoc else id) $
      content
+  where
+    renderZipperLine z = renderGapZipper (Z.GapZipper [] (toList z))
 
 -- | Render a line of segments with appropriate styling
-renderSegmentLine :: SegmentLine InputSegment -> Widget n
-renderSegmentLine line' =
+renderGapZipper :: GapZipper InputSegment -> Widget n
+renderGapZipper line' =
   let allSegs = toList line'
   in if null allSegs
      then txt " "  -- Empty line must render something to maintain height
