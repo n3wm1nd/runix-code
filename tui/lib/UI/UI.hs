@@ -46,6 +46,7 @@ import qualified UI.Widgets.MessageHistory as MH
 import qualified UI.InputPanel as IP
 import qualified Runix.LLM.Context as Context
 import qualified UI.SegmentEditor as SE
+import qualified UI.Zipper as Z
 
 -- | Custom events for the TUI
 data CustomEvent msg
@@ -82,7 +83,7 @@ data AppState msg = AppState
   , _widgetZipper :: Zipper (T.Widget Name)  -- Pre-rendered widgets (parallel structure)
   , _status :: Text                         -- Current status message
   , _pendingInput :: Maybe SomeInputWidget  -- Active input widget (cached from TVar)
-  , _inputEditor :: SE.SegmentEditor Name  -- Input field with rich content
+  , _inputEditor :: SE.SegmentEditor Name SE.InputSegment  -- Input field with rich content
   , _inputMode :: InputMode                -- Current input mode
   , _markdownMode :: MarkdownMode          -- Whether to render markdown or show raw
   , _lastViewport :: Maybe T.Viewport      -- Last viewport state for scroll indicators
@@ -111,7 +112,7 @@ statusL = lens _status (\st s -> st { _status = s })
 pendingInputL :: Lens' (AppState msg) (Maybe SomeInputWidget)
 pendingInputL = lens _pendingInput (\st p -> st { _pendingInput = p })
 
-inputEditorL :: Lens' (AppState msg) (SE.SegmentEditor Name)
+inputEditorL :: Lens' (AppState msg) (SE.SegmentEditor Name SE.InputSegment)
 inputEditorL = lens _inputEditor (\st e -> st { _inputEditor = e })
 
 inputModeL :: Lens' (AppState msg) InputMode
@@ -319,13 +320,13 @@ drawUI st = [indicatorLayer, baseLayer]
     indicatorLayer = historyIndicators
 
     -- Render segment lines with highlighting
-    renderSegmentLines :: [SE.SegmentLine] -> T.Widget Name
+    renderSegmentLines :: [SE.SegmentLine SE.InputSegment] -> T.Widget Name
     renderSegmentLines segLines =
       vBox $ map renderSegmentLine segLines
 
-    renderSegmentLine :: SE.SegmentLine -> T.Widget Name
-    renderSegmentLine (before, after) =
-      let allSegs = reverse before ++ after
+    renderSegmentLine :: SE.SegmentLine SE.InputSegment -> T.Widget Name
+    renderSegmentLine line' =
+      let allSegs = Z.toList line'
       in if null allSegs
          then str " "  -- Empty lines shown as space to preserve them
          else hBox $ map renderSegment allSegs
