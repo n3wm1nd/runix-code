@@ -118,31 +118,46 @@ data EditorConfig n = EditorConfig
   , newlineMode :: NewlineMode    -- ^ How to handle Enter key
   } deriving (Eq, Show)
 
--- | A line of segments (for display purposes)
-type SegmentLine = [InputSegment]
+-- | A line is a 1D zipper of segments
+-- (segments before cursor reversed, segments after cursor normal)
+type SegmentLine = ([InputSegment], [InputSegment])
 
--- | The editor state - A LINEAR ZIPPER
+-- | The editor state - A 2D ZIPPER
 --
--- ZIPPER INVARIANTS:
--- ==================
--- This is a simple linear zipper over segments.
+-- ARCHITECTURE:
+-- =============
+-- The editor is a 2D zipper: a zipper of lines, where the current line is itself a 1D zipper.
+-- This structure provides efficient local edits while maintaining a logical 1D view.
 --
--- edBefore :: [InputSegment]
---   - Segments BEFORE cursor
---   - Stored REVERSED: head = segment immediately before cursor
---   - Example: cursor after "ab" in "abcd" → [CharSegment 'b', CharSegment 'a']
+-- INVARIANTS:
+-- ===========
+-- edLinesBefore :: [SegmentLine]
+--   - Complete lines BEFORE the current line
+--   - Stored as REVERSED CONS LIST: head = line immediately above cursor
+--   - Each line stored REVERSED: as if cursor is at end of that line
+--   - Example: two lines above ["foo", "bar"] → [(['r','a','b'],[]), (['o','o','f'],[])]
 --
--- edAfter :: [InputSegment]
---   - Segments AFTER cursor
---   - Stored NORMAL: head = segment immediately after cursor
---   - Example: cursor after "ab" in "abcd" → [CharSegment 'c', CharSegment 'd']
+-- line :: SegmentLine
+--   - The current line being edited (1D zipper)
+--   - (before, after) where before is reversed, after is normal
+--   - Example: "ab|cd" → (['b','a'], ['c','d'])
 --
--- Newlines are stored as NewlineSegment, making the structure truly linear.
--- Display logic converts this linear structure into visual lines.
+-- edLinesAfter :: [SegmentLine]
+--   - Complete lines AFTER the current line
+--   - Stored as NORMAL LIST: head = line immediately below cursor
+--   - Each line stored NORMAL: as if cursor is at start of that line
+--   - Example: two lines below ["foo", "bar"] → [([], ['f','o','o']), ([], ['b','a','r'])]
+--
+-- OPERATIONS:
+-- ===========
+-- Data operations work on the 1D zipper (the current line).
+-- Structural fixups maintain the 2D projection (moving between lines, splitting/joining).
+--
 data SegmentEditor n = SegmentEditor
   { edConfig :: EditorConfig n
-  , edBefore :: [InputSegment]   -- ^ Segments before cursor (reversed)
-  , edAfter :: [InputSegment]    -- ^ Segments after cursor (normal)
+  , edLinesBefore :: [SegmentLine]  -- ^ Lines before current (reversed cons list)
+  , line :: SegmentLine              -- ^ Current line (1D zipper)
+  , edLinesAfter :: [SegmentLine]    -- ^ Lines after current (normal list)
   } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
@@ -153,23 +168,33 @@ data SegmentEditor n = SegmentEditor
 emptyEditor :: EditorConfig n -> SegmentEditor n
 emptyEditor config = SegmentEditor
   { edConfig = config
-  , edBefore = []
-  , edAfter = []
+  , edLinesBefore = []
+  , line = ([], [])
+  , edLinesAfter = []
   }
 
 -- | Create an editor from plain text
 editorFromText :: EditorConfig n -> Text -> SegmentEditor n
 editorFromText cfg txt =
-  let chars = T.unpack txt
-      segments = map CharSegment chars
-  in editorFromSegments cfg segments
+  let textLines = T.lines txt
+      segmentLines = map (\t -> ([], map CharSegment (T.unpack t))) textLines
+  in case segmentLines of
+       [] -> emptyEditor cfg
+       (firstLine:restLines) -> SegmentEditor
+         { edConfig = cfg
+         , edLinesBefore = []
+         , line = firstLine
+         , edLinesAfter = restLines
+         }
 
 -- | Create an editor from segment list (cursor at start)
-editorFromSegments :: EditorConfig n -> [InputSegment] -> SegmentEditor n
-editorFromSegments config segs = SegmentEditor
+editorFromSegments :: EditorConfig n -> [SegmentLine] -> SegmentEditor n
+editorFromSegments config [] = emptyEditor config
+editorFromSegments config (firstLine:restLines) = SegmentEditor
   { edConfig = config
-  , edBefore = []
-  , edAfter = segs
+  , edLinesBefore = []
+  , line = firstLine
+  , edLinesAfter = restLines
   }
 
 --------------------------------------------------------------------------------
@@ -179,56 +204,56 @@ editorFromSegments config segs = SegmentEditor
 -- | Get all content as a single text string
 getEditorContent :: SegmentEditor n -> Text
 getEditorContent ed =
-  let allSegs = reverse (edBefore ed) ++ edAfter ed
-  in mconcat (map segmentToText allSegs)
+  let beforeLines = reverse (edLinesBefore ed)
+      currentLine = line ed
+      afterLines = edLinesAfter ed
+      allLines = beforeLines ++ [currentLine] ++ afterLines
+      lineTexts = map segmentLineToText allLines
+  in T.intercalate "\n" lineTexts
 
 -- | Get content as list of lines (as Text)
 getEditorLines :: SegmentEditor n -> [Text]
 getEditorLines ed =
-  let allSegs = reverse (edBefore ed) ++ edAfter ed
-      lines = segmentsToLines allSegs
-  in map segmentLineToText lines
+  let beforeLines = reverse (edLinesBefore ed)
+      currentLine = line ed
+      afterLines = edLinesAfter ed
+      allLines = beforeLines ++ [currentLine] ++ afterLines
+  in map segmentLineToText allLines
 
 -- | Get content as list of segment lines (preserves structure)
 getEditorSegmentLines :: SegmentEditor n -> [SegmentLine]
 getEditorSegmentLines ed =
-  let allSegs = reverse (edBefore ed) ++ edAfter ed
-  in segmentsToLines allSegs
-
--- | Split segments into lines at newline character boundaries
-segmentsToLines :: [InputSegment] -> [SegmentLine]
-segmentsToLines [] = [[]]  -- Empty editor has one empty line
-segmentsToLines segs = go segs []
-  where
-    go [] currentLine = [reverse currentLine]
-    go (CharSegment '\n':rest) currentLine = reverse currentLine : go rest []
-    go (seg:rest) currentLine = go rest (seg:currentLine)
+  reverse (edLinesBefore ed) ++ [line ed] ++ edLinesAfter ed
 
 -- | Get cursor position (row, col) - 0-indexed
 getCursorPos :: SegmentEditor n -> (Int, Int)
 getCursorPos ed =
-  let before = reverse (edBefore ed)
-      (row, col) = foldl countPosition (0, 0) before
+  let row = length (edLinesBefore ed)
+      (before, _) = line ed
+      col = sum (map segmentLength before)
   in (row, col)
-  where
-    countPosition (r, c) (CharSegment '\n') = (r + 1, 0)
-    countPosition (r, c) seg = (r, c + segmentLength seg)
 
 -- | Check if editor is empty
 isEmpty :: SegmentEditor n -> Bool
-isEmpty ed = null (edBefore ed) && null (edAfter ed)
+isEmpty ed =
+  let (before, after) = line ed
+  in null (edLinesBefore ed) && null before && null after && null (edLinesAfter ed)
 
 -- | Get the segment immediately after the cursor (if any)
 getSegmentAtCursor :: SegmentEditor n -> Maybe InputSegment
-getSegmentAtCursor ed = case edAfter ed of
-  (seg:_) -> Just seg
-  [] -> Nothing
+getSegmentAtCursor ed =
+  let (_, after) = line ed
+  in case after of
+       (seg:_) -> Just seg
+       [] -> Nothing
 
 -- | Get the segment immediately before the cursor (if any)
 getSegmentBeforeCursor :: SegmentEditor n -> Maybe InputSegment
-getSegmentBeforeCursor ed = case edBefore ed of
-  (seg:_) -> Just seg
-  [] -> Nothing
+getSegmentBeforeCursor ed =
+  let (before, _) = line ed
+  in case before of
+       (seg:_) -> Just seg
+       [] -> Nothing
 
 --------------------------------------------------------------------------------
 -- Helper functions
@@ -236,7 +261,9 @@ getSegmentBeforeCursor ed = case edBefore ed of
 
 -- | Convert a segment line to text
 segmentLineToText :: SegmentLine -> Text
-segmentLineToText = mconcat . map segmentToText
+segmentLineToText (before, after) =
+  let allSegs = reverse before ++ after
+  in mconcat (map segmentToText allSegs)
 
 -- | Generate display text for paste segment
 -- Single-line: shows actual text, Multi-line: shows placeholder
@@ -276,20 +303,42 @@ isSpaceSegment _ = False
 -- Core Movement Primitives
 --------------------------------------------------------------------------------
 
--- | Move forward one segment in the linear zipper
+-- | Move forward one segment (crosses line boundaries)
 forward :: SegmentEditor n -> SegmentEditor n
-forward ed = case edAfter ed of
-  [] -> ed  -- At end
-  (seg:rest) -> ed { edBefore = seg : edBefore ed
-                   , edAfter = rest
+forward ed =
+  let (before, after) = line ed
+  in case after of
+       (seg:rest) ->
+         -- DATA: Move within current line
+         ed { line = (seg : before, rest) }
+       [] ->
+         -- FIXUP: At end of line, move to next line
+         case edLinesAfter ed of
+           [] -> ed  -- At end of document
+           (nextLine:nextLines) ->
+             let completedLine = (before, [])  -- Current line completed (cursor at end)
+             in ed { edLinesBefore = completedLine : edLinesBefore ed
+                   , line = nextLine
+                   , edLinesAfter = nextLines
                    }
 
--- | Move backward one segment in the linear zipper
+-- | Move backward one segment (crosses line boundaries)
 back :: SegmentEditor n -> SegmentEditor n
-back ed = case edBefore ed of
-  [] -> ed  -- At start
-  (seg:rest) -> ed { edBefore = rest
-                   , edAfter = seg : edAfter ed
+back ed =
+  let (before, after) = line ed
+  in case before of
+       (seg:rest) ->
+         -- DATA: Move within current line
+         ed { line = (rest, seg : after) }
+       [] ->
+         -- FIXUP: At start of line, move to previous line
+         case edLinesBefore ed of
+           [] -> ed  -- At start of document
+           (prevLine:prevLines) ->
+             let completedLine = ([], after)  -- Current line completed (cursor at start)
+             in ed { edLinesBefore = prevLines
+                   , line = prevLine
+                   , edLinesAfter = completedLine : edLinesAfter ed
                    }
 
 
@@ -304,23 +353,25 @@ handleEditorEvent (VtyEvent (EvKey KEnter [])) ed =
   case newlineMode (edConfig ed) of
     EnterSends ->
       -- Check if cursor is right after backslash
-      case edBefore ed of
-        (CharSegment '\\' : _) ->
-          -- Remove backslash and insert newline
-          let ed' = deleteBackward ed
-              ed'' = breakLine ed'
-          in return (False, ed'')
-        _ -> return (True, ed)  -- Normal enter submits
+      let (before, _) = line ed
+      in case before of
+           (CharSegment '\\' : _) ->
+             -- Remove backslash and insert newline
+             let ed' = deleteBackward ed
+                 ed'' = breakLine ed'
+             in return (False, ed'')
+           _ -> return (True, ed)  -- Normal enter submits
     EnterNewline -> return (False, breakLine ed)
     BackslashEscape ->
       -- Check if cursor is right after backslash
-      case edBefore ed of
-        (CharSegment '\\' : _) ->
-          -- Remove backslash and insert newline
-          let ed' = deleteBackward ed
-              ed'' = breakLine ed'
-          in return (False, ed'')
-        _ -> return (True, ed)  -- Normal enter submits
+      let (before, _) = line ed
+      in case before of
+           (CharSegment '\\' : _) ->
+             -- Remove backslash and insert newline
+             let ed' = deleteBackward ed
+                 ed'' = breakLine ed'
+             in return (False, ed'')
+           _ -> return (True, ed)  -- Normal enter submits
 
 handleEditorEvent (VtyEvent (EvKey KEnter [MShift])) ed =
   -- Shift+Enter always inserts newline
@@ -364,13 +415,13 @@ handleEditorEvent (VtyEvent (EvKey (KChar 'w') [MCtrl])) ed =
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'k') [MCtrl])) ed =
   -- Kill to end of line
-  let afterWithoutLine = dropWhile (\s -> s /= CharSegment '\n') (edAfter ed)
-  in return (False, ed { edAfter = afterWithoutLine })
+  let (before, _after) = line ed
+  in return (False, ed { line = (before, []) })
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'u') [MCtrl])) ed =
   -- Kill to start of line
-  let beforeWithoutLine = dropWhile (\s -> s /= CharSegment '\n') (edBefore ed)
-  in return (False, ed { edBefore = beforeWithoutLine })
+  let (_before, after) = line ed
+  in return (False, ed { line = ([], after) })
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'b') [MMeta])) ed =
   return (False, moveWordLeft ed)
@@ -405,19 +456,25 @@ handleEditorEvent _ ed = return (False, ed)
 -- | Insert a single character at cursor
 insertChar :: Char -> SegmentEditor n -> SegmentEditor n
 insertChar c ed =
-  ed { edBefore = CharSegment c : edBefore ed }
+  -- DATA: Insert character into current line (1D zipper operation)
+  let (before, after) = line ed
+  in ed { line = (CharSegment c : before, after) }
 
 -- | Insert text at cursor (as CharSegments)
 insertText :: Text -> SegmentEditor n -> SegmentEditor n
 insertText textToInsert ed =
+  -- DATA: Insert characters into current line (1D zipper operation)
   let chars = T.unpack textToInsert
       segments = map CharSegment chars
-  in ed { edBefore = reverse segments ++ edBefore ed }
+      (before, after) = line ed
+  in ed { line = (reverse segments ++ before, after) }
 
 -- | Insert a segment at cursor
 insertSegment :: InputSegment -> SegmentEditor n -> SegmentEditor n
 insertSegment seg ed =
-  ed { edBefore = seg : edBefore ed }
+  -- DATA: Insert segment into current line (1D zipper operation)
+  let (before, after) = line ed
+  in ed { line = (seg : before, after) }
 
 -- | Insert a file reference at cursor
 insertFileRef :: [FilePath] -> Text -> RefState -> SegmentEditor n -> SegmentEditor n
@@ -432,25 +489,27 @@ insertFileRef paths query state ed =
 -- Useful for updating file refs after tab completion
 replaceSegmentAtCursor :: InputSegment -> SegmentEditor n -> SegmentEditor n
 replaceSegmentAtCursor newSeg ed =
-  case edAfter ed of
-    (_:rest) -> ed { edAfter = newSeg : rest }
-    [] -> ed  -- Nothing to replace
+  let (before, after) = line ed
+  in case after of
+       (_:rest) -> ed { line = (before, newSeg : rest) }
+       [] -> ed  -- Nothing to replace
 
 -- | Rotate file reference alternatives (looks at segment BEFORE cursor)
 rotateFileRefAtCursor :: SegmentEditor n -> SegmentEditor n
 rotateFileRefAtCursor ed =
-  case edBefore ed of
-    (FileRefSegment {segRefPaths = (current:rest), segRefQuery = query, segRefState = state} : beforeSegs) ->
-      case rest of
-        [] -> ed  -- Only one path, nothing to rotate
-        (next:others) ->
-          let rotated = FileRefSegment
-                { segRefPaths = next : (others ++ [current])
-                , segRefQuery = query
-                , segRefState = state
-                }
-          in ed { edBefore = rotated : beforeSegs }
-    _ -> ed  -- Not a file ref or empty paths
+  let (before, after) = line ed
+  in case before of
+       (FileRefSegment {segRefPaths = (current:rest), segRefQuery = query, segRefState = state} : beforeSegs) ->
+         case rest of
+           [] -> ed  -- Only one path, nothing to rotate
+           (next:others) ->
+             let rotated = FileRefSegment
+                   { segRefPaths = next : (others ++ [current])
+                   , segRefQuery = query
+                   , segRefState = state
+                   }
+             in ed { line = (rotated : beforeSegs, after) }
+       _ -> ed  -- Not a file ref or empty paths
 
 -- | Clear the entire editor
 clearEditor :: SegmentEditor n -> SegmentEditor n
@@ -465,7 +524,9 @@ setNewlineMode mode ed =
 -- | Get the word before cursor (for completion)
 -- Returns the word text and the number of segments it spans
 getWordBeforeCursor :: SegmentEditor n -> Maybe (Text, Int)
-getWordBeforeCursor ed = go (edBefore ed) [] 0
+getWordBeforeCursor ed =
+  let (before, _) = line ed
+  in go before [] 0
   where
     go [] acc count
       | null acc = Nothing
@@ -488,51 +549,90 @@ deleteNSegments n ed = deleteNSegments (n - 1) (deleteBackward ed)
 
 -- | Delete backward (delete segment before cursor)
 deleteBackward :: SegmentEditor n -> SegmentEditor n
-deleteBackward ed = case edBefore ed of
-  [] -> ed  -- At start
-  (_:rest) -> ed { edBefore = rest }
+deleteBackward ed =
+  let (before, after) = line ed
+  in case before of
+    (_:rest) ->
+      -- DATA: Delete one segment from current line
+      ed { line = (rest, after) }
+    [] ->
+      -- FIXUP: At start of line, join with previous line first
+      case edLinesBefore ed of
+        [] -> ed  -- At start of document, nothing to do
+        (prevLine:prevLines) ->
+          -- Join: move to end of previous line, append current line's after
+          let (prevBefore, prevAfter) = prevLine
+              newLine = (prevBefore, prevAfter ++ after)
+          in ed { edLinesBefore = prevLines, line = newLine }
 
 -- | Delete forward (delete segment after cursor)
 deleteForward :: SegmentEditor n -> SegmentEditor n
-deleteForward ed = case edAfter ed of
-  [] -> ed  -- At end
-  (_:rest) -> ed { edAfter = rest }
+deleteForward ed =
+  let (before, after) = line ed
+  in case after of
+    (_:rest) ->
+      -- DATA: Delete one segment from current line
+      ed { line = (before, rest) }
+    [] ->
+      -- FIXUP: At end of line, join with next line first
+      case edLinesAfter ed of
+        [] -> ed  -- At end of document, nothing to do
+        (nextLine:nextLines) ->
+          -- Join: append next line's content to current line
+          let (nextBefore, nextAfter) = nextLine
+              newLine = (before, reverse nextBefore ++ nextAfter)
+          in ed { edLinesAfter = nextLines, line = newLine }
 
 -- | Delete word backward
 deleteWordBackward :: SegmentEditor n -> SegmentEditor n
 deleteWordBackward ed = goSpaces ed
   where
-    goSpaces edCurrent = case edBefore edCurrent of
-      [] -> edCurrent  -- Nothing to delete
-      (seg:_)
-        | isSpaceSegment seg ->
-            -- Delete spaces, then continue to word
-            goSpaces (deleteBackward edCurrent)
-        | isWordSegment seg ->
-            -- Delete word segments
-            deleteWord edCurrent
-        | otherwise ->
-            -- Delete single non-word segment (like file ref)
-            deleteBackward edCurrent
+    goSpaces edCurrent =
+      let (before, _after) = line edCurrent
+      in case before of
+        [] ->
+          -- At start of current line, check if there are lines before
+          case edLinesBefore edCurrent of
+            [] -> edCurrent  -- Nothing to delete
+            _ -> goSpaces (deleteBackward edCurrent)  -- Try previous line
+        (seg:_)
+          | isSpaceSegment seg ->
+              -- Delete spaces, then continue to word
+              goSpaces (deleteBackward edCurrent)
+          | isWordSegment seg ->
+              -- Delete word segments
+              deleteWord edCurrent
+          | otherwise ->
+              -- Delete single non-word segment (like file ref)
+              deleteBackward edCurrent
 
-    deleteWord edCurrent = case edBefore edCurrent of
-      [] -> edCurrent
-      (seg:_)
-        | isWordSegment seg -> deleteWord (deleteBackward edCurrent)
-        | otherwise -> edCurrent  -- Stop at non-word
+    deleteWord edCurrent =
+      let (before, _after) = line edCurrent
+      in case before of
+        [] -> edCurrent
+        (seg:_)
+          | isWordSegment seg -> deleteWord (deleteBackward edCurrent)
+          | otherwise -> edCurrent  -- Stop at non-word
 
 -- | Break line at cursor (insert newline)
 breakLine :: SegmentEditor n -> SegmentEditor n
 breakLine ed =
-  -- NOTE: This inserts CharSegment '\n' into the segment list
   case lineLimit (edConfig ed) of
     Just lim ->
-      let allSegs = reverse (edBefore ed) ++ edAfter ed
-          currentLines = length (segmentsToLines allSegs)
-      in if currentLines >= lim
+      let totalLines = length (edLinesBefore ed) + 1 + length (edLinesAfter ed)
+      in if totalLines >= lim
          then ed  -- Don't exceed line limit
-         else insertSegment (CharSegment '\n') ed
-    Nothing -> insertSegment (CharSegment '\n') ed
+         else doBreak ed
+    Nothing -> doBreak ed
+  where
+    doBreak ed' =
+      -- DATA: Conceptually inserting '\n' (but we don't store it as a segment)
+      -- FIXUP: Split current line at cursor, push before part to edLinesBefore
+      let (before, after) = line ed'
+          completedLine = (before, [])  -- Line before cursor, cursor at end
+      in ed' { edLinesBefore = completedLine : edLinesBefore ed'
+             , line = ([], after)  -- New line starts with cursor at beginning
+             }
 
 --------------------------------------------------------------------------------
 -- Cursor movement
@@ -546,122 +646,157 @@ moveCursorLeft = back
 moveCursorRight :: SegmentEditor n -> SegmentEditor n
 moveCursorRight = forward
 
+-- | Check if at the front of the line zipper (cursor at start)
+isInFrontZ :: SegmentLine -> Bool
+isInFrontZ (before, _) = null before
+
+-- | Check if at the back of the line zipper (cursor at end)
+isInBackZ :: SegmentLine -> Bool
+isInBackZ (_, after) = null after
+
+-- | Move line zipper backward one segment
+backZ :: SegmentLine -> SegmentLine
+backZ ([], after) = ([], after)  -- Already at start
+backZ (b:bs, after) = (bs, b:after)
+
+-- | Move line zipper forward one segment
+forwardZ :: SegmentLine -> SegmentLine
+forwardZ (before, []) = (before, [])  -- Already at end
+forwardZ (before, a:as) = (a:before, as)
+
 -- | Move cursor up one line
 moveCursorUp :: SegmentEditor n -> SegmentEditor n
-moveCursorUp ed =
-  let col = currentColumn ed
-      -- Move to start of current line
-      atLineStart = moveToLineStart ed
-  in case edBefore atLineStart of
-      [] -> ed  -- Already at first line (no newline before)
-      (CharSegment '\n':_) ->
-        -- Move back past the newline, then to start of that line
-        let beforeNewline = back atLineStart
-            atPrevLineStart = moveToLineStart beforeNewline
-            -- Move forward col positions
-        in moveForwardN col atPrevLineStart
-      _ -> ed  -- Shouldn't happen (moveToLineStart should put us at \n or start)
+moveCursorUp ed = rewindAndUp ed
   where
-    currentColumn e = sum $ map segmentLength $ takeWhile (\s -> s /= CharSegment '\n') (edBefore e)
-
-    moveToLineStart e = case edBefore e of
-      [] -> e
-      (CharSegment '\n':_) -> e
-      _ -> moveToLineStart (back e)
-
-    moveForwardN 0 e = e
-    moveForwardN n e = case edAfter e of
-      [] -> e
-      (CharSegment '\n':_) -> e
-      _ -> moveForwardN (n - segmentLength (head (edAfter e))) (forward e)
+    rewindAndUp e
+      | isInFrontZ (line e) =
+          -- At start of line, move to previous line
+          case edLinesBefore e of
+            [] -> e  -- No previous line
+            (prevLine:rest) ->
+              let (_, after) = line e
+              in e { edLinesBefore = rest
+                   , line = prevLine
+                   , edLinesAfter = ([], after) : edLinesAfter e
+                   }
+      | otherwise =
+          -- Recurse back, then forward on return
+          let e' = rewindAndUp (back e)
+          in if isInBackZ (line e')
+             then e'
+             else forward e'
 
 -- | Move cursor down one line
 moveCursorDown :: SegmentEditor n -> SegmentEditor n
-moveCursorDown ed =
-  let col = currentColumn ed
-      -- Move to end of current line (or find next newline)
-      atLineEnd = moveToLineEnd ed
-  in case edAfter atLineEnd of
-      [] -> ed  -- Already at last line (no newline after)
-      (CharSegment '\n':_) ->
-        -- Move forward past the newline
-        let afterNewline = forward atLineEnd
-            -- Move forward col positions
-        in moveForwardN col afterNewline
-      _ -> ed  -- Shouldn't happen (moveToLineEnd should put us at \n or end)
+moveCursorDown ed = forwardAndDown ed
   where
-    currentColumn e = sum $ map segmentLength $ takeWhile (\s -> s /= CharSegment '\n') (edBefore e)
-
-    moveToLineEnd e = case edAfter e of
-      [] -> e
-      (CharSegment '\n':_) -> e
-      _ -> moveToLineEnd (forward e)
-
-    moveForwardN 0 e = e
-    moveForwardN n e = case edAfter e of
-      [] -> e
-      (CharSegment '\n':_) -> e
-      _ -> moveForwardN (n - segmentLength (head (edAfter e))) (forward e)
+    forwardAndDown e
+      | isInBackZ (line e) =
+          -- At end of line, move to next line
+          case edLinesAfter e of
+            [] -> e  -- No next line
+            (nextLine:rest) ->
+              let (before, _) = line e
+              in e { edLinesBefore = (before, []) : edLinesBefore e
+                   , line = nextLine
+                   , edLinesAfter = rest
+                   }
+      | otherwise =
+          -- Recurse forward, then back on return
+          let e' = forwardAndDown (forward e)
+          in if isInFrontZ (line e')
+             then e'
+             else back e'
 
 -- | Move cursor to start of current line
 moveCursorToLineStart :: SegmentEditor n -> SegmentEditor n
-moveCursorToLineStart ed = case edBefore ed of
-  [] -> ed
-  (CharSegment '\n':_) -> ed
-  _ -> moveCursorToLineStart (back ed)
+moveCursorToLineStart ed =
+  let (before, after) = line ed
+  in ed { line = ([], reverse before ++ after) }
 
 -- | Move cursor to end of current line
 moveCursorToLineEnd :: SegmentEditor n -> SegmentEditor n
-moveCursorToLineEnd ed = case edAfter ed of
-  [] -> ed
-  (CharSegment '\n':_) -> ed
-  _ -> moveCursorToLineEnd (forward ed)
+moveCursorToLineEnd ed =
+  let (before, after) = line ed
+  in ed { line = (reverse after ++ before, []) }
 
 -- | Move cursor to start of document
 moveCursorToStart :: SegmentEditor n -> SegmentEditor n
-moveCursorToStart ed = ed { edBefore = []
-                          , edAfter = reverse (edBefore ed) ++ edAfter ed
-                          }
+moveCursorToStart ed =
+  let (before, after) = line ed
+      allLinesAfter = ([], reverse before ++ after) : edLinesAfter ed
+      allLinesReversed = reverse (edLinesBefore ed) ++ allLinesAfter
+  in case allLinesReversed of
+      [] -> ed  -- Empty editor
+      (firstLine:restLines) ->
+        ed { edLinesBefore = []
+           , line = firstLine
+           , edLinesAfter = restLines
+           }
 
 -- | Move cursor to end of document
 moveCursorToEnd :: SegmentEditor n -> SegmentEditor n
-moveCursorToEnd ed = ed { edBefore = reverse (edAfter ed) ++ edBefore ed
-                        , edAfter = []
-                        }
+moveCursorToEnd ed =
+  let (before, after) = line ed
+      allLinesBefore = (reverse after ++ before, []) : edLinesBefore ed
+      allLines = reverse (edLinesAfter ed) ++ allLinesBefore
+  in case allLines of
+      [] -> ed  -- Empty editor
+      (lastLine:restLinesReversed) ->
+        ed { edLinesBefore = restLinesReversed
+           , line = lastLine
+           , edLinesAfter = []
+           }
 
 -- | Move cursor one word to the left
 moveWordLeft :: SegmentEditor n -> SegmentEditor n
 moveWordLeft ed = goSpaces ed
   where
-    goSpaces edCurrent = case edBefore edCurrent of
-      [] -> edCurrent  -- At start
-      (seg:_)
-        | isSpaceSegment seg -> goSpaces (back edCurrent)
-        | isWordSegment seg -> skipWord edCurrent
-        | otherwise -> back edCurrent
+    goSpaces edCurrent =
+      let (before, _after) = line edCurrent
+      in case before of
+        [] ->
+          -- At start of current line, check if there are lines before
+          case edLinesBefore edCurrent of
+            [] -> edCurrent  -- At start of document
+            _ -> goSpaces (back edCurrent)  -- Move to previous line
+        (seg:_)
+          | isSpaceSegment seg -> goSpaces (back edCurrent)
+          | isWordSegment seg -> skipWord edCurrent
+          | otherwise -> back edCurrent
 
-    skipWord edCurrent = case edBefore edCurrent of
-      [] -> edCurrent
-      (seg:_)
-        | isWordSegment seg -> skipWord (back edCurrent)
-        | otherwise -> edCurrent  -- Stop before non-word
+    skipWord edCurrent =
+      let (before, _after) = line edCurrent
+      in case before of
+        [] -> edCurrent
+        (seg:_)
+          | isWordSegment seg -> skipWord (back edCurrent)
+          | otherwise -> edCurrent  -- Stop before non-word
 
 -- | Move cursor one word to the right
 moveWordRight :: SegmentEditor n -> SegmentEditor n
 moveWordRight ed = goSpaces ed
   where
-    goSpaces edCurrent = case edAfter edCurrent of
-      [] -> edCurrent  -- At end
-      (seg:_)
-        | isSpaceSegment seg -> goSpaces (forward edCurrent)
-        | isWordSegment seg -> skipWord edCurrent
-        | otherwise -> forward edCurrent
+    goSpaces edCurrent =
+      let (_before, after) = line edCurrent
+      in case after of
+        [] ->
+          -- At end of current line, check if there are lines after
+          case edLinesAfter edCurrent of
+            [] -> edCurrent  -- At end of document
+            _ -> goSpaces (forward edCurrent)  -- Move to next line
+        (seg:_)
+          | isSpaceSegment seg -> goSpaces (forward edCurrent)
+          | isWordSegment seg -> skipWord edCurrent
+          | otherwise -> forward edCurrent
 
-    skipWord edCurrent = case edAfter edCurrent of
-      [] -> edCurrent
-      (seg:_)
-        | isWordSegment seg -> skipWord (forward edCurrent)
-        | otherwise -> edCurrent  -- Stop at non-word
+    skipWord edCurrent =
+      let (_before, after) = line edCurrent
+      in case after of
+        [] -> edCurrent
+        (seg:_)
+          | isWordSegment seg -> skipWord (forward edCurrent)
+          | otherwise -> edCurrent  -- Stop at non-word
 
 --------------------------------------------------------------------------------
 -- Rendering
@@ -697,7 +832,7 @@ renderEditorWithPrompt prompt hasFocus ed =
         [] -> [txt prompt <+> txt " "]
         (firstLine:restLines) ->
           (txt prompt <+> txt " " <+> renderSegmentLine firstLine)
-          : map (\line -> txt (T.replicate (T.length prompt + 1) " ") <+> renderSegmentLine line) restLines
+          : map (\ln -> txt (T.replicate (T.length prompt + 1) " ") <+> renderSegmentLine ln) restLines
       content = vBox renderedLines
       (row, col) = getCursorPos ed
       -- Adjust cursor location for prompt
@@ -710,8 +845,11 @@ renderEditorWithPrompt prompt hasFocus ed =
 
 -- | Render a line of segments with appropriate styling
 renderSegmentLine :: SegmentLine -> Widget n
-renderSegmentLine [] = txt " "  -- Empty line must render something to maintain height
-renderSegmentLine segs = hBox (map renderSegment segs)
+renderSegmentLine (before, after) =
+  let allSegs = reverse before ++ after
+  in if null allSegs
+     then txt " "  -- Empty line must render something to maintain height
+     else hBox (map renderSegment allSegs)
 
 -- | Render a single segment with appropriate styling
 renderSegment :: InputSegment -> Widget n

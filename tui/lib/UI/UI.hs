@@ -324,8 +324,11 @@ drawUI st = [indicatorLayer, baseLayer]
       vBox $ map renderSegmentLine segLines
 
     renderSegmentLine :: SE.SegmentLine -> T.Widget Name
-    renderSegmentLine [] = str " "  -- Empty lines shown as space to preserve them
-    renderSegmentLine segs = hBox $ map renderSegment segs
+    renderSegmentLine (before, after) =
+      let allSegs = reverse before ++ after
+      in if null allSegs
+         then str " "  -- Empty lines shown as space to preserve them
+         else hBox $ map renderSegment allSegs
 
     renderSegment :: SE.InputSegment -> T.Widget Name
     renderSegment (SE.CharSegment c) = txt (Text.singleton c)
