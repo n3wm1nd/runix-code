@@ -357,16 +357,18 @@ renderZipper opts zipper =
 renderItem :: forall model n. RenderOptions -> Bool -> OutputItem (Message model) -> Widget n
 renderItem opts isFocused item =
   let renderContent marker text = renderContentWithMarker isFocused marker text
+      -- User input needs special newline handling since it's plain text, not markdown
+      renderUserContent marker text = renderContentWithMarkerMode True isFocused marker text
   in vBox $ case item of
-  -- User messages
+  -- User messages (plain text - apply newline workaround)
   MessageItem (UserText text) ->
-    [txt " ", renderContent (txt "<") text, txt " "]
+    [txt " ", renderUserContent (txt "<") text, txt " "]
 
-  -- Assistant text
+  -- Assistant text (actual markdown - no workaround needed)
   MessageItem (AssistantText text) ->
     [txt " ", renderContent (txt ">") text, txt " "]
 
-  -- Assistant reasoning
+  -- Assistant reasoning (actual markdown - no workaround needed)
   MessageItem (AssistantReasoning text) ->
     [txt " ", renderContent (txt "?") text, txt " "]
 
@@ -446,8 +448,12 @@ renderItem opts isFocused item =
 
     -- Render content with a marker on the left edge
     -- When focused, wraps entire hBox in gray, then content gets transparent bg (creating left bar)
+    -- The isUserInput parameter controls whether to apply the newline workaround
     renderContentWithMarker :: Bool -> Widget n -> Text -> Widget n
-    renderContentWithMarker focused marker text =
+    renderContentWithMarker = renderContentWithMarkerMode False
+
+    renderContentWithMarkerMode :: Bool -> Bool -> Widget n -> Text -> Widget n
+    renderContentWithMarkerMode isUserInput focused marker text =
       let content = if useMd
                     then
                       -- User input is plain text, not full markdown. In CommonMark, single newlines
@@ -455,13 +461,13 @@ renderItem opts isFocused item =
                       -- "hello world". Since users expect newlines to be preserved visually, we convert
                       -- single newlines to double newlines (paragraph breaks) for intuitive rendering.
                       --
-                      -- LIMITATION: This breaks multi-line markdown constructs (code blocks, block quotes,
-                      -- lists) that span lines. A proper fix would use a custom markdown renderer that
-                      -- treats plain-text newlines as paragraph breaks while preserving markdown block
-                      -- structure. For now, this simple replacement is good enough since it's only for
-                      -- display and users can toggle markdown mode off if needed.
-                      let textWithParaBreaks = T.replace "\n" "\n\n" text
-                      in vBox $ markdownToWidgetsWithIndent 0 textWithParaBreaks
+                      -- However, assistant output contains ACTUAL markdown (tables, lists, code blocks)
+                      -- that spans multiple lines. Inserting paragraph breaks would break these constructs.
+                      -- So we only apply this workaround for user input (plain text).
+                      let textWithNewlines = if isUserInput
+                                             then T.replace "\n" "\n\n" text
+                                             else text
+                      in vBox $ markdownToWidgetsWithIndent 0 textWithNewlines
                     else vBox $ map txt $ T.lines text  -- Preserve newlines by splitting into lines
           applyFocus w = if focused then withAttr focusedItemAttr w else w
       in applyFocus (marker <+> withAttr transparentBgAttr (padLeft (Pad 1) content))
