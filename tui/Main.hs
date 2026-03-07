@@ -48,7 +48,7 @@ import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTime
 import Runix.Logging (Logging(..), info, Level(..), loggingNull)
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
-import UI.State (newUIVars, UIVars, waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), waitForCompletion, completionQueue, CompletionRequest(..))
+import UI.State (newUIVars, UIVars(..), waitForUserInput, userInputQueue, clearCancellationFlag, sendAgentEvent, AgentEvent(..), UserRequest(..), waitForCompletion, completionQueue, CompletionRequest(..))
 import UI.Interpreter (interpretUI)
 import UI.LoggingInterpreter (interpretLoggingToUI)
 import UI.UserInput (UserInput)
@@ -199,11 +199,10 @@ agentLoop :: forall model.
           -> UIVars (Message model)
           -> SystemPrompt
           -> (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter (internal)
-          -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session function
           -> FilePath  -- Executable path
           -> Integer  -- Initial executable mtime
           -> IO ()
-agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exePath initialMTime = do
+agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming exePath initialMTime = do
   -- Run the entire agent loop inside Sem so FileWatcher state persists
   -- Stack: interpretModelStreaming . interceptStreamChunksToUI . interpretLLMViaStreaming
   -- interpretModelStreaming: HTTPStreaming -> LLMStreaming
@@ -237,7 +236,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       -- Build command set with current settings and history
       let cmdSet = CommandSet
             { slashCommands = [ echoCommand
-                              , reloadCommand historyMessages
+                              , reloadCommand
                               , clearCommand
                               , compactQuickCommand currentHistory
                               , showZipperCommand currentHistory
@@ -259,29 +258,6 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       -- Check if executable has been modified and reload if necessary
       embed $ checkAndReloadOnChange historyMessages
 
-    -- | Perform reload: save session and exec new binary
-    -- TODO: This is lossy - should save full OutputHistory (with tool calls, streaming state, etc)
-    -- not just Message history. For now, reload only preserves conversation messages.
-    performReload :: [Message model] -> IO ()
-    performReload history = do
-      let sessionFile = "/tmp/runix-code-session.json"
-
-      -- Use the effect stack to save session (loggingNull: Brick owns stdout)
-      let runSave = runM . runError @String . loggingNull . failLog
-                  . Runix.FileSystem.Simple.filesystemIO
-      result <- runSave $ miSaveSession sessionFile history
-
-      case result of
-        Left err -> do
-          -- Failed to save session - log error but don't reload
-          sendAgentEvent uiVars (LogEvent Error (T.pack $ "Failed to save session for reload: " ++ err))
-        Right () -> do
-          -- Successfully saved - exec new binary via UI event (so Brick can suspend first)
-          sendAgentEvent uiVars (RunExternalCommandEvent $ do
-            executeFile exePath False ["--resume-session", sessionFile] Nothing
-            -- Never returns!
-            )
-
     -- | Check if executable has changed and reload if so
     checkAndReloadOnChange :: [Message model] -> IO ()
     checkAndReloadOnChange history = do
@@ -291,7 +267,7 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
 
       -- Check if executable has been modified (compare to initial mtime from startup)
       when (currentMTime /= initialMTime) $
-        performReload history
+        (reloadAction uiVars) history
 
     -- | Dispatch user input to the appropriate command
     -- | Checks if input starts with "/" and matches a slash command,
@@ -315,11 +291,11 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exe
       , commandFn = \text -> info $ "Echo: " <> text
       }
 
-    -- | Reload command: save session and restart with new binary
-    reloadCommand :: forall r. Member (Embed IO) r => [Message model] -> SlashCommand r
-    reloadCommand history = SlashCommand
+    -- | Reload command: request UI to perform reload with current zipper
+    reloadCommand :: forall r. Member (Embed IO) r => SlashCommand r
+    reloadCommand = SlashCommand
       { commandName = "reload"
-      , commandFn = \_ -> embed $ performReload history
+      , commandFn = \_ -> embed $ sendAgentEvent uiVars ReloadRequestEvent
       }
 
     -- | Clear command: reset history to empty
@@ -432,7 +408,29 @@ buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSessi
   -- Get current working directory for security restrictions
   cwd <- Dir.getCurrentDirectory
 
-  uiVars <- newUIVars @(Message model) refreshCallback
+  -- Get executable path for reload
+  exePath <- getExecutablePath
+
+  -- Create reload action that will be called from UI
+  let performReload :: [Message model] -> IO ()
+      performReload history = do
+        let sessionFile = "/tmp/runix-code-session.json"
+
+        -- Use the effect stack to save session (loggingNull: Brick owns stdout)
+        let runSave = runM . runError @String . loggingNull . failLog
+                    . Runix.FileSystem.Simple.filesystemIO
+        result <- runSave $ miSaveSession sessionFile history
+
+        case result of
+          Left err -> do
+            -- Failed to save session - log error via event but don't reload
+            refreshCallback (LogEvent Error (T.pack $ "Failed to save session for reload: " ++ err))
+          Right () -> do
+            -- Successfully saved - exec new binary
+            executeFile exePath False ["--resume-session", sessionFile] Nothing
+            -- Never returns!
+
+  uiVars <- newUIVars @(Message model) refreshCallback performReload
 
   -- Load session if resuming and send to UI
   case maybeSessionPath of
@@ -470,8 +468,7 @@ buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSessi
         Right txt -> SystemPrompt txt
         Left _ -> SystemPrompt "You are a helpful AI coding assistant."
 
-  -- Get executable path and initial modification time for code reloading
-  exePath <- getExecutablePath
+  -- Get initial modification time for code reloading (exePath already obtained above)
   stat <- getFileStatus exePath
   let initialMTime = fromIntegral $ fromEnum $ modificationTime stat
 
@@ -479,7 +476,7 @@ buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSessi
   _ <- forkIO $ completionHandler cwd dataDir uiVars
 
   -- Start agent loop thread
-  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming miSaveSession exePath initialMTime
+  _ <- forkIO $ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming exePath initialMTime
   return uiVars
 
 --------------------------------------------------------------------------------

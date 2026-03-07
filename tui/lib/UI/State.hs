@@ -61,6 +61,7 @@ data AgentEvent msg
   | ShowInputWidgetEvent SomeInputWidget  -- ^ Show an input widget
   | ClearInputWidgetEvent         -- ^ Clear the current input widget
   | RunExternalCommandEvent (IO ())  -- ^ Run external command (suspends/resumes Vty)
+  | ReloadRequestEvent            -- ^ Request reload with current zipper state
   | StreamStartEvent Int          -- ^ Stream started (stream ID)
   | StreamChunkEvent Int Int      -- ^ Chunk received (stream ID, total chunks for this stream)
   | StreamEndEvent Int            -- ^ Stream completed successfully (stream ID)
@@ -76,6 +77,7 @@ instance Eq msg => Eq (AgentEvent msg) where
   ShowInputWidgetEvent _ == ShowInputWidgetEvent _ = False  -- Can't compare functions
   ClearInputWidgetEvent == ClearInputWidgetEvent = True
   RunExternalCommandEvent _ == RunExternalCommandEvent _ = False  -- Can't compare IO actions
+  ReloadRequestEvent == ReloadRequestEvent = True
   StreamStartEvent id1 == StreamStartEvent id2 = id1 == id2
   StreamChunkEvent id1 c1 == StreamChunkEvent id2 c2 = id1 == id2 && c1 == c2
   StreamEndEvent id1 == StreamEndEvent id2 = id1 == id2
@@ -92,6 +94,7 @@ instance Show msg => Show (AgentEvent msg) where
   show (ShowInputWidgetEvent _) = "ShowInputWidgetEvent <widget>"
   show ClearInputWidgetEvent = "ClearInputWidgetEvent"
   show (RunExternalCommandEvent _) = "RunExternalCommandEvent <action>"
+  show ReloadRequestEvent = "ReloadRequestEvent"
   show (StreamStartEvent sid) = "StreamStartEvent " ++ show sid
   show (StreamChunkEvent sid c) = "StreamChunkEvent " ++ show sid ++ " " ++ show c
   show (StreamEndEvent sid) = "StreamEndEvent " ++ show sid
@@ -124,18 +127,19 @@ data UIVars msg = UIVars
   , userInputQueue :: TQueue (UserRequest msg)  -- ^ User input queue (UI writes, agent reads)
   , cancellationFlag :: TVar Bool         -- ^ Cancellation flag (UI writes, agent reads)
   , completionQueue :: TQueue CompletionRequest  -- ^ File completion requests
+  , reloadAction :: [msg] -> IO ()        -- ^ Reload action (takes current messages)
   }
 
 -- Note: userResponseQueue is managed per-request in SomeInputWidget callback
 
 -- | Create fresh UI state variables
--- Takes a callback to send agent events
-newUIVars :: (AgentEvent msg -> IO ()) -> IO (UIVars msg)
-newUIVars sendEventCallback = do
+-- Takes a callback to send agent events and a reload action
+newUIVars :: (AgentEvent msg -> IO ()) -> ([msg] -> IO ()) -> IO (UIVars msg)
+newUIVars sendEventCallback reloadFn = do
   inputQueue <- newTQueueIO
   cancelFlag <- newTVarIO False
   compQueue <- newTQueueIO
-  return $ UIVars sendEventCallback inputQueue cancelFlag compQueue
+  return $ UIVars sendEventCallback inputQueue cancelFlag compQueue reloadFn
 
 --------------------------------------------------------------------------------
 -- Event API

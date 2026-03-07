@@ -539,6 +539,14 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
           action
           return currentState  -- Return current state unchanged
 
+      ReloadRequestEvent -> do
+        -- Extract messages from current zipper and trigger reload
+        zipper <- use outputZipperL
+        vars <- use uiVarsL
+        let messages = extractMessages zipper
+        liftIO $ reloadAction vars messages
+        -- Note: reloadAction calls executeFile which never returns
+
       StreamStartEvent sid -> do
         -- Add new stream to active streams
         activeStreamsL %= (++ [StreamInfo sid 0 False])
