@@ -68,7 +68,7 @@ example2 = do
   let ed4 = moveCursorToLineEnd ed3
       ed5 = moveWordLeft ed4  -- Jump over "details"
       ed6 = moveWordLeft ed5  -- Jump over space and file ref
-      ed7 = deleteForward ed6  -- Delete file ref as a unit
+      ed7 = delForward ed6  -- Delete file ref as a unit
 
   putStrLn $ "After delete: " ++ show (getEditorContent ed7)
   -- Should be: "Check  for details" (file ref deleted)
@@ -98,7 +98,7 @@ example3 = do
   -- Delete the pasted segment as a unit
   let ed4 = moveCursorLeft ed3  -- Move before ":end"
       ed5 = moveCursorLeft ed4  -- Move before pasted segment
-      ed6 = deleteForward ed5   -- Delete entire pasted segment
+      ed6 = delForward ed5   -- Delete entire pasted segment
 
   putStrLn $ "After delete: " ++ show (getEditorContent ed6)
   -- Should be: "Start:  :end"
@@ -184,10 +184,10 @@ example6 = do
   putStrLn $ "Segments: " ++ show (head $ getEditorSegmentLines ed4)
 
   -- Backspace deletes each segment atomically
-  let ed5 = deleteBackward ed4  -- Delete 'Y'
-      ed6 = deleteBackward ed5  -- Delete entire " pasted "
-      ed7 = deleteBackward ed6  -- Delete entire file ref
-      ed8 = deleteBackward ed7  -- Delete 'X'
+  let ed5 = delBackward ed4  -- Delete 'Y'
+      ed6 = delBackward ed5  -- Delete entire " pasted "
+      ed7 = delBackward ed6  -- Delete entire file ref
+      ed8 = delBackward ed7  -- Delete 'X'
 
   putStrLn $ "After 4 backspaces: " ++ show (getEditorContent ed8)
   putStrLn $ "Is empty: " ++ show (isEmpty ed8)
@@ -211,7 +211,7 @@ example7 = do
   let config3 = EditorConfig () Nothing BackslashEscape
       ed4 = editorFromText config3 "test\\"
       -- In real UI, Enter after backslash would delete it and insert newline
-      ed5 = deleteBackward ed4  -- Simulate removing backslash
+      ed5 = delBackward ed4  -- Simulate removing backslash
       ed6 = breakLine ed5       -- Insert newline
   putStrLn $ "BackslashEscape mode: " ++ show (getEditorLines ed6)
 

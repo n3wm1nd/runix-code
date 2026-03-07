@@ -31,6 +31,7 @@ module UI.Zipper
   , hasNewer
   , hasOlder
   , mapZipper
+  , deleteCurrent
 
     -- * Gap zipper (cursor between elements)
   , GapZipper(..)
@@ -135,6 +136,19 @@ mapZipper :: (a -> b) -> Zipper a -> Zipper b
 mapZipper f (Zipper back current front) =
   Zipper (map f back) (f current) (map f front)
 
+-- | Delete the current element from the zipper
+-- Focus moves to the next element (front), or previous (back) if no next exists
+-- Returns Nothing if the zipper has only one element
+deleteCurrent :: Zipper a -> Maybe (Zipper a)
+deleteCurrent (Zipper [] _ []) = Nothing  -- Single element
+deleteCurrent (Zipper back _ []) =
+  -- No front, use back (back is non-empty)
+  let (b:bs) = back
+  in Just (Zipper bs b [])
+deleteCurrent (Zipper back _ (f:fs)) =
+  -- Has front, focus on it
+  Just (Zipper back f fs)
+
 --------------------------------------------------------------------------------
 -- Gap zipper (cursor between elements)
 --------------------------------------------------------------------------------
@@ -234,6 +248,20 @@ class Zippable z where
   -- | Convert to list
   toList :: z a -> [a]
 
+  -- | Insert element before focus/gap, keep focus/gap in same position
+  insertBackward :: a -> z a -> z a
+
+  -- | Insert element after focus/gap, keep focus/gap in same position
+  insertForward :: a -> z a -> z a
+
+  -- | Delete element before focus/gap, return Nothing if nothing to delete
+  -- For Zipper: deletes from back. For GapZipper: deletes before gap (backspace).
+  deleteBackward :: z a -> Maybe (z a)
+
+  -- | Delete element after focus/gap, return Nothing if nothing to delete
+  -- For Zipper: deletes from front. For GapZipper: deletes after gap (delete key).
+  deleteForward :: z a -> Maybe (z a)
+
 -- | Zipper instance: forward moves to newer (back), back moves to older (front)
 instance Zippable Zipper where
   forward z@(Zipper [] _ _) = z  -- No newer items
@@ -261,6 +289,20 @@ instance Zippable Zipper where
 
   toList = zipperToList
 
+  -- Insert before current (add to back)
+  insertBackward x (Zipper back cur front) = Zipper (x:back) cur front
+
+  -- Insert after current (add to front)
+  insertForward x (Zipper back cur front) = Zipper back cur (x:front)
+
+  -- Delete from back (element before current)
+  deleteBackward (Zipper [] _ _) = Nothing
+  deleteBackward (Zipper (_:bs) cur front) = Just (Zipper bs cur front)
+
+  -- Delete from front (element after current)
+  deleteForward (Zipper _ _ []) = Nothing
+  deleteForward (Zipper back cur (_:fs)) = Just (Zipper back cur fs)
+
 -- | GapZipper instance: forward moves gap right, back moves gap left
 instance Zippable GapZipper where
   forward (GapZipper before []) = GapZipper before []  -- Already at end
@@ -281,6 +323,20 @@ instance Zippable GapZipper where
   atEnd = gapAtEnd
 
   toList = gapToList
+
+  -- Insert before gap (same as insertAtGap)
+  insertBackward = insertAtGap
+
+  -- Insert after gap (insert, then move gap forward to maintain position)
+  insertForward x (GapZipper before after) = GapZipper before (x:after)
+
+  -- Delete before gap (backspace)
+  deleteBackward (GapZipper [] _) = Nothing
+  deleteBackward (GapZipper (_:bs) after) = Just (GapZipper bs after)
+
+  -- Delete after gap (delete key)
+  deleteForward (GapZipper _ []) = Nothing
+  deleteForward (GapZipper before (_:as)) = Just (GapZipper before as)
 
 --------------------------------------------------------------------------------
 -- Traversal helpers

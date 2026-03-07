@@ -52,9 +52,9 @@ module UI.SegmentEditor
   , insertText
   , insertSegment
   , insertFileRef
-  , deleteBackward
-  , deleteForward
-  , deleteWordBackward
+  , delBackward
+  , delForward
+  , delWordBackward
   , breakLine
   , replaceSegmentAtCursor
   , rotateFileRefAtCursor
@@ -308,6 +308,66 @@ instance Zippable (SegmentEditor n) where
         allSegments = concatMap toList allLines
     in allSegments
 
+  -- Insert segment before cursor
+  insertBackward seg ed =
+    let currentLine = Z.getCurrent (edLines ed)
+        newLine = insertBackward seg currentLine
+    in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+
+  -- Insert segment after cursor
+  insertForward seg ed =
+    let currentLine = Z.getCurrent (edLines ed)
+        newLine = insertForward seg currentLine
+    in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+
+  -- Delete segment before cursor (with line joining)
+  deleteBackward ed =
+    let currentLine = Z.getCurrent (edLines ed)
+    in case deleteBackward currentLine of
+      Just newLine ->
+        -- Deleted within current line
+        Just (ed { edLines = Z.updateCurrent newLine (edLines ed) })
+      Nothing ->
+        -- At start of line, need to join with previous line
+        if atStart (edLines ed)
+        then Nothing  -- At start of document, can't delete
+        else
+          -- Join current line to end of previous line
+          let currentSegments = toList currentLine
+              prevLines = back (edLines ed)
+              prevLine = Z.getCurrent prevLines
+              -- Append all segments to end of previous line
+              joinedLine = end $ foldr insertBackward prevLine (reverse currentSegments)
+              linesWithJoin = Z.updateCurrent joinedLine prevLines
+          in case forward linesWithJoin of
+            lineZipper -> case Z.deleteCurrent lineZipper of
+              Nothing -> Just (ed { edLines = linesWithJoin })
+              Just z -> Just (ed { edLines = back z })
+
+  -- Delete segment after cursor (with line joining)
+  deleteForward ed =
+    let currentLine = Z.getCurrent (edLines ed)
+    in case deleteForward currentLine of
+      Just newLine ->
+        -- Deleted within current line
+        Just (ed { edLines = Z.updateCurrent newLine (edLines ed) })
+      Nothing ->
+        -- At end of line, need to join with next line
+        if atEnd (edLines ed)
+        then Nothing  -- At end of document, can't delete
+        else
+          -- Join next line to end of current line
+          let nextLines = forward (edLines ed)
+              nextLine = Z.getCurrent nextLines
+              nextSegments = toList nextLine
+              -- Append all segments to end of current line
+              joinedLine = end $ foldr insertBackward currentLine (reverse nextSegments)
+              linesWithJoin = Z.updateCurrent joinedLine (edLines ed)
+          in case forward linesWithJoin of
+            lineZipper -> case Z.deleteCurrent lineZipper of
+              Nothing -> Just (ed { edLines = linesWithJoin })
+              Just z -> Just (ed { edLines = back z })
+
 --------------------------------------------------------------------------------
 -- Helper functions
 --------------------------------------------------------------------------------
@@ -366,7 +426,7 @@ handleEditorEvent (VtyEvent (EvKey KEnter [])) ed =
       case getSegmentBeforeCursor ed of
            Just (CharSegment '\\') ->
              -- Remove backslash and insert newline
-             let ed' = deleteBackward ed
+             let ed' = delBackward ed
                  ed'' = breakLine ed'
              in return (False, ed'')
            _ -> return (True, ed)  -- Normal enter submits
@@ -376,7 +436,7 @@ handleEditorEvent (VtyEvent (EvKey KEnter [])) ed =
       case getSegmentBeforeCursor ed of
            Just (CharSegment '\\') ->
              -- Remove backslash and insert newline
-             let ed' = deleteBackward ed
+             let ed' = delBackward ed
                  ed'' = breakLine ed'
              in return (False, ed'')
            _ -> return (True, ed)  -- Normal enter submits
@@ -389,10 +449,10 @@ handleEditorEvent (VtyEvent (EvKey (KChar c) [])) ed
   | c /= '\t' = return (False, insertChar c ed)
 
 handleEditorEvent (VtyEvent (EvKey KBS [])) ed =
-  return (False, deleteBackward ed)
+  return (False, delBackward ed)
 
 handleEditorEvent (VtyEvent (EvKey KDel [])) ed =
-  return (False, deleteForward ed)
+  return (False, delForward ed)
 
 handleEditorEvent (VtyEvent (EvKey KLeft [])) ed =
   return (False, moveCursorLeft ed)
@@ -419,7 +479,7 @@ handleEditorEvent (VtyEvent (EvKey (KChar 'e') [MCtrl])) ed =
   return (False, moveCursorToLineEnd ed)
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'w') [MCtrl])) ed =
-  return (False, deleteWordBackward ed)
+  return (False, delWordBackward ed)
 
 handleEditorEvent (VtyEvent (EvKey (KChar 'k') [MCtrl])) ed =
   -- Kill to end of line
@@ -465,27 +525,15 @@ handleEditorEvent _ ed = return (False, ed)
 
 -- | Insert a single character at cursor
 insertChar :: Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertChar c ed =
-  let currentLine = Z.getCurrent (edLines ed)
-      newLine = Z.insertAtGap (CharSegment c) currentLine
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+insertChar c ed = forward $ insertBackward (CharSegment c) ed
 
 -- | Insert text at cursor (as CharSegments)
 insertText :: Text -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertText textToInsert ed =
-  let chars = T.unpack textToInsert
-      segments = map CharSegment chars
-      currentLine = Z.getCurrent (edLines ed)
-      -- Insert segments in order (foldr to maintain order)
-      newLine = foldr Z.insertAtGap currentLine segments
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+insertText txt ed = foldl (\e c -> forward $ insertBackward (CharSegment c) e) ed (T.unpack txt)
 
 -- | Insert a segment at cursor
 insertSegment :: InputSegment -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertSegment seg ed =
-  let currentLine = Z.getCurrent (edLines ed)
-      newLine = Z.insertAtGap seg currentLine
-  in ed { edLines = Z.updateCurrent newLine (edLines ed) }
+insertSegment seg ed = forward $ insertBackward seg ed
 
 -- | Insert a file reference at cursor
 insertFileRef :: [FilePath] -> Text -> RefState -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
@@ -565,59 +613,23 @@ getWordBeforeCursor ed =
 -- | Delete N segments backward
 deleteNSegments :: Int -> SegmentEditor n a -> SegmentEditor n a
 deleteNSegments 0 ed = ed
-deleteNSegments n ed = deleteNSegments (n - 1) (deleteBackward ed)
+deleteNSegments n ed = deleteNSegments (n - 1) (delBackward ed)
 
 -- | Delete backward (delete segment before cursor)
-deleteBackward :: SegmentEditor n a -> SegmentEditor n a
-deleteBackward ed =
-  let currentLine = Z.getCurrent (edLines ed)
-  in if not (atStart currentLine)
-     then
-       -- Delete within current line
-       let newLine = Z.deleteBeforeGap currentLine
-       in ed { edLines = Z.updateCurrent newLine (edLines ed) }
-     else
-       -- At start of line, join with previous line
-       if atStart (edLines ed)
-       then ed  -- At start of document
-       else
-         -- Move to previous line, append current line's after to it
-         let prevLines = back (edLines ed)
-             prevLine = Z.getCurrent prevLines
-             currentAfter = Z.gapAfter currentLine
-             -- Join: append current line's after segments to previous line
-             joinedLine = foldr (\seg ln -> forward (Z.insertAtGap seg ln)) prevLine (reverse currentAfter)
-             -- Remove current line by updating with joined line and removing it
-             newLines = Z.updateCurrent joinedLine prevLines
-         in ed { edLines = newLines }
+delBackward :: SegmentEditor n a -> SegmentEditor n a
+delBackward ed = case deleteBackward ed of
+  Just ed' -> ed'
+  Nothing -> ed  -- At start of document, can't delete
 
 -- | Delete forward (delete segment after cursor)
-deleteForward :: SegmentEditor n a -> SegmentEditor n a
-deleteForward ed =
-  let currentLine = Z.getCurrent (edLines ed)
-  in if not (atEnd currentLine)
-     then
-       -- Delete within current line
-       let newLine = Z.deleteAfterGap currentLine
-       in ed { edLines = Z.updateCurrent newLine (edLines ed) }
-     else
-       -- At end of line, join with next line
-       if atEnd (edLines ed)
-       then ed  -- At end of document
-       else
-         -- Append next line to current line
-         let nextLines = forward (edLines ed)
-             nextLine = Z.getCurrent nextLines
-             nextSegments = toList nextLine
-             -- Append all segments from next line
-             joinedLine = foldr (\seg ln -> forward (Z.insertAtGap seg ln)) currentLine (reverse nextSegments)
-             -- Update current line and remove next line
-             newLines = Z.updateCurrent joinedLine (edLines ed)
-         in ed { edLines = newLines }
+delForward :: SegmentEditor n a -> SegmentEditor n a
+delForward ed = case deleteForward ed of
+  Just ed' -> ed'
+  Nothing -> ed  -- At end of document, can't delete
 
 -- | Delete word backward
-deleteWordBackward :: SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-deleteWordBackward ed = goSpaces ed
+delWordBackward :: SegmentEditor n InputSegment -> SegmentEditor n InputSegment
+delWordBackward ed = goSpaces ed
   where
     goSpaces edCurrent =
       let currentLine = Z.getCurrent (edLines edCurrent)
@@ -626,24 +638,24 @@ deleteWordBackward ed = goSpaces ed
           -- At start of current line, check if at start of document
           if atStart edCurrent
           then edCurrent  -- Nothing to delete
-          else goSpaces (deleteBackward edCurrent)  -- Try previous line
+          else goSpaces (delBackward edCurrent)  -- Try previous line
         Just seg
           | isSpaceSegment seg ->
               -- Delete spaces, then continue to word
-              goSpaces (deleteBackward edCurrent)
+              goSpaces (delBackward edCurrent)
           | isWordSegment seg ->
               -- Delete word segments
               deleteWord edCurrent
           | otherwise ->
               -- Delete single non-word segment (like file ref)
-              deleteBackward edCurrent
+              delBackward edCurrent
 
     deleteWord edCurrent =
       let currentLine = Z.getCurrent (edLines edCurrent)
       in case Z.getBeforeGap currentLine of
         Nothing -> edCurrent
         Just seg
-          | isWordSegment seg -> deleteWord (deleteBackward edCurrent)
+          | isWordSegment seg -> deleteWord (delBackward edCurrent)
           | otherwise -> edCurrent  -- Stop at non-word
 
 -- | Break line at cursor (insert newline)
