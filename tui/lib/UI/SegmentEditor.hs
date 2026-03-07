@@ -623,8 +623,8 @@ deleteWordBackward ed = goSpaces ed
       let currentLine = Z.getCurrent (edLines edCurrent)
       in case Z.getBeforeGap currentLine of
         Nothing ->
-          -- At start of current line, check if there are lines before
-          if atStart (edLines edCurrent)
+          -- At start of current line, check if at start of document
+          if atStart edCurrent
           then edCurrent  -- Nothing to delete
           else goSpaces (deleteBackward edCurrent)  -- Try previous line
         Just seg
@@ -774,8 +774,8 @@ moveWordLeft ed = goSpaces ed
       let currentLine = Z.getCurrent (edLines edCurrent)
       in case Z.getBeforeGap currentLine of
         Nothing ->
-          -- At start of current line, check if there are lines before
-          if atStart (edLines edCurrent)
+          -- At start of current line, check if at start of document
+          if atStart edCurrent
           then edCurrent  -- At start of document
           else goSpaces (moveCursorLeft edCurrent)  -- Move to previous line
         Just seg
@@ -799,8 +799,8 @@ moveWordRight ed = goSpaces ed
       let currentLine = Z.getCurrent (edLines edCurrent)
       in case Z.getAfterGap currentLine of
         Nothing ->
-          -- At end of current line, check if there are lines after
-          if atEnd (edLines edCurrent)
+          -- At end of current line, check if at end of document
+          if atEnd edCurrent
           then edCurrent  -- At end of document
           else goSpaces (moveCursorRight edCurrent)  -- Move to next line
         Just seg
