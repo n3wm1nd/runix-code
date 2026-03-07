@@ -207,6 +207,136 @@ spec = do
             aboveValid = all lineEndsWithNewline linesAbove
         in aboveValid
 
+  describe "Cursor Left/Right Linebreak Skipping" $ do
+    it "skips over newline when moving right" $ do
+      -- "hello\nworld" - cursor at 'o' in hello, move right should skip \n and land on 'w'
+      let ed = insertText "hello" (emptyEditor noWrapConfig)
+          ed1 = typeChar '\n' ed
+          ed2 = insertText "world" ed1
+          -- Move to end of "hello" (before the \n)
+          ed3 = moveCursorToStart ed2
+          ed4 = moveCursorRight ed3  -- h
+          ed5 = moveCursorRight ed4  -- e
+          ed6 = moveCursorRight ed5  -- l
+          ed7 = moveCursorRight ed6  -- l
+          ed8 = moveCursorRight ed7  -- o
+          -- Move right should skip the \n and go to 'w' in "world"
+          ed9 = moveCursorRight ed8
+      getCursorPos ed8 `shouldBe` (0, 5)  -- At 'o' in "hello"
+      getCursorPos ed9 `shouldBe` (1, 0)  -- At 'w' in "world" (skipped \n)
+
+    it "skips over newline when moving left" $ do
+      -- "hello\nworld" - cursor at 'w' in world, move left should skip \n and land on 'o'
+      let ed = insertText "hello" (emptyEditor noWrapConfig)
+          ed1 = typeChar '\n' ed
+          ed2 = insertText "world" ed1
+          -- Move to start of "world"
+          ed3 = moveCursorToLineStart ed2
+          -- Move left should skip the \n and go to 'o' in "hello"
+          ed4 = moveCursorLeft ed3
+      getCursorPos ed3 `shouldBe` (1, 0)  -- At 'w' in "world"
+      getCursorPos ed4 `shouldBe` (0, 5)  -- At 'o' in "hello" (skipped \n)
+
+    it "handles consecutive linebreaks when moving right multiple times" $ do
+      -- "a\n\nb" - need multiple moveRight calls to skip both linebreaks
+      let ed = insertText "a" (emptyEditor noWrapConfig)
+          ed1 = typeChar '\n' ed
+          ed2 = typeChar '\n' ed1
+          ed3 = insertText "b" ed2
+          -- Move to start (before 'a')
+          ed4 = moveCursorToStart ed3
+          -- Move right - now after 'a', before first \n
+          ed5 = moveCursorRight ed4
+          -- Move right again - skips first \n, lands in empty line
+          ed6 = moveCursorRight ed5
+          -- Move right again - skips second \n, lands before 'b'
+          ed7 = moveCursorRight ed6
+      getCursorPos ed4 `shouldBe` (0, 0)  -- Before 'a'
+      getCursorPos ed5 `shouldBe` (0, 1)  -- After 'a', before first \n
+      getCursorPos ed6 `shouldBe` (1, 0)  -- In empty line (after skipping first \n)
+      getCursorPos ed7 `shouldBe` (2, 0)  -- Before 'b' (after skipping second \n)
+
+  describe "Cursor Up/Down Column Preservation" $ do
+    it "preserves column when moving up with lines longer than column" $ do
+      -- Create editor with three lines
+      -- Lines have content: "hello\n", "world\n", "12345"
+      -- Note: newlines count as segments/columns
+      let ed = insertText "hello" (emptyEditor noWrapConfig)
+          ed1 = typeChar '\n' ed
+          ed2 = insertText "world" ed1
+          ed3 = typeChar '\n' ed2
+          ed4 = insertText "12345" ed3
+          -- Now at end of "12345", move to column 3
+          ed5 = moveCursorToLineStart ed4
+          ed6 = moveCursorRight ed5  -- column 1 (character '1')
+          ed7 = moveCursorRight ed6  -- column 2 (character '2')
+          ed8 = moveCursorRight ed7  -- column 3 (character '3')
+          ed9 = moveCursorUp ed8     -- Should be at column 3 in "world"
+          ed10 = moveCursorUp ed9    -- Should be at column 3 in "hello"
+      snd (getCursorPos ed8) `shouldBe` 3
+      snd (getCursorPos ed9) `shouldBe` 3
+      snd (getCursorPos ed10) `shouldBe` 3
+
+    it "preserves column when moving down with lines longer than column" $ do
+      -- Create editor starting at column 3 in first line, move down
+      let ed = insertText "hello" (emptyEditor noWrapConfig)
+          ed1 = typeChar '\n' ed
+          ed2 = insertText "world" ed1
+          ed3 = typeChar '\n' ed2
+          ed4 = insertText "12345" ed3
+          -- Move to start, then to column 3 in "hello"
+          ed5 = moveCursorToStart ed4
+          ed6 = moveCursorRight ed5  -- column 1 ('h')
+          ed7 = moveCursorRight ed6  -- column 2 ('e')
+          ed8 = moveCursorRight ed7  -- column 3 ('l')
+          ed9 = moveCursorDown ed8   -- Should be at column 3 in "world" ('r')
+          ed10 = moveCursorDown ed9  -- Should be at column 3 in "12345" ('3')
+      snd (getCursorPos ed8) `shouldBe` 3
+      snd (getCursorPos ed9) `shouldBe` 3
+      snd (getCursorPos ed10) `shouldBe` 3
+
+    it "stops at end of shorter line when moving up" $ do
+      -- Lines: "hello", "hi", "world"
+      -- Move to column 4 in "world", then up to "hi" (which is shorter)
+      let ed = insertText "hello\nhi\nworld" (emptyEditor noWrapConfig)
+          ed1 = moveCursorToLineStart ed
+          ed2 = moveCursorRight ed1  -- column 1
+          ed3 = moveCursorRight ed2  -- column 2
+          ed4 = moveCursorRight ed3  -- column 3
+          ed5 = moveCursorRight ed4  -- column 4 in "world"
+          ed6 = moveCursorUp ed5     -- Should be at end of "hi" (column 2)
+          ed7 = moveCursorUp ed6     -- Should be at column 2 in "hello"
+      snd (getCursorPos ed5) `shouldBe` 4
+      snd (getCursorPos ed6) `shouldBe` 2  -- Stops at end of "hi"
+      snd (getCursorPos ed7) `shouldBe` 2  -- Remembers column 4, but "hello" long enough for column 2
+
+    it "stops at end of shorter line when moving down" $ do
+      -- Lines: "hello", "hi", "world"
+      -- Start at column 4 in "hello", move down to "hi" (which is shorter)
+      let ed = insertText "hello\nhi\nworld" (emptyEditor noWrapConfig)
+          ed1 = moveCursorToStart ed
+          ed2 = moveCursorRight ed1  -- column 1
+          ed3 = moveCursorRight ed2  -- column 2
+          ed4 = moveCursorRight ed3  -- column 3
+          ed5 = moveCursorRight ed4  -- column 4 in "hello"
+          ed6 = moveCursorDown ed5   -- Should be at end of "hi" (column 2)
+          ed7 = moveCursorDown ed6   -- Should be at column 2 in "world"
+      snd (getCursorPos ed5) `shouldBe` 4
+      snd (getCursorPos ed6) `shouldBe` 2  -- Stops at end of "hi"
+      snd (getCursorPos ed7) `shouldBe` 2  -- Remembers column 4, but moves to column 2
+
+    it "preserves column when moving up then down" $ do
+      -- Lines: "abcdef", "xyz", "123456"
+      -- Start at column 4, move up to short line, then back down
+      let ed = insertText "abcdef\nxyz\n123456" (emptyEditor noWrapConfig)
+          ed1 = moveCursorToLineStart ed
+          ed2 = foldr (const moveCursorRight) ed1 [1..4]  -- column 4 in "123456"
+          ed3 = moveCursorUp ed2     -- column 3 in "xyz" (end of line)
+          ed4 = moveCursorDown ed3   -- Should return to column 3 in "123456"
+      snd (getCursorPos ed2) `shouldBe` 4
+      snd (getCursorPos ed3) `shouldBe` 3  -- End of "xyz"
+      snd (getCursorPos ed4) `shouldBe` 3  -- Not back to column 4, stays at column 3
+
 -- | Actions that can be performed on the editor
 data EditAction
   = TypeChar Char

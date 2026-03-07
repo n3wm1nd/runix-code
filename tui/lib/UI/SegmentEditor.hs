@@ -731,32 +731,89 @@ breakLine ed =
 --------------------------------------------------------------------------------
 
 -- | Move cursor left (by one segment, crossing line boundaries)
-moveCursorLeft :: SegmentEditor n a -> SegmentEditor n a
-moveCursorLeft = back
+moveCursorLeft :: HasLinebreak a => SegmentEditor n a -> SegmentEditor n a
+moveCursorLeft ed =
+  let ed' = back ed
+      -- Check if we moved onto a hard linebreak - if so, skip over it
+      currentLine = edCurrentLine ed'
+  in case Z.gapBefore currentLine of
+       (seg:_) | isHardBreak seg -> back ed'  -- Skip over the linebreak
+       _ -> ed'
 
 -- | Move cursor right (by one segment, crossing line boundaries)
-moveCursorRight :: SegmentEditor n a -> SegmentEditor n a
-moveCursorRight = forward
+moveCursorRight :: HasLinebreak a => SegmentEditor n a -> SegmentEditor n a
+moveCursorRight ed =
+  -- Check if next segment is a hard linebreak - if so, skip over it
+  let currentLine = edCurrentLine ed
+  in case Z.gapAfter currentLine of
+       (seg:_) | isHardBreak seg ->
+         -- Skip over the linebreak
+         let ed' = forward ed
+         in forward ed'
+       _ -> forward ed
 
 -- | Move cursor up one line (maintaining column position)
 -- TODO: Preserve column position when moving between lines
 -- For now, just move to end of previous line
-moveCursorUp :: SegmentEditor n a -> SegmentEditor n a
+moveCursorUp :: HasLinebreak a => SegmentEditor n a -> SegmentEditor n a
 moveCursorUp ed =
   case edLinesAbove ed of
     [] -> ed  -- No previous line
-    _ -> let ed' = start ed  -- Move to start of current line
-         in back ed'  -- Move to previous line (which is at END)
+    _ ->
+      if atStart (edCurrentLine ed)
+      then
+        -- At start of line - move back to previous line (which is at END)
+        -- Then rewind to START so we can move forward to restore column
+        let ed' = back ed
+            -- Rewind current line to START
+            rewindToStart e =
+              if atStart (edCurrentLine e)
+              then e
+              else rewindToStart (e { edCurrentLine = Z.back (edCurrentLine e) })
+        in rewindToStart ed'
+      else
+        -- Not at start - move back one segment, recurse, then move forward
+        let currentLine = edCurrentLine ed
+            ed' = ed { edCurrentLine = Z.back currentLine }
+            ed'' = moveCursorUp ed'
+            -- Move forward on current line if not at end or at a hard linebreak
+            newLine = edCurrentLine ed''
+        in if atEnd newLine
+           then ed''  -- At end of line, stop here
+           else
+             -- Check if next segment is a hard linebreak - if so, stop here
+             case Z.gapAfter newLine of
+               (seg:_) | isHardBreak seg -> ed''  -- Stop before hard linebreak
+               _ -> ed'' { edCurrentLine = Z.forward newLine }
 
 -- | Move cursor down one line (maintaining column position)
--- TODO: Preserve column position when moving between lines
--- For now, just move to start of next line
-moveCursorDown :: SegmentEditor n a -> SegmentEditor n a
+moveCursorDown :: HasLinebreak a => SegmentEditor n a -> SegmentEditor n a
 moveCursorDown ed =
   case edLinesBelow ed of
     [] -> ed  -- No next line
-    _ -> let ed' = end ed  -- Move to end of current line
-         in forward ed'  -- Move to next line (which is at START)
+    _ ->
+      if atStart (edCurrentLine ed)
+      then
+        -- At start of line - move current line to end, then forward to next line
+        let moveToEndOfLine e =
+              if atEnd (edCurrentLine e)
+              then forward e  -- At end, move to next line
+              else moveToEndOfLine (e { edCurrentLine = Z.forward (edCurrentLine e) })
+        in moveToEndOfLine ed
+      else
+        -- Not at start - move back one segment, recurse, then move forward
+        let currentLine = edCurrentLine ed
+            ed' = ed { edCurrentLine = Z.back currentLine }
+            ed'' = moveCursorDown ed'
+            -- Move forward on current line if not at end or at a hard linebreak
+            newLine = edCurrentLine ed''
+        in if atEnd newLine
+           then ed''  -- At end of line, stop here
+           else
+             -- Check if next segment is a hard linebreak - if so, stop here
+             case Z.gapAfter newLine of
+               (seg:_) | isHardBreak seg -> ed''  -- Stop before hard linebreak
+               _ -> ed'' { edCurrentLine = Z.forward newLine }
 
 -- | Move cursor to start of current line
 moveCursorToLineStart :: SegmentEditor n a -> SegmentEditor n a
