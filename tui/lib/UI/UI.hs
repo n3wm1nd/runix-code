@@ -243,12 +243,9 @@ drawUI st = [indicatorLayer, baseLayer]
                   then []
                   else [cached CachedBack $ vBox $ zipperBack wzipper]
 
-    -- Calculate dimensions
+    -- Calculate dimensions (will be recalculated with actual context in baseLayer)
     availHeight = 100  -- This will be determined by context, placeholder for now
     maxInputHeight = max 1 (availHeight `div` 2)
-    editorLines = SE.getEditorLines (_inputEditor st)
-    contentHeight = max 1 (length editorLines)
-    inputHeight = min contentHeight maxInputHeight
 
     modeStr = case _inputMode st of
               EnterSends -> "Enter: send"
@@ -279,6 +276,14 @@ drawUI st = [indicatorLayer, baseLayer]
     baseLayer = T.Widget T.Greedy T.Greedy $ do
       ctx <- T.getContext
       let availH = ctx ^. T.availHeightL
+          availW = ctx ^. T.availWidthL
+
+          -- Update editor wrap width based on available width
+          -- Account for prompt, padding, and borders
+          -- Calculate input height based on editor lines
+          editorLines = SE.getEditorLines (_inputEditor st)
+          contentHeight = max 1 (length editorLines)
+          inputHeight = min contentHeight maxInputHeight
 
           -- Check if we have a pending input widget
           ui = case mPendingInput of

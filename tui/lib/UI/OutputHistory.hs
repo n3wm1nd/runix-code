@@ -449,8 +449,20 @@ renderItem opts isFocused item =
     renderContentWithMarker :: Bool -> Widget n -> Text -> Widget n
     renderContentWithMarker focused marker text =
       let content = if useMd
-                    then vBox $ markdownToWidgetsWithIndent 0 text
-                    else txtWrap text
+                    then
+                      -- User input is plain text, not full markdown. In CommonMark, single newlines
+                      -- are treated as spaces (soft breaks), which would collapse "hello\nworld" to
+                      -- "hello world". Since users expect newlines to be preserved visually, we convert
+                      -- single newlines to double newlines (paragraph breaks) for intuitive rendering.
+                      --
+                      -- LIMITATION: This breaks multi-line markdown constructs (code blocks, block quotes,
+                      -- lists) that span lines. A proper fix would use a custom markdown renderer that
+                      -- treats plain-text newlines as paragraph breaks while preserving markdown block
+                      -- structure. For now, this simple replacement is good enough since it's only for
+                      -- display and users can toggle markdown mode off if needed.
+                      let textWithParaBreaks = T.replace "\n" "\n\n" text
+                      in vBox $ markdownToWidgetsWithIndent 0 textWithParaBreaks
+                    else vBox $ map txt $ T.lines text  -- Preserve newlines by splitting into lines
           applyFocus w = if focused then withAttr focusedItemAttr w else w
       in applyFocus (marker <+> withAttr transparentBgAttr (padLeft (Pad 1) content))
 
