@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
+{-# OPTIONS_GHC -Wno-partial-fields #-}
 
 -- | Rich segment-based editor for Runix Code TUI
 --
@@ -185,9 +186,9 @@ emptyEditor config = SegmentEditor
 
 -- | Create an editor from plain text
 editorFromText :: EditorConfig n -> Text -> SegmentEditor n InputSegment
-editorFromText cfg txt =
+editorFromText cfg text =
   -- Just use insertText which handles newlines correctly via typeChar
-  insertText txt (emptyEditor cfg)
+  insertText text (emptyEditor cfg)
 
 -- | Create an editor from segment lines (cursor at start of first line)
 editorFromSegments :: EditorConfig n -> [Z.GapZipper a] -> SegmentEditor n a
@@ -286,6 +287,7 @@ instance Zippable (SegmentEditor n) where
               in ed { edLinesAbove = currentAsZipper : edLinesAbove ed
                     , edCurrentLine = nextAsGap
                     , edLinesBelow = rest }
+            _ -> error "Invariant violated: current line not at END when forwarding"
         _ -> error "Invariant violated: line in edLinesBelow not at START"
 
   -- Move backward one segment (left, or to previous line if at start of line)
@@ -298,10 +300,10 @@ instance Zippable (SegmentEditor n) where
       -- At start of line, move to previous line (which is stored at END)
       case edLinesAbove ed of
         [] -> ed  -- No previous line
-        (Z.Zipper back cur [] : rest) ->
-          -- prevLine is at END: Zipper back cur []
-          -- Convert to GapZipper at END: GapZipper (cur:back) []
-          let prevAsGap = Z.GapZipper (cur : back) []
+        (Z.Zipper prevBack cur [] : rest) ->
+          -- prevLine is at END: Zipper prevBack cur []
+          -- Convert to GapZipper at END: GapZipper (cur:prevBack) []
+          let prevAsGap = Z.GapZipper (cur : prevBack) []
           in case edCurrentLine ed of
             Z.GapZipper [] [] ->
               -- Current line is empty, don't store it
@@ -313,6 +315,7 @@ instance Zippable (SegmentEditor n) where
               in ed { edLinesAbove = rest
                     , edCurrentLine = prevAsGap
                     , edLinesBelow = currentAsZipper : edLinesBelow ed }
+            _ -> error "Invariant violated: current line not at START when going back"
         _ -> error "Invariant violated: line in edLinesAbove not at END"
 
   -- Move to start of document (first line, first position)
@@ -526,7 +529,7 @@ insertChar :: Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegme
 insertChar c ed = forward $ insertBackward (CharSegment c) ed
 
 -- | Type a character - handles linebreaks by calling breakLine after inserting
-typeChar :: HasLinebreak InputSegment => Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
+typeChar :: Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
 typeChar c ed =
   if isHardBreak (CharSegment c)
   then breakLine (insertChar c ed)  -- Insert newline, then break line
@@ -534,7 +537,7 @@ typeChar c ed =
 
 -- | Insert text at cursor (as if typing each character)
 insertText :: Text -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertText txt ed = foldl (\e c -> typeChar c e) ed (T.unpack txt)
+insertText text ed = foldl (\e c -> typeChar c e) ed (T.unpack text)
 
 -- | Insert a segment at cursor
 insertSegment :: InputSegment -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
@@ -560,7 +563,6 @@ replaceSegmentAtCursor newSeg ed =
          -- Delete after, then insert
          let line' = Z.deleteAfterGap currentLine
              line'' = Z.insertAtGap newSeg line'
-             line''' = forward line''  -- Move cursor past new segment
          in ed { edCurrentLine = line'' }
 
 -- | Rotate file reference alternatives (looks at segment BEFORE cursor)
@@ -629,12 +631,12 @@ delBackward ed =
        -- At start of line - move to previous line and delete last character there
        case edLinesAbove ed of
          [] -> ed  -- At start of document (no previous line)
-         (Z.Zipper back prevCur [] : rest) ->
-           -- Previous line is at END: Zipper back prevCur []
-           -- prevCur is the last character (should be '\n')
+         (Z.Zipper prevBack _prevCur [] : rest) ->
+           -- Previous line is at END: Zipper prevBack _prevCur []
+           -- _prevCur is the last character (should be '\n')
            -- Delete it by not including it in the joined line
            -- NOTE: When word-wrapping is implemented, this is where we would trigger rewrapping
-           let joinedLine = Z.GapZipper back (Z.gapAfter currentLine)
+           let joinedLine = Z.GapZipper prevBack (Z.gapAfter currentLine)
            in ed { edLinesAbove = rest, edCurrentLine = joinedLine }
          _ -> error "Invariant violated: line in edLinesAbove not at END"
      else
