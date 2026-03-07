@@ -6,6 +6,7 @@ import Test.Hspec
 import Test.QuickCheck
 import qualified Data.Text as T
 import UI.SegmentEditor
+import UI.Zipper (Zipper, toList)
 
 -- Test configuration
 testConfig :: EditorConfig ()
@@ -190,3 +191,58 @@ spec = do
         let edTyped = foldl (\e c -> typeChar c e) (emptyEditor noWrapConfig) str
             edInserted = insertText (T.pack str) (emptyEditor noWrapConfig)
         in getEditorContent edTyped == getEditorContent edInserted
+
+  describe "Property: editing with backspace" $ do
+    it "sequence of chars, newlines, and backspaces produces correct content" $ property $
+      \(actions :: [EditAction]) ->
+        let ed = foldl applyAction (emptyEditor noWrapConfig) actions
+            expectedContent = simulateActions actions
+        in getEditorContent ed == T.pack expectedContent
+
+    it "all non-final lines end with newline" $ property $
+      \(actions :: [EditAction]) ->
+        let ed = foldl applyAction (emptyEditor noWrapConfig) actions
+            linesAbove = edLinesAbove ed
+            -- All lines in linesAbove should end with '\n'
+            aboveValid = all lineEndsWithNewline linesAbove
+        in aboveValid
+
+-- | Actions that can be performed on the editor
+data EditAction
+  = TypeChar Char
+  | TypeNewline
+  | Backspace
+  deriving (Show, Eq)
+
+instance Arbitrary EditAction where
+  arbitrary = frequency
+    [ (10, TypeChar <$> arbitraryPrintableChar)
+    , (3, pure TypeNewline)
+    , (2, pure Backspace)
+    ]
+
+-- | Apply an action to the editor
+applyAction :: SegmentEditor () InputSegment -> EditAction -> SegmentEditor () InputSegment
+applyAction ed (TypeChar c) = typeChar c ed
+applyAction ed TypeNewline = typeChar '\n' ed
+applyAction ed Backspace = delBackward ed
+
+-- | Simulate actions on a plain string to get expected content
+simulateActions :: [EditAction] -> String
+simulateActions = go ""
+  where
+    go acc [] = reverse acc
+    go acc (TypeChar c : rest) = go (c : acc) rest
+    go acc (TypeNewline : rest) = go ('\n' : acc) rest
+    go acc (Backspace : rest) = case acc of
+      [] -> go acc rest  -- Backspace at start does nothing
+      (_:xs) -> go xs rest
+
+-- | Check if a line (Zipper) ends with a newline
+lineEndsWithNewline :: Zipper InputSegment -> Bool
+lineEndsWithNewline z =
+  let segments = toList z
+  in case reverse segments of
+    [] -> False  -- Empty line (shouldn't happen for non-current lines)
+    (CharSegment '\n' : _) -> True
+    _ -> False

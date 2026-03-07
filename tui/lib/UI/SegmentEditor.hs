@@ -626,17 +626,19 @@ delBackward ed =
   let currentLine = edCurrentLine ed
   in if atStart currentLine
      then
-       -- At start of line - join with previous line
+       -- At start of line - move to previous line and delete last character there
        case edLinesAbove ed of
          [] -> ed  -- At start of document (no previous line)
          (Z.Zipper back prevCur [] : rest) ->
            -- Previous line is at END: Zipper back prevCur []
-           -- Join: (prevCur:back) + current line's after
-           let joinedLine = Z.GapZipper (prevCur : back) (Z.gapAfter currentLine)
+           -- prevCur is the last character (should be '\n')
+           -- Delete it by not including it in the joined line
+           -- NOTE: When word-wrapping is implemented, this is where we would trigger rewrapping
+           let joinedLine = Z.GapZipper back (Z.gapAfter currentLine)
            in ed { edLinesAbove = rest, edCurrentLine = joinedLine }
          _ -> error "Invariant violated: line in edLinesAbove not at END"
      else
-       -- Not at line start, just delete the segment
+       -- Not at line start, just delete the segment before cursor
        case deleteBackward ed of
          Just ed' -> ed'
          Nothing -> ed
@@ -886,8 +888,10 @@ renderEditorWithPrompt prompt hasFocus ed =
 renderGapZipper :: GapZipper InputSegment -> Widget n
 renderGapZipper line' =
   let allSegs = toList line'
-  in if null allSegs
-     then txt " "  -- Empty line must render something to maintain height
+      -- Check if line contains only newline characters
+      onlyNewlines = all isHardBreak allSegs
+  in if null allSegs || onlyNewlines
+     then txt " "  -- Empty line or line with only newlines must render something to maintain height
      else hBox (map renderSegment allSegs)
 
 -- | Render a single segment with appropriate styling
