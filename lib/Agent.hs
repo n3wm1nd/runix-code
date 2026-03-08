@@ -26,7 +26,6 @@ module Agent
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.ByteString (ByteString)
-import Control.Monad
 import Polysemy 
 import Polysemy.State 
 import Polysemy.Reader 
@@ -100,25 +99,6 @@ instance ToolFunction (RunixCodeResult model) where
   toolFunctionName _ = "runix_code"
   toolFunctionDescription _ = "AI coding assistant that can read/write files, run shell commands, and help with code"
 
---------------------------------------------------------------------------------
--- Helper Functions
---------------------------------------------------------------------------------
-
--- | Format file changes with diffs as a system message
--- Diffs old content (via stdin) against current file
-formatFileChanges :: Members '[FileSystem ProjectFS, FileSystemRead ProjectFS, Cmd "diff", Fail] r
-                  => [(String, ByteString, ByteString)]
-                  -> Sem r Text
-formatFileChanges changes = do
-  let header = T.pack $ "SYSTEM NOTIFICATION: " ++ show (length changes) ++ " file(s) changed externally:\n\n"
-
-  -- Process each changed file
-  diffs <- forM changes $ \(path, oldContent, _newContent) -> do
-    -- Run diff with old content via stdin, label it as path.old
-    Tools.DiffResult diffOutput <- Tools.diffContentVsFile @ProjectFS (path ++ ".old") oldContent (Tools.FilePath $ T.pack path)
-    return diffOutput
-
-  return $ header <> T.intercalate "\n---\n\n" diffs
 
 --------------------------------------------------------------------------------
 -- (State effect for todo tracking is run locally in agent loop)
@@ -247,33 +227,17 @@ runixCodeAgentLoop
   => [LLMTool (Sem (Fail ': r))]  -- ^ Pre-built tools with Fail effect (loaded once, reused)
   -> Sem r (RunixCodeResult model)
 runixCodeAgentLoop tools = do
+  -- Check for file changes and inject system notifications
+  getChangedFiles @ProjectFS >>= mapM_ (notifyFileChanges @ProjectFS @model)
+
   baseConfigs <- ask @[ModelConfig model]
   let configs = setTools tools baseConfigs
 
-  -- Check for file changes and inject as system messages
   currentHistory <- get @[Message model]
 
-  changedFiles <- getChangedFiles @ProjectFS
+  responseMsgs <- queryLLM configs currentHistory
 
-  historyWithChanges <- if null changedFiles
-        then return currentHistory
-        else do
-          -- Log detected changes
-          info $ T.pack $ "Detected " ++ show (length changedFiles) ++ " file change(s): " ++
-                          show (map (\(path, _, _) -> path) changedFiles)
-
-          -- Run formatFileChanges with runFail - if it fails, just skip the notification
-          diffResult <- runFail $ formatFileChanges changedFiles
-          case diffResult of
-            Right diffText -> return $ currentHistory ++ [SystemText diffText]
-            Left _err -> return currentHistory  -- Skip notification if diff fails
-
-  -- Update history with change notifications before querying LLM
-  put @[Message model] historyWithChanges
-
-  responseMsgs <- queryLLM configs historyWithChanges
-
-  let historyWithResponse = historyWithChanges ++ responseMsgs
+  let historyWithResponse = currentHistory ++ responseMsgs
       toolCalls = [tc | AssistantTool tc <- responseMsgs]
 
   -- Update history state
@@ -310,3 +274,33 @@ data AgentSession model = AgentSession
 data AgentConfig = AgentConfig
   { systemPrompt :: SystemPrompt
   }
+
+--------------------------------------------------------------------------------
+-- Helper Functions
+--------------------------------------------------------------------------------
+
+-- | Format a single file change as a system notification with diff
+formatFileChange :: forall fs r.
+                    Members '[FileSystem fs, FileSystemRead fs, Cmd "diff", Fail] r
+                 => (String, ByteString, ByteString)
+                 -> Sem r Text
+formatFileChange (path, oldContent, _newContent) = do
+  let header = T.pack $ "SYSTEM NOTIFICATION: File changed externally: " ++ path ++ "\n\n"
+  -- Run diff with old content via stdin, label it as path.old
+  Tools.DiffResult diffOutput <- Tools.diffContentVsFile @fs (path ++ ".old") oldContent (Tools.FilePath $ T.pack path)
+  return $ header <> diffOutput
+
+-- | Notify about a single file change by injecting system message into history
+notifyFileChanges
+  :: forall fs model r.
+     Members '[FileSystem fs, FileSystemRead fs, Cmd "diff", State [Message model]] r
+  => (String, ByteString, ByteString)
+  -> Sem r ()
+notifyFileChanges change = do
+  -- Run formatFileChange with runFail - if it fails, just skip the notification
+  diffResult <- runFail $ formatFileChange @fs change
+  case diffResult of
+    Right diffText -> do
+      currentHistory <- get @[Message model]
+      put @[Message model] (currentHistory ++ [SystemText diffText])
+    Left _err -> return ()  -- Skip notification if diff fails
