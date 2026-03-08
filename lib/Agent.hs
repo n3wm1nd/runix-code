@@ -99,11 +99,6 @@ instance ToolFunction (RunixCodeResult model) where
   toolFunctionName _ = "runix_code"
   toolFunctionDescription _ = "AI coding assistant that can read/write files, run shell commands, and help with code"
 
-
---------------------------------------------------------------------------------
--- (State effect for todo tracking is run locally in agent loop)
---------------------------------------------------------------------------------
-
 --------------------------------------------------------------------------------
 -- Core Function
 --------------------------------------------------------------------------------
