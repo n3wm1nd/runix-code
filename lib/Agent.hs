@@ -25,7 +25,6 @@ module Agent
 
 import Data.Text (Text)
 import qualified Data.Text as T
-import Data.ByteString (ByteString)
 import Polysemy 
 import Polysemy.State 
 import Polysemy.Reader 
@@ -277,9 +276,9 @@ data AgentConfig = AgentConfig
 -- | Format a single file change as a system notification with diff
 formatFileChange :: forall fs r.
                     Members '[FileSystem fs, FileSystemRead fs, Cmd "diff", Fail] r
-                 => (String, ByteString, ByteString)
+                 => FileChange fs
                  -> Sem r Text
-formatFileChange (path, oldContent, _newContent) = do
+formatFileChange (FileChange path oldContent _newContent) = do
   let header = T.pack $ "SYSTEM NOTIFICATION: File changed externally: " ++ path ++ "\n\n"
   -- Run diff with old content via stdin, label it as path.old
   Tools.DiffResult diffOutput <- Tools.diffContentVsFile @fs (path ++ ".old") oldContent (Tools.FilePath $ T.pack path)
@@ -289,7 +288,7 @@ formatFileChange (path, oldContent, _newContent) = do
 notifyFileChanges
   :: forall fs model r.
      Members '[FileSystem fs, FileSystemRead fs, Cmd "diff", State [Message model]] r
-  => (String, ByteString, ByteString)
+  => FileChange fs
   -> Sem r ()
 notifyFileChanges change = do
   -- Run formatFileChange with runFail - if it fails, just skip the notification
