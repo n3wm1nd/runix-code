@@ -136,7 +136,7 @@ runixCode (Agent.SystemPrompt sysPrompt) (UserPrompt userPrompt) = do
   claudeInstructions <- Tools.Claude.loadClaudeMdConfigs
 
   let claudeMdConfigs = map (\(Tools.Claude.ClaudeInstructions txt) -> ULL.SystemPrompt txt) claudeInstructions
-      configsWithSystem = ULL.SystemPrompt sysPrompt : claudeMdConfigs ++ baseConfigs
+      configsWithSystem = claudeMdConfigs ++ [ULL.SystemPrompt sysPrompt] ++ baseConfigs
       newHistory = currentHistory ++ [UserText userPrompt]
 
   -- Add user prompt to history
