@@ -18,7 +18,7 @@ import Control.Concurrent.STM
 import Control.Monad (forever, when)
 import qualified Control.Exception as Ex
 import qualified System.Directory as Dir
-import System.Environment (getExecutablePath)
+import System.Environment (getExecutablePath, lookupEnv)
 import System.Posix.Process (executeFile)
 import System.Posix.Files (getFileStatus, modificationTime)
 import qualified System.IO as IO
@@ -71,7 +71,9 @@ import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideCla
 import UI.OutputHistory (OutputItem(..), OutputHistoryZipper, listToZipper, addCompletedToolItems, extractMessages, emptyZipper, zipperToList)
 import qualified Runix.LLM.Context
 import Runix.Time (Time, timeIO)
-import Runix.HTTP.RequestLogger (withHTTPRequestLogging)
+import Runix.Tracing.FileLog (logHTTPRequests, logHTTPStreamingRequests)
+import Runix.Tracing.LangFuse (langFuseFromEnv, withLangFuse, withLangFuseStreaming)
+import Runix.RestAPI (restapiHTTP)
 
 
 --------------------------------------------------------------------------------
@@ -495,6 +497,58 @@ buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSessi
 
 
 
+--------------------------------------------------------------------------------
+-- Tracing Configuration
+--------------------------------------------------------------------------------
+
+-- | Apply all HTTP tracing interceptors (file logging + LangFuse)
+-- Controlled by environment variables:
+--   - RUNIX_LOG_REQUESTS=1 enables file logging to .runix/logs/
+--   - LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY enable LangFuse tracing
+withTracing :: forall r a.
+               Members '[HTTP, HTTPStreaming, Time, Logging, Runix.FileSystem.System.FileSystemRead, Runix.FileSystem.System.FileSystemWrite, Fail, Embed IO] r
+            => FilePath  -- ^ Project directory
+            -> Sem r a
+            -> Sem r a
+withTracing cwd action = do
+  -- Initialize LangFuse from environment (if configured)
+  maybeLangFuse <- langFuseFromEnv
+
+  -- Check if file logging is enabled
+  enableFileLogging <- embed $ fmap (== Just "1") $ lookupEnv "RUNIX_LOG_REQUESTS"
+
+  -- Log tracing status
+  case maybeLangFuse of
+    Just _ -> info "Tracing: LangFuse enabled"
+    Nothing -> return ()
+
+  when enableFileLogging $
+    info $ T.pack $ "Tracing: File logging enabled (directory: " <> cwd <> "/.runix/logs)"
+
+  -- Apply file logging if enabled (intercepts both HTTP and HTTPStreaming)
+  let withFileLogging = if enableFileLogging
+        then \act -> do
+          let logDir = cwd ++ "/.runix/logs"
+          _ <- Runix.FileSystem.System.createDirectory True logDir
+          fileSystemLocal (RequestLogFS logDir)
+            $ logHTTPRequests @RequestLogFS
+            $ logHTTPStreamingRequests @RequestLogFS
+            $ raise $ raise $ raise act
+        else id
+
+  -- Apply tracing based on configuration
+  case maybeLangFuse of
+    Just lf ->
+      -- LangFuse enabled: restapiHTTP interprets RestAPI, then apply both HTTP and streaming tracing
+      restapiHTTP lf . withLangFuseStreaming lf . withLangFuse lf . raise . withFileLogging $ action
+    Nothing ->
+      -- No LangFuse: just file logging
+      withFileLogging action
+
+--------------------------------------------------------------------------------
+-- TUI Effect Interpretation
+--------------------------------------------------------------------------------
+
 interpretTUIEffects :: forall msg r a.
   (Member (Error String) r, Member (Embed IO) r) =>
   FilePath ->
@@ -559,8 +613,8 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     -- HTTP interpreters
     . httpIO (withRequestTimeout 300)
     . httpIOStreaming (withRequestTimeout 300)
-    -- HTTP request logging (after interpreters, so it actually intercepts requests)
-    . withHTTPRequestLogging cwd
+    -- HTTP tracing: file logging + LangFuse (after interpreters, so it actually intercepts requests)
+    . withTracing cwd
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
     . promptStoreIO
     . cmdsIO
