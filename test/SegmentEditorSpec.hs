@@ -337,6 +337,58 @@ spec = do
       snd (getCursorPos ed3) `shouldBe` 3  -- End of "xyz"
       snd (getCursorPos ed4) `shouldBe` 3  -- Not back to column 4, stays at column 3
 
+  describe "Cursor and Insert Interaction" $ do
+    it "debug: show gap state during insert" $ do
+      let ed = insertText "1234" (emptyEditor noWrapConfig)
+          segBefore = getSegmentBeforeCursor ed
+          segAt = getSegmentAtCursor ed
+          ed1 = moveCursorLeft ed
+          segBefore1 = getSegmentBeforeCursor ed1
+          segAt1 = getSegmentAtCursor ed1
+          ed2 = insertChar 'X' ed1
+          segBefore2 = getSegmentBeforeCursor ed2
+          segAt2 = getSegmentAtCursor ed2
+          content = getEditorContent ed2
+      -- After insertText "1234", cursor is at end
+      segBefore `shouldBe` Just (CharSegment '4')
+      segAt `shouldBe` Nothing
+      -- After moveCursorLeft, cursor is between '3' and '4'
+      segBefore1 `shouldBe` Just (CharSegment '3')
+      segAt1 `shouldBe` Just (CharSegment '4')
+      -- After insertChar 'X', cursor should be after 'X', before '4'
+      segBefore2 `shouldBe` Just (CharSegment 'X')
+      segAt2 `shouldBe` Just (CharSegment '4')
+      content `shouldBe` "123X4"
+
+    it "inserting character after moving left keeps cursor position" $ do
+      -- Reproduce bug: "1234" -> move left -> insert 'X' should give "123X4"
+      let ed = insertText "1234" (emptyEditor noWrapConfig)
+          -- ed is at end: "1234_"
+          ed1 = moveCursorLeft ed
+          -- ed1 should be: "123_4"
+          col1 = snd (getCursorPos ed1)
+          ed2 = insertChar 'X' ed1
+          -- ed2 should be: "123X_4" (cursor after X)
+          col2 = snd (getCursorPos ed2)
+          content = getEditorContent ed2
+      -- Verify positions
+      col1 `shouldBe` 3  -- After moving left from end
+      col2 `shouldBe` 4  -- After inserting 'X' (should be right after X)
+      content `shouldBe` "123X4"
+
+    it "multiple left moves and insert maintains position" $ do
+      -- "12345" -> left left -> insert 'X' should give "123X45"
+      let ed = insertText "12345" (emptyEditor noWrapConfig)
+          ed1 = moveCursorLeft ed
+          ed2 = moveCursorLeft ed1
+          col_before = snd (getCursorPos ed2)
+          ed3 = insertChar 'X' ed2
+          col_after = snd (getCursorPos ed3)
+          content = getEditorContent ed3
+      col_before `shouldBe` 3  -- After two left moves
+      col_after `shouldBe` 4   -- After inserting 'X'
+      content `shouldBe` "123X45"
+
 -- | Actions that can be performed on the editor
 data EditAction
   = TypeChar Char

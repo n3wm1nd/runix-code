@@ -526,7 +526,7 @@ handleEditorEvent _ ed = return (False, ed)
 
 -- | Insert a single character at cursor
 insertChar :: Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertChar c ed = forward $ insertBackward (CharSegment c) ed
+insertChar c ed = insertBackward (CharSegment c) ed
 
 -- | Type a character - handles linebreaks by calling breakLine after inserting
 typeChar :: Char -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
@@ -541,7 +541,7 @@ insertText text ed = foldl (\e c -> typeChar c e) ed (T.unpack text)
 
 -- | Insert a segment at cursor
 insertSegment :: InputSegment -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
-insertSegment seg ed = forward $ insertBackward seg ed
+insertSegment seg ed = insertBackward seg ed
 
 -- | Insert a file reference at cursor
 insertFileRef :: [FilePath] -> Text -> RefState -> SegmentEditor n InputSegment -> SegmentEditor n InputSegment
