@@ -55,14 +55,11 @@ instance Arbitrary (SegmentEditor () InputSegment) where
         -- Maintain invariants:
         -- 1. If current line is empty, clear above/below
         -- 2. If current line is at END (gapAfter empty), clear below (can't be at end with lines below)
-        -- 3. If current line is at START (gapBefore empty), clear above (can't be at start with lines above)
         (finalAbove, finalBelow) =
           if null (toList currentLine)
           then ([], [])
           else if atEnd currentLine
           then (finalAboveReversed, [])  -- At end, no lines below
-          else if atStart currentLine
-          then ([], finalBelowForward)  -- At start, no lines above
           else (finalAboveReversed, finalBelowForward)
 
         config = EditorConfig { editorName = (), lineLimit = Nothing, newlineMode = EnterSends }

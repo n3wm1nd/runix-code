@@ -666,14 +666,11 @@ moveCursorLeft ed =
 -- | Move cursor right (by one segment, crossing line boundaries)
 moveCursorRight :: HasLinebreak a => SegmentEditor n a -> SegmentEditor n a
 moveCursorRight ed =
-  -- Check if next segment is a hard linebreak - if so, skip over it
-  let currentLine = edCurrentLine ed
-  in case Z.gapAfter currentLine of
-       (seg:_) | isHardBreak seg ->
-         -- Skip over the linebreak
-         let ed' = forward ed
-         in forward ed'
-       _ -> forward ed
+  let ed' = forward ed
+      -- After moving forward, check if we're now on a newline and skip it
+  in case Z.gapBefore (edCurrentLine ed') of
+       (seg:_) | isHardBreak seg -> forward ed'
+       _ -> ed'
 
 -- | Move cursor up one line (maintaining column position)
 -- TODO: Preserve column position when moving between lines
