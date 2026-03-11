@@ -6,7 +6,7 @@ import Test.Hspec
 import Test.QuickCheck
 import qualified Data.Text as T
 import UI.SegmentEditor
-import UI.Zipper (Zipper, toList)
+import UI.Zipper (Zipper, Zippable(..), toList)
 
 -- Test configuration
 testConfig :: EditorConfig ()
@@ -389,6 +389,95 @@ spec = do
       col_after `shouldBe` 4   -- After inserting 'X'
       content `shouldBe` "123X45"
 
+  describe "Forward/Back are inverses" $ do
+    it "back then forward returns to same position" $ do
+      let ed = insertText "hello world" (emptyEditor noWrapConfig)
+          ed' = forward (back ed)
+      getSegmentAtCursor ed `shouldBe` getSegmentAtCursor ed'
+
+    it "forward then back returns to same position" $ do
+      let ed = insertText "hello world" (emptyEditor noWrapConfig)
+          edMoved = moveCursorLeft ed
+          ed' = back (forward edMoved)
+      getSegmentAtCursor edMoved `shouldBe` getSegmentAtCursor ed'
+
+    it "5 backs then 5 forwards returns to same position" $ do
+      let ed = insertText "hello world" (emptyEditor noWrapConfig)
+          ed1 = back (back (back (back (back ed))))
+          ed2 = forward (forward (forward (forward (forward ed1))))
+      getSegmentAtCursor ed `shouldBe` getSegmentAtCursor ed2
+
+    it "forward/back work across line boundaries" $ do
+      let ed = insertText "hello\nworld" (emptyEditor noWrapConfig)
+          -- At end: after 'd'
+          ed1 = back ed  -- before 'd'
+          ed2 = back ed1 -- before 'l'
+          ed3 = back ed2 -- before 'l'
+          ed4 = back ed3 -- before 'r'
+          ed5 = back ed4 -- before 'o'
+          ed6 = back ed5 -- before 'w'
+          ed7 = back ed6 -- before '\n'
+          ed8 = back ed7 -- before 'o'
+      -- Now forward back
+          ed9 = forward (forward (forward (forward (forward (forward (forward (forward ed8)))))))
+      atEnd ed `shouldBe` True
+      atEnd ed9 `shouldBe` True
+      getSegmentAtCursor ed `shouldBe` getSegmentAtCursor ed9
+
+  describe "Word Wrapping" $ do
+    it "simple rewrap test with no actual wrapping" $ do
+      let ed = insertText "abc" (emptyEditor noWrapConfig)
+          -- Move to middle: "a|bc"
+          edMid = back (back ed)
+          -- Rewrap at large width (no actual wrapping should happen)
+          rewrapped = rewrapEditor 100 edMid
+      getSegmentAtCursor edMid `shouldBe` Just (CharSegment 'b')
+      getSegmentAtCursor rewrapped `shouldBe` Just (CharSegment 'b')
+      getEditorContent rewrapped `shouldBe` "abc"
+
+    it "rewrapEditor preserves cursor position at start" $ do
+      let ed = insertText "hello world" (emptyEditor noWrapConfig)
+          edAtStart = moveCursorToStart ed
+          rewrapped = rewrapEditor 5 edAtStart
+      getCursorPos rewrapped `shouldBe` (0, 0)
+      getEditorContent rewrapped `shouldBe` "hello world"
+
+    it "rewrapEditor preserves cursor position in middle" $ do
+      let ed = insertText "hello world" (emptyEditor noWrapConfig)
+          edMoved = moveCursorLeft ed  -- One left from end: "hello worl|d"
+          allSegs = toList edMoved
+          rewrapped = rewrapEditor 5 edMoved
+          allSegsAfter = toList rewrapped
+      -- Debug: print what we have
+      print ("Original segments:", allSegs)
+      print ("After rewrap segments:", allSegsAfter)
+      print ("Wrapped lines:", getEditorLines rewrapped)
+      print ("Cursor before rewrap:", getSegmentAtCursor edMoved)
+      print ("Cursor after rewrap:", getSegmentAtCursor rewrapped)
+      print ("Position before:", getCursorPos edMoved)
+      print ("Position after:", getCursorPos rewrapped)
+      -- Content should be preserved
+      getEditorContent rewrapped `shouldBe` "hello world"
+      allSegs `shouldBe` allSegsAfter
+      -- Cursor should still point to same segment
+      getSegmentAtCursor rewrapped `shouldBe` Just (CharSegment 'd')
+
+    it "rewrapEditor preserves cursor position at end" $ do
+      let ed = insertText "hello world" (emptyEditor noWrapConfig)
+          rewrapped = rewrapEditor 5 ed
+      -- Cursor at end should remain at end
+      atEnd rewrapped `shouldBe` True
+      getEditorContent rewrapped `shouldBe` "hello world"
+
+    it "rewrapEditor actually wraps text" $ do
+      let ed = insertText "hello world foo" (emptyEditor noWrapConfig)
+          rewrapped = rewrapEditor 7 ed
+          lines' = getEditorLines rewrapped
+      -- Should be multiple lines after wrapping at width 7
+      length lines' `shouldSatisfy` (> 1)
+      -- Content preserved
+      getEditorContent rewrapped `shouldBe` "hello world foo"
+
 -- | Actions that can be performed on the editor
 data EditAction
   = TypeChar Char
@@ -420,11 +509,10 @@ simulateActions = go ""
       [] -> go acc rest  -- Backspace at start does nothing
       (_:xs) -> go xs rest
 
--- | Check if a line (Zipper) ends with a newline
-lineEndsWithNewline :: Zipper InputSegment -> Bool
-lineEndsWithNewline z =
-  let segments = toList z
-  in case reverse segments of
+-- | Check if a line (list) ends with a newline
+lineEndsWithNewline :: [InputSegment] -> Bool
+lineEndsWithNewline segments =
+  case reverse segments of
     [] -> False  -- Empty line (shouldn't happen for non-current lines)
     (CharSegment '\n' : _) -> True
     _ -> False

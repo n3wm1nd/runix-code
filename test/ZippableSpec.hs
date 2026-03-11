@@ -34,8 +34,8 @@ instance Arbitrary InputSegment where
 
 -- Arbitrary instance for SegmentEditor
 -- Maintains invariants:
--- 1. Lines in edLinesAbove are non-empty Zippers at END
--- 2. Lines in edLinesBelow are non-empty Zippers at START
+-- 1. Lines in edLinesAbove are reversed (head is last segment)
+-- 2. Lines in edLinesBelow are forward (head is first segment)
 -- 3. edCurrentLine can be empty only if both above/below are empty
 instance Arbitrary (SegmentEditor () InputSegment) where
   arbitrary = do
@@ -44,17 +44,19 @@ instance Arbitrary (SegmentEditor () InputSegment) where
     currentLine <- arbitrary :: Gen (GapZipper InputSegment)
     linesBelow <- arbitrary :: Gen [GapZipper InputSegment]
 
-    -- Filter out empty lines and convert to Zippers at correct positions
-    let linesAboveNonEmpty = mapMaybe (\g -> listToZipper (toList g)) linesAbove
-        linesBelowNonEmpty = mapMaybe (\g -> listToZipper (toList g)) linesBelow
-        linesAboveAtEnd = map end linesAboveNonEmpty
-        linesBelowAtStart = map start linesBelowNonEmpty
+    -- Convert to lists and apply ordering invariants
+    let linesAboveNonEmpty = filter (not . null) (map toList linesAbove)
+        linesBelowNonEmpty = filter (not . null) (map toList linesBelow)
+        -- edLinesAbove stores reversed segments
+        finalAboveReversed = map reverse linesAboveNonEmpty
+        -- edLinesBelow stores forward segments
+        finalBelowForward = linesBelowNonEmpty
 
         -- If current line is empty, clear above/below to maintain invariant
         (finalAbove, finalBelow) =
           if null (toList currentLine)
           then ([], [])
-          else (linesAboveAtEnd, linesBelowAtStart)
+          else (finalAboveReversed, finalBelowForward)
 
         config = EditorConfig { editorName = (), lineLimit = Nothing, newlineMode = EnterSends }
 
