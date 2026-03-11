@@ -81,24 +81,22 @@ module UI.SegmentEditor
   , renderEditorWithPrompt
   ) where
 
-import Brick.Types (Widget, BrickEvent(..), EventM, Location(..), ViewportType(..))
+import Brick.Types (Widget(..), BrickEvent(..), EventM, Location(..), ViewportType(..), availWidthL, getContext, render, Size(..))
 import Brick.Widgets.Core (viewport, vBox, hBox, txt, withAttr, showCursor, (<+>))
+import Lens.Micro ((^.))
 import Brick.AttrMap (AttrName, attrName)
 import Graphics.Vty (Event(..), Key(..), Modifier(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import UI.Zipper (Zipper, GapZipper, Zippable(..))
+import UI.Zipper (GapZipper, Zippable(..))
 import qualified UI.Zipper as Z
 import UI.SegmentEditor.Types
   ( InputSegment(..)
   , RefState(..)
   , HasLinebreak(..)
-  , editorTxt
   , segmentLength
   , segmentToText
-  , renderLineSegments
-  , renderLineLength
   , pasteDisplayText
   , isWordSegment
   , isSpaceSegment
@@ -838,24 +836,32 @@ rewrapEditor width ed
 --------------------------------------------------------------------------------
 
 -- | Render the editor with optional focus
--- This version renders segments with special styling
+-- This version renders segments with special styling and applies word wrapping
 renderEditor :: (Ord n, Show n)
              => Bool  -- ^ Has focus
              -> SegmentEditor n InputSegment
              -> Widget n
 renderEditor hasFocus ed =
-  let aboveWidgets = map (renderGapZipper . listToGap . reverse) (reverse (edLinesAbove ed))
-      currentWidget = renderGapZipper (edCurrentLine ed)
-      belowWidgets = map (renderGapZipper . listToGap) (edLinesBelow ed)
-      lineWidgets = aboveWidgets ++ [currentWidget] ++ belowWidgets
-      content = vBox lineWidgets
-      (row, col) = getCursorPos ed
-      cursorLoc = Location (col, row)
-      name = editorName (edConfig ed)
-  in withAttr (if hasFocus then editFocusedAttr else editAttr) $
-     viewport name Both $
-     (if hasFocus then showCursor name cursorLoc else id) $
-     content
+  Widget Greedy Greedy $ do
+    c <- getContext
+    let availWidth = c ^. availWidthL
+        -- Rewrap the editor at available width, preserving cursor position
+        wrappedEd = rewrapEditor availWidth ed
+        -- Render the wrapped editor
+        aboveWidgets = map (renderGapZipper . listToGap . reverse) (reverse (edLinesAbove wrappedEd))
+        currentWidget = renderGapZipper (edCurrentLine wrappedEd)
+        belowWidgets = map (renderGapZipper . listToGap) (edLinesBelow wrappedEd)
+        lineWidgets = aboveWidgets ++ [currentWidget] ++ belowWidgets
+        content = vBox lineWidgets
+        (row, col) = getCursorPos wrappedEd
+        cursorLoc = Location (col, row)
+        name = editorName (edConfig wrappedEd)
+        styledContent = withAttr (if hasFocus then editFocusedAttr else editAttr) $
+                       viewport name Both $
+                       (if hasFocus then showCursor name cursorLoc else id) $
+                       content
+    -- Render the styled content to get the result
+    render styledContent
   where
     listToGap segs = Z.GapZipper [] segs
 
@@ -866,24 +872,35 @@ renderEditorWithPrompt :: (Ord n, Show n)
                        -> SegmentEditor n InputSegment
                        -> Widget n
 renderEditorWithPrompt prompt hasFocus ed =
-  let aboveLines = map (renderGapZipper . listToGap . reverse) (reverse (edLinesAbove ed))
-      currentLine = renderGapZipper (edCurrentLine ed)
-      belowLines = map (renderGapZipper . listToGap) (edLinesBelow ed)
-      allLines = aboveLines ++ [currentLine] ++ belowLines
-      renderedLines = case allLines of
-        [] -> [txt prompt <+> txt " "]
-        (firstLine:restLines) ->
-          (txt prompt <+> txt " " <+> firstLine)
-          : map (\ln -> txt (T.replicate (T.length prompt + 1) " ") <+> ln) restLines
-      content = vBox renderedLines
-      (row, col) = getCursorPos ed
-      -- Adjust cursor location for prompt
-      cursorLoc = Location (col + T.length prompt + 1, row)
-      name = editorName (edConfig ed)
-  in withAttr (if hasFocus then editFocusedAttr else editAttr) $
-     viewport name Both $
-     (if hasFocus then showCursor name cursorLoc else id) $
-     content
+  Widget Greedy Greedy $ do
+    c <- getContext
+    let availWidth = c ^. availWidthL
+        -- Account for prompt width in wrapping calculation
+        promptWidth = T.length prompt + 1  -- prompt + space
+        wrapWidth = max 10 (availWidth - promptWidth)  -- Ensure minimum width
+        -- Rewrap the editor at available width (minus prompt), preserving cursor position
+        wrappedEd = rewrapEditor wrapWidth ed
+        -- Render the wrapped editor
+        aboveLines = map (renderGapZipper . listToGap . reverse) (reverse (edLinesAbove wrappedEd))
+        currentLine = renderGapZipper (edCurrentLine wrappedEd)
+        belowLines = map (renderGapZipper . listToGap) (edLinesBelow wrappedEd)
+        allLines = aboveLines ++ [currentLine] ++ belowLines
+        renderedLines = case allLines of
+          [] -> [txt prompt <+> txt " "]
+          (firstLine:restLines) ->
+            (txt prompt <+> txt " " <+> firstLine)
+            : map (\ln -> txt (T.replicate (T.length prompt + 1) " ") <+> ln) restLines
+        content = vBox renderedLines
+        (row, col) = getCursorPos wrappedEd
+        -- Adjust cursor location for prompt
+        cursorLoc = Location (col + promptWidth, row)
+        name = editorName (edConfig wrappedEd)
+        styledContent = withAttr (if hasFocus then editFocusedAttr else editAttr) $
+                       viewport name Both $
+                       (if hasFocus then showCursor name cursorLoc else id) $
+                       content
+    -- Render the styled content to get the result
+    render styledContent
   where
     listToGap segs = Z.GapZipper [] segs
 

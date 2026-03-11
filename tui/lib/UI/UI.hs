@@ -285,10 +285,16 @@ drawUI st = [indicatorLayer, baseLayer]
       let availH = ctx ^. T.availHeightL
           availW = ctx ^. T.availWidthL
 
-          -- Update editor wrap width based on available width
-          -- Account for prompt, padding, and borders
-          -- Calculate input height based on editor lines
-          editorLines = SE.getEditorLines (_inputEditor st)
+          -- Calculate the actual width available to the editor
+          -- Must match the layout below: renderPrompt <+> padLeft (Pad 1) (padRight (Pad 1) editor)
+          promptWidth = 1  -- ">" is 1 character
+          leftPadding = 1  -- padLeft (Pad 1)
+          rightPadding = 1 -- padRight (Pad 1)
+          editorWrapWidth = max 10 (availW - promptWidth - leftPadding - rightPadding)
+
+          -- Rewrap editor to get actual line count after wrapping
+          wrappedEditor = SE.rewrapEditor editorWrapWidth (_inputEditor st)
+          editorLines = SE.getEditorLines wrappedEditor
           contentHeight = max 1 (length editorLines)
           inputHeight = min contentHeight maxInputHeight
 
