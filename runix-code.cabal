@@ -158,6 +158,8 @@ library runix-code-tui-lib
                     , UI.Rendering
                     , UI.Attributes
                     , UI.SegmentEditor
+                    , UI.SegmentEditor.Types
+                    , UI.SegmentEditor.WordWrap
                     , UI.Streaming
                     , UI.UserInput.InputWidget
                     , UI.UserInput.Interpreter
@@ -322,6 +324,7 @@ test-suite runix-code-test
                     , mcp-server
                     , aeson
                     , directory
+                    , word-wrap >=0.5
                     , vector
 
     other-modules:    OutputHistorySpec
