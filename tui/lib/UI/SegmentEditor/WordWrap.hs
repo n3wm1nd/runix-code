@@ -78,12 +78,11 @@ segmentsToWordUnits = reverse . map reverseUnit . go []
         -- File refs are atomic - always their own word unit
         go (Word [seg] : acc) rest
 
-      PastedSegment t ->
-        -- Single-line pastes are atomic word units
-        -- Multi-line pastes should have been expanded before wrapping
-        if T.any (== '\n') t
-        then error "wrapLine: multi-line PastedSegment should be expanded before wrapping"
-        else go (Word [seg] : acc) rest
+      PastedSegment _ ->
+        -- Pasted segments are atomic word units (treated as single words)
+        -- Multi-line pastes display as placeholders (e.g., "[paste: 3 lines]")
+        -- so they should be wrapped based on the placeholder display width, not content
+        go (Word [seg] : acc) rest
 
     isSpace ' ' = True
     isSpace '\t' = True
