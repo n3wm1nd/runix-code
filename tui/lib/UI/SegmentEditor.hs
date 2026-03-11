@@ -241,52 +241,36 @@ getSegmentBeforeCursor ed =
 -- Invariant: edLinesAbove has reversed segments, edLinesBelow has forward segments
 instance Zippable (SegmentEditor n) where
   -- Move forward one segment (right, or to next line if at end of line)
+  -- ALWAYS move forward first, THEN check if we need to transition
   forward ed =
-    if not (atEnd (edCurrentLine ed))
-    then
-      -- Move forward within current line
-      ed { edCurrentLine = Z.forward (edCurrentLine ed) }
-    else
-      -- At end of line, move to next line
-      case edLinesBelow ed of
-        [] -> ed  -- No next line
-        (nextLine : rest) ->
-          -- nextLine is in forward order, convert to GapZipper at START
-          let nextAsGap = Z.GapZipper [] nextLine
-          in case edCurrentLine ed of
-            Z.GapZipper [] [] ->
-              -- Current line is empty, don't store it
-              ed { edCurrentLine = nextAsGap, edLinesBelow = rest }
-            Z.GapZipper before [] ->
-              -- Current line at END, store it reversed in edLinesAbove
-              ed { edLinesAbove = before : edLinesAbove ed
-                 , edCurrentLine = nextAsGap
-                 , edLinesBelow = rest }
-            _ -> error "Invariant violated: current line not at END when forwarding"
+    let -- Move forward within current line (if already at end, this is a no-op)
+        ed' = ed { edCurrentLine = Z.forward (edCurrentLine ed) }
+    in -- Now check: are we at end of line with lines below? If so, transition
+       if atEnd (edCurrentLine ed') && not (null (edLinesBelow ed'))
+       then case edLinesBelow ed' of
+              (nextLine : rest) ->
+                ed' { edLinesAbove = Z.gapBefore (edCurrentLine ed') : edLinesAbove ed'
+                    , edCurrentLine = Z.GapZipper [] nextLine
+                    , edLinesBelow = rest }
+              [] -> error "Invariant violated"
+       else ed'
 
   -- Move backward one segment (left, or to previous line if at start of line)
+  -- First check if we need to transition, then move back
   back ed =
-    if not (atStart (edCurrentLine ed))
-    then
-      -- Move back within current line
-      ed { edCurrentLine = Z.back (edCurrentLine ed) }
-    else
-      -- At start of line, move to previous line
-      case edLinesAbove ed of
-        [] -> ed  -- No previous line
-        (prevLine : rest) ->
-          -- prevLine is in reverse order, convert to GapZipper at END
-          let prevAsGap = Z.GapZipper prevLine []
-          in case edCurrentLine ed of
-            Z.GapZipper [] [] ->
-              -- Current line is empty, don't store it
-              ed { edLinesAbove = rest, edCurrentLine = prevAsGap }
-            Z.GapZipper [] after ->
-              -- Current line at START, store it forward in edLinesBelow
-              ed { edLinesAbove = rest
-                 , edCurrentLine = prevAsGap
-                 , edLinesBelow = after : edLinesBelow ed }
-            _ -> error "Invariant violated: current line not at START when going back"
+    -- If at start with lines above, transition to end of previous line first
+    let ed' = if atStart (edCurrentLine ed) && not (null (edLinesAbove ed))
+              then case edLinesAbove ed of
+                     (prevLine : rest) ->
+                       ed { edLinesAbove = rest
+                          , edCurrentLine = Z.GapZipper prevLine []
+                          , edLinesBelow = Z.gapAfter (edCurrentLine ed) : edLinesBelow ed }
+                     [] -> error "Invariant violated"
+              else ed
+    in -- Now move back one position
+       if atStart (edCurrentLine ed')
+       then ed'  -- Can't move back
+       else ed' { edCurrentLine = Z.back (edCurrentLine ed') }
 
   -- Move to start of document (first line, first position)
   start ed = if atStart ed then ed else start (back ed)
