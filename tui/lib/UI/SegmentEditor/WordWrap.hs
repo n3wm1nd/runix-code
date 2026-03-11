@@ -10,12 +10,13 @@ module UI.SegmentEditor.WordWrap
   , segmentsToWordUnits
   , wrapLine
   , wrapLineWithUnits
+  , rewrap
   ) where
 
 import Data.Text (Text)
 import qualified Data.Text as T
 import Data.Char (isSpace)
-import UI.SegmentEditor.Types (InputSegment(..), segmentLength)
+import UI.SegmentEditor.Types (InputSegment(..), segmentLength, renderLineLength)
 
 -- | A word unit is an atomic sequence of segments that should not be broken
 -- across lines. This represents the natural breaking points in text.
@@ -98,53 +99,71 @@ segmentsToWordUnits = reverse . map reverseUnit . go []
 -- 1. Hard breaks ('\n') always force a new line
 -- 2. Words are not broken across lines
 -- 3. If a single word exceeds width, it goes on its own line (overflow)
--- 4. Spaces at line breaks are trimmed
+-- 4. Trailing spaces stay with the previous line (prevents lines starting with spaces)
+-- 5. Lines can only start with spaces if:
+--    - It's the first line, OR
+--    - The previous line ended with a hard break ('\n')
 wrapLine :: Int -> [InputSegment] -> [[InputSegment]]
 wrapLine width segs = wrapLineWithUnits width (segmentsToWordUnits segs)
 
 -- | Wrap using pre-computed WordUnits (useful for testing)
 wrapLineWithUnits :: Int -> [WordUnit] -> [[InputSegment]]
-wrapLineWithUnits width units = reverse $ map reverse $ go [] 0 [] units
+wrapLineWithUnits width units = reverse $ map reverse $ go [] [] units
   where
-    -- go :: [[InputSegment]] -> Int -> [InputSegment] -> [WordUnit] -> [[InputSegment]]
-    -- Accumulates completed lines, current line width, current line segments
-    go completedLines _currentWidth currentLine [] =
+    -- go :: [[InputSegment]] -> [InputSegment] -> [WordUnit] -> [[InputSegment]]
+    -- Accumulates completed lines and current line segments
+    -- We use renderLineLength to measure display width (strips leading spaces)
+    go completedLines currentLine [] =
       -- End of input - emit current line if non-empty
       if null currentLine
       then completedLines
       else currentLine : completedLines
 
-    go completedLines currentWidth currentLine (unit:rest) = case unit of
+    go completedLines currentLine (unit:rest) = case unit of
       HardBreak seg ->
         -- Hard break - complete current line and start fresh
         let lineWithBreak = seg : currentLine
             newCompleted = lineWithBreak : completedLines
-        in go newCompleted 0 [] rest
+        in go newCompleted [] rest
 
       Space spaceSegs ->
-        let spaceWidth = sum (map segmentLength spaceSegs)
-        in if null currentLine
+        let candidateLine = reverse spaceSegs ++ currentLine
+            candidateWidth = renderLineLength candidateLine
+        in if candidateWidth <= width
            then
-             -- Space at start of line - skip it
-             go completedLines 0 currentLine rest
-           else if currentWidth + spaceWidth <= width
-           then
-             -- Space fits on current line
-             go completedLines (currentWidth + spaceWidth) (reverse spaceSegs ++ currentLine) rest
+             -- Space fits on current line (or is leading space with 0 display width)
+             go completedLines candidateLine rest
            else
-             -- Space would overflow - complete line and start fresh (skip the space)
-             go (currentLine : completedLines) 0 [] rest
+             -- Space would overflow - attach it to current line as trailing space
+             -- This prevents creating lines that are only spaces (which render as empty)
+             let lineWithSpace = reverse spaceSegs ++ currentLine
+             in go (lineWithSpace : completedLines) [] rest
 
       Word wordSegs ->
-        let wordWidth = sum (map segmentLength wordSegs)
+        let candidateLine = reverse wordSegs ++ currentLine
+            candidateWidth = renderLineLength candidateLine
         in if null currentLine
            then
              -- First word on line - always fits (even if it overflows width)
-             go completedLines wordWidth (reverse wordSegs) rest
-           else if currentWidth + wordWidth <= width
+             go completedLines candidateLine rest
+           else if candidateWidth <= width
            then
              -- Word fits on current line
-             go completedLines (currentWidth + wordWidth) (reverse wordSegs ++ currentLine) rest
+             go completedLines candidateLine rest
            else
              -- Word doesn't fit - complete line and start fresh with this word
-             go (currentLine : completedLines) wordWidth (reverse wordSegs) rest
+             go (currentLine : completedLines) (reverse wordSegs) rest
+
+-- | Rewrap lines at a new width
+-- Takes a list of lines (each line is a list of segments), joins them,
+-- and wraps them at the specified width.
+--
+-- This is the core operation for dynamic rewrapping when the terminal width changes.
+-- It removes all soft line breaks (joins lines) and creates new soft breaks at word boundaries.
+--
+-- Note: Hard breaks (CharSegment '\n') are preserved and force line breaks.
+rewrap :: Int -> [[InputSegment]] -> [[InputSegment]]
+rewrap width lines' =
+  let -- Join all lines into a single list of segments
+      allSegments = concat lines'
+  in wrapLine width allSegments

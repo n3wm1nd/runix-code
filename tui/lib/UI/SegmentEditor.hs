@@ -95,6 +95,8 @@ import UI.SegmentEditor.Types
   , editorTxt
   , segmentLength
   , segmentToText
+  , renderLineSegments
+  , renderLineLength
   , pasteDisplayText
   , isWordSegment
   , isSpaceSegment

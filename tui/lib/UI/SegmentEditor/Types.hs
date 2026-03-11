@@ -8,6 +8,8 @@ module UI.SegmentEditor.Types
   , editorTxt
   , segmentToText
   , segmentLength
+  , renderLineSegments
+  , renderLineLength
   , pasteDisplayText
   , isWordSegment
   , isSpaceSegment
@@ -85,6 +87,20 @@ pasteDisplayText t
 -- Consistently derived from editorTxt (which handles newlines correctly)
 segmentLength :: InputSegment -> Int
 segmentLength = T.length . editorTxt
+
+-- | Render a line of segments as it would be displayed
+-- This applies display rules for SOFT-wrapped lines:
+-- - Leading spaces from soft wraps are not displayed (stripped)
+-- - But spaces after hard breaks (\n) ARE preserved
+-- For now, we strip leading spaces (assuming soft wrap context)
+-- TODO: This should take a parameter indicating if this is after a hard break
+renderLineSegments :: [InputSegment] -> Text
+renderLineSegments segs = T.stripStart (T.concat (map editorTxt segs))
+
+-- | Get the display length of a line of segments
+-- Uses the rendered representation (with leading spaces stripped)
+renderLineLength :: [InputSegment] -> Int
+renderLineLength = T.length . renderLineSegments
 
 -- | Check if a segment is a word character (for word navigation)
 isWordSegment :: InputSegment -> Bool
