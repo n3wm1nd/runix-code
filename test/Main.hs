@@ -9,6 +9,7 @@ import qualified UserInterfaceSpec
 import qualified ZipperSpec
 import qualified ZippableSpec
 import qualified SegmentEditorSpec
+import qualified WordWrapSpec
 
 main :: IO ()
 main = hspec $ do
@@ -20,3 +21,4 @@ main = hspec $ do
   describe "Zipper" ZipperSpec.spec
   describe "Zippable Laws" ZippableSpec.spec
   describe "SegmentEditor" SegmentEditorSpec.spec
+  describe "WordWrap" WordWrapSpec.spec

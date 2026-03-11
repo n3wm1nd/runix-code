@@ -86,49 +86,23 @@ import Graphics.Vty (Event(..), Key(..), Modifier(..))
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as TE
-import Data.Char (isSpace, isAlphaNum)
 import UI.Zipper (Zipper, GapZipper, Zippable(..))
 import qualified UI.Zipper as Z
+import UI.SegmentEditor.Types
+  ( InputSegment(..)
+  , RefState(..)
+  , HasLinebreak(..)
+  , editorTxt
+  , segmentLength
+  , segmentToText
+  , pasteDisplayText
+  , isWordSegment
+  , isSpaceSegment
+  )
 
 --------------------------------------------------------------------------------
 -- Types
 --------------------------------------------------------------------------------
-
--- | A segment of input content
-data InputSegment
-  = CharSegment Char              -- ^ Single character (normal typing, including '\n')
-  | FileRefSegment
-      { segRefPaths :: [FilePath]      -- ^ File paths (head is current selection)
-      , segRefQuery :: Text            -- ^ What the user typed
-      , segRefState :: RefState        -- ^ Reference state
-      }
-  | PastedSegment Text              -- ^ Pasted content (deleted as unit)
-  deriving (Eq, Show, Ord)
-
--- | State of a file reference
-data RefState = RefPending | RefAccepted | RefRejected
-  deriving (Eq, Show, Ord)
-
--- | Typeclass for segments that can represent linebreaks
-class HasLinebreak a where
-  -- | Check if a segment is any kind of linebreak (hard or soft)
-  isLinebreak :: a -> Bool
-
-  -- | Check if a segment is specifically a hard linebreak (explicit newline)
-  isHardBreak :: a -> Bool
-
-  -- | Check if a segment is specifically a soft linebreak (word-wrapping)
-  isSoftBreak :: a -> Bool
-
--- | Instance for InputSegment
-instance HasLinebreak InputSegment where
-  isLinebreak (CharSegment '\n') = True
-  isLinebreak _ = False
-
-  isHardBreak (CharSegment '\n') = True
-  isHardBreak _ = False
-
-  isSoftBreak _ = False  -- Not implemented yet for InputSegment
 
 -- | How the editor handles newline input
 data NewlineMode
@@ -379,39 +353,7 @@ segmentLineToText line' =
   let allSegs = toList line'
   in mconcat (map segmentToText allSegs)
 
--- | Generate display text for paste segment
--- Single-line: shows actual text, Multi-line: shows placeholder
-pasteDisplayText :: Text -> Text
-pasteDisplayText t
-  | T.any (== '\n') t =
-      let lineCount = length (T.lines t)
-      in "[paste: " <> T.pack (show lineCount) <> " lines]"
-  | otherwise = t
-
--- | Convert a single segment to text (actual content, not display)
-segmentToText :: InputSegment -> Text
-segmentToText (CharSegment c) = T.singleton c
-segmentToText (FileRefSegment {segRefPaths = (path:_)}) = "@" <> T.pack path
-segmentToText (FileRefSegment {segRefPaths = []}) = "@"  -- Shouldn't happen
-segmentToText (PastedSegment t) = t  -- Always return actual content
-
--- | Get display length of a segment
-segmentLength :: InputSegment -> Int
-segmentLength (CharSegment '\n') = 0  -- Doesn't contribute to line length
-segmentLength (CharSegment _) = 1
-segmentLength (FileRefSegment {segRefPaths = (path:_)}) = 1 + length path
-segmentLength (FileRefSegment {segRefPaths = []}) = 1
-segmentLength (PastedSegment t) = T.length (pasteDisplayText t)
-
--- | Check if a segment is a word character (for word navigation)
-isWordSegment :: InputSegment -> Bool
-isWordSegment (CharSegment c) = isAlphaNum c || c == '_'
-isWordSegment _ = True  -- File refs and pasted text count as words
-
--- | Check if a segment is whitespace
-isSpaceSegment :: InputSegment -> Bool
-isSpaceSegment (CharSegment c) = isSpace c
-isSpaceSegment _ = False
+-- Helper functions are now imported from UI.SegmentEditor.Types
 
 --------------------------------------------------------------------------------
 -- Event handling
