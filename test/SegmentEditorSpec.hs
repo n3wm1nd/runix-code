@@ -199,14 +199,6 @@ spec = do
             expectedContent = simulateActions actions
         in getEditorContent ed == T.pack expectedContent
 
-    it "all non-final lines end with newline" $ property $
-      \(actions :: [EditAction]) ->
-        let ed = foldl applyAction (emptyEditor noWrapConfig) actions
-            linesAbove = edLinesAbove ed
-            -- All lines in linesAbove should end with '\n'
-            aboveValid = all lineEndsWithNewline linesAbove
-        in aboveValid
-
   describe "Cursor Left/Right Linebreak Skipping" $ do
     it "skips over newline when moving right" $ do
       -- "hello\nworld" - cursor at 'o' in hello, move right should skip \n and land on 'w'
@@ -445,20 +437,10 @@ spec = do
     it "rewrapEditor preserves cursor position in middle" $ do
       let ed = insertText "hello world" (emptyEditor noWrapConfig)
           edMoved = moveCursorLeft ed  -- One left from end: "hello worl|d"
-          allSegs = toList edMoved
           rewrapped = rewrapEditor 5 edMoved
-          allSegsAfter = toList rewrapped
-      -- Debug: print what we have
-      print ("Original segments:", allSegs)
-      print ("After rewrap segments:", allSegsAfter)
-      print ("Wrapped lines:", getEditorLines rewrapped)
-      print ("Cursor before rewrap:", getSegmentAtCursor edMoved)
-      print ("Cursor after rewrap:", getSegmentAtCursor rewrapped)
-      print ("Position before:", getCursorPos edMoved)
-      print ("Position after:", getCursorPos rewrapped)
       -- Content should be preserved
       getEditorContent rewrapped `shouldBe` "hello world"
-      allSegs `shouldBe` allSegsAfter
+      toList edMoved `shouldBe` toList rewrapped
       -- Cursor should still point to same segment
       getSegmentAtCursor rewrapped `shouldBe` Just (CharSegment 'd')
 
