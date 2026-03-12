@@ -113,10 +113,9 @@ wrapLineWithUnits width units = reverse $ map reverse $ go [] [] units
     -- Accumulates completed lines and current line segments
     -- We use renderLineLength to measure display width (strips leading spaces)
     go completedLines currentLine [] =
-      -- End of input - emit current line if non-empty
-      if null currentLine
-      then completedLines
-      else currentLine : completedLines
+      -- End of input - always emit current line (even if empty)
+      -- Empty lines are significant (e.g., cursor on empty line after newline)
+      currentLine : completedLines
 
     go completedLines currentLine (unit:rest) = case unit of
       HardBreak seg ->
