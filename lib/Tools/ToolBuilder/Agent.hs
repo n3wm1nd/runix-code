@@ -229,12 +229,12 @@ newtype WriteToolcodeResult = WriteToolcodeResult Text
   deriving (Autodocodec.HasCodec) via Text
 
 instance UniversalLLM.Tools.ToolParameter WriteToolcodeResult where
-  paramName _ _ = "result"
-  paramDescription _ = "result of writing tool code"
+  paramName = "result"
+  paramDescription = "result of writing tool code"
 
 instance UniversalLLM.Tools.ToolFunction WriteToolcodeResult where
-  toolFunctionName _ = "write_toolcode_atomic"
-  toolFunctionDescription _ = "Atomically write tool code to GeneratedTools.hs. Code is appended, compiled, and rolled back if compilation fails."
+  toolFunctionName = "write_toolcode_atomic"
+  toolFunctionDescription = "Atomically write tool code to GeneratedTools.hs. Code is appended, compiled, and rolled back if compilation fails."
 
 -- | Extract tool name from ToolName newtype
 getToolName :: ToolName -> Text

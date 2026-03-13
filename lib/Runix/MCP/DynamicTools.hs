@@ -53,8 +53,8 @@ instance HasCodec DynamicResult where
   codec = Autodocodec.dimapCodec DynamicResult dynamicResult Autodocodec.codec
 
 instance ToolParameter DynamicResult where
-  paramName _ _ = "result"
-  paramDescription _ = "result from MCP tool"
+  paramName = "result"
+  paramDescription = "result from MCP tool"
 
 -- | Arguments type for dynamically-discovered MCP tools (JSON object)
 newtype DynamicArgs = DynamicArgs { argsObject :: Value }
@@ -64,8 +64,8 @@ instance HasCodec DynamicArgs where
   codec = Autodocodec.dimapCodec DynamicArgs argsObject Autodocodec.codec
 
 instance ToolParameter DynamicArgs where
-  paramName _ _ = "args"
-  paramDescription _ = "arguments as JSON object"
+  paramName = "args"
+  paramDescription = "arguments as JSON object"
 
 --------------------------------------------------------------------------------
 -- Tool Generation

@@ -42,8 +42,8 @@
 -- instance HasCodec ReadFileResult where ...       -- JSON schema for the LLM
 -- instance ToolParameter ReadFileResult where ...  -- how it appears in a call
 -- instance ToolFunction ReadFileResult where
---   toolFunctionName _ = \"read_file\"
---   toolFunctionDescription _ = \"Read a file …\"
+--   toolFunctionName = \"read_file\"
+--   toolFunctionDescription = \"Read a file …\"
 --
 -- -- The function itself.  Effects are declared in the constraint row 'r':
 -- --   FileSystemRead project  — read-only access to the 'project' filesystem
@@ -132,12 +132,12 @@ newtype EchoResult = EchoResult Text
   deriving (HasCodec) via Text
 
 instance ToolParameter EchoResult where
-  paramName _ _ = "message"
-  paramDescription _ = "the echoed text"
+  paramName = "message"
+  paramDescription = "the echoed text"
 
 instance ToolFunction EchoResult where
-  toolFunctionName _ = "echo"
-  toolFunctionDescription _ = "Return the input text unchanged"
+  toolFunctionName = "echo"
+  toolFunctionDescription = "Return the input text unchanged"
 
 -- | Echo text back — no effects needed at all.
 -- The simplest possible tool: a pure function wrapped in 'return'.
@@ -162,12 +162,12 @@ newtype AskResult = AskResult Text
   deriving (HasCodec) via Text
 
 instance ToolParameter AskResult where
-  paramName _ _ = "answer"
-  paramDescription _ = "the user's text response"
+  paramName = "answer"
+  paramDescription = "the user's text response"
 
 instance ToolFunction AskResult where
-  toolFunctionName _ = "ask"
-  toolFunctionDescription _ = "Ask the user for small mid-task clarifications (e.g., 'how many retries maximum?', 'what should the timeout be?'). NOT for architectural or strategic decisions - use regular text response for those."
+  toolFunctionName = "ask"
+  toolFunctionDescription = "Ask the user for small mid-task clarifications (e.g., 'how many retries maximum?', 'what should the timeout be?'). NOT for architectural or strategic decisions - use regular text response for those."
 
 -- | Ask the user for text input during task execution.
 -- Use for small mid-task clarifications, not architectural decisions.
@@ -203,20 +203,20 @@ newtype CompileError = CompileError Text
   deriving (HasCodec) via Text
 
 instance ToolParameter FunctionName where
-  paramName _ _ = "function_name"
-  paramDescription _ = "name of the function to generate"
+  paramName = "function_name"
+  paramDescription = "name of the function to generate"
 
 instance ToolParameter FunctionSignature where
-  paramName _ _ = "function_signature"
-  paramDescription _ = "complete type signature with function name (e.g. 'add :: Int -> Int -> Int')"
+  paramName = "function_signature"
+  paramDescription = "complete type signature with function name (e.g. 'add :: Int -> Int -> Int')"
 
 instance ToolParameter FunctionBody where
-  paramName _ _ = "function_body"
-  paramDescription _ = "function implementation with name (e.g. 'add x y = x + y')"
+  paramName = "function_body"
+  paramDescription = "function implementation with name (e.g. 'add x y = x + y')"
 
 instance ToolParameter CompileError where
-  paramName _ _ = "compile_error"
-  paramDescription _ = "compilation error message"
+  paramName = "compile_error"
+  paramDescription = "compilation error message"
 
 --------------------------------------------------------------------------------
 -- Result Types
@@ -236,12 +236,12 @@ instance HasCodec GenerateToolResult where
       <*> Autodocodec.optionalField "file_path" "path to generated tool file" Autodocodec..= generatedFilePath
 
 instance ToolParameter GenerateToolResult where
-  paramName _ _ = "generate_tool_result"
-  paramDescription _ = "tool generation result with success status and details"
+  paramName = "generate_tool_result"
+  paramDescription = "tool generation result with success status and details"
 
 instance ToolFunction GenerateToolResult where
-  toolFunctionName _ = "generate_tool"
-  toolFunctionDescription _ = "Generate a new tool by providing function name, signature, and complete function definition. The function definition should include both type signature and implementation."
+  toolFunctionName = "generate_tool"
+  toolFunctionDescription = "Generate a new tool by providing function name, signature, and complete function definition. The function definition should include both type signature and implementation."
 
 --------------------------------------------------------------------------------
 -- Code Generation

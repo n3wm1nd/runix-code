@@ -65,8 +65,8 @@ instance HasCodec UserPrompt where
   codec = Autodocodec.dimapCodec UserPrompt (\(UserPrompt t) -> t) codec
 
 instance ToolParameter UserPrompt where
-  paramName _ _ = "prompt"
-  paramDescription _ = "the user's request or question"
+  paramName = "prompt"
+  paramDescription = "the user's request or question"
 
 --------------------------------------------------------------------------------
 -- Result Type
@@ -90,13 +90,13 @@ instance HasCodec (RunixCodeResult model) where
     codec
 
 instance ToolParameter (RunixCodeResult model) where
-  paramName _ _ = "result"
-  paramDescription _ = "result from the runix code agent"
+  paramName = "result"
+  paramDescription = "result from the runix code agent"
 
 
 instance ToolFunction (RunixCodeResult model) where
-  toolFunctionName _ = "runix_code"
-  toolFunctionDescription _ = "AI coding assistant that can read/write files, run shell commands, and help with code"
+  toolFunctionName = "runix_code"
+  toolFunctionDescription = "AI coding assistant that can read/write files, run shell commands, and help with code"
 
 --------------------------------------------------------------------------------
 -- Core Function

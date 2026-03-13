@@ -94,40 +94,40 @@ newtype Url = Url { unUrl :: Text }
   deriving newtype (HasCodec)
 
 instance ToolParameter Url where
-  paramName _ _ = "url"
-  paramDescription _ = "URL to navigate to"
+  paramName = "url"
+  paramDescription = "URL to navigate to"
 
 newtype ElementRef = ElementRef { unElementRef :: Text }
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter ElementRef where
-  paramName _ _ = "element"
-  paramDescription _ = "Element reference from a page snapshot"
+  paramName = "element"
+  paramDescription = "Element reference from a page snapshot"
 
 newtype InputText = InputText { unInputText :: Text }
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter InputText where
-  paramName _ _ = "text"
-  paramDescription _ = "Text to type into the element"
+  paramName = "text"
+  paramDescription = "Text to type into the element"
 
 newtype WaitSpec = WaitSpec { unWaitSpec :: Text }
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter WaitSpec where
-  paramName _ _ = "selector"
-  paramDescription _ = "CSS selector or condition to wait for"
+  paramName = "selector"
+  paramDescription = "CSS selector or condition to wait for"
 
 newtype JsExpression = JsExpression { unJsExpression :: Text }
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter JsExpression where
-  paramName _ _ = "expression"
-  paramDescription _ = "JavaScript expression to evaluate in the browser"
+  paramName = "expression"
+  paramDescription = "JavaScript expression to evaluate in the browser"
 
 --------------------------------------------------------------------------------
 -- Result types
@@ -138,120 +138,120 @@ newtype NavigateResult = NavigateResult Text
   deriving newtype (HasCodec)
 
 instance ToolParameter NavigateResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Navigation result"
+  paramName = "result"
+  paramDescription = "Navigation result"
 
 instance ToolFunction NavigateResult where
-  toolFunctionName _ = "browser_navigate"
-  toolFunctionDescription _ = "Navigate to a URL in the browser"
+  toolFunctionName = "browser_navigate"
+  toolFunctionDescription = "Navigate to a URL in the browser"
 
 newtype NavigateBackResult = NavigateBackResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter NavigateBackResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Navigate-back result"
+  paramName = "result"
+  paramDescription = "Navigate-back result"
 
 instance ToolFunction NavigateBackResult where
-  toolFunctionName _ = "browser_navigate_back"
-  toolFunctionDescription _ = "Navigate back in browser history"
+  toolFunctionName = "browser_navigate_back"
+  toolFunctionDescription = "Navigate back in browser history"
 
 newtype ClickResult = ClickResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter ClickResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Click result"
+  paramName = "result"
+  paramDescription = "Click result"
 
 instance ToolFunction ClickResult where
-  toolFunctionName _ = "browser_click"
-  toolFunctionDescription _ = "Click an element on the page"
+  toolFunctionName = "browser_click"
+  toolFunctionDescription = "Click an element on the page"
 
 newtype HoverResult = HoverResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter HoverResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Hover result"
+  paramName = "result"
+  paramDescription = "Hover result"
 
 instance ToolFunction HoverResult where
-  toolFunctionName _ = "browser_hover"
-  toolFunctionDescription _ = "Hover over an element on the page"
+  toolFunctionName = "browser_hover"
+  toolFunctionDescription = "Hover over an element on the page"
 
 newtype TypeResult = TypeResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter TypeResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Type result"
+  paramName = "result"
+  paramDescription = "Type result"
 
 instance ToolFunction TypeResult where
-  toolFunctionName _ = "browser_type"
-  toolFunctionDescription _ = "Type text into an element"
+  toolFunctionName = "browser_type"
+  toolFunctionDescription = "Type text into an element"
 
 newtype SnapshotResult = SnapshotResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter SnapshotResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Page accessibility snapshot"
+  paramName = "result"
+  paramDescription = "Page accessibility snapshot"
 
 instance ToolFunction SnapshotResult where
-  toolFunctionName _ = "browser_snapshot"
-  toolFunctionDescription _ = "Take an accessibility snapshot of the page"
+  toolFunctionName = "browser_snapshot"
+  toolFunctionDescription = "Take an accessibility snapshot of the page"
 
 newtype ScreenshotResult = ScreenshotResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter ScreenshotResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Screenshot data"
+  paramName = "result"
+  paramDescription = "Screenshot data"
 
 instance ToolFunction ScreenshotResult where
-  toolFunctionName _ = "browser_take_screenshot"
-  toolFunctionDescription _ = "Take a screenshot of the page"
+  toolFunctionName = "browser_take_screenshot"
+  toolFunctionDescription = "Take a screenshot of the page"
 
 newtype CloseResult = CloseResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter CloseResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Close result"
+  paramName = "result"
+  paramDescription = "Close result"
 
 instance ToolFunction CloseResult where
-  toolFunctionName _ = "browser_close"
-  toolFunctionDescription _ = "Close the current browser page"
+  toolFunctionName = "browser_close"
+  toolFunctionDescription = "Close the current browser page"
 
 newtype WaitResult = WaitResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter WaitResult where
-  paramName _ _ = "result"
-  paramDescription _ = "Wait result"
+  paramName = "result"
+  paramDescription = "Wait result"
 
 instance ToolFunction WaitResult where
-  toolFunctionName _ = "browser_wait_for"
-  toolFunctionDescription _ = "Wait for a condition or selector"
+  toolFunctionName = "browser_wait_for"
+  toolFunctionDescription = "Wait for a condition or selector"
 
 newtype EvaluateResult = EvaluateResult Text
   deriving stock (Show, Eq, Generic)
   deriving newtype (HasCodec)
 
 instance ToolParameter EvaluateResult where
-  paramName _ _ = "result"
-  paramDescription _ = "JavaScript evaluation result"
+  paramName = "result"
+  paramDescription = "JavaScript evaluation result"
 
 instance ToolFunction EvaluateResult where
-  toolFunctionName _ = "browser_evaluate"
-  toolFunctionDescription _ = "Evaluate JavaScript in the browser"
+  toolFunctionName = "browser_evaluate"
+  toolFunctionDescription = "Evaluate JavaScript in the browser"
 
 --------------------------------------------------------------------------------
 -- Effect Definition
