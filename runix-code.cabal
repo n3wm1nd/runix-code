@@ -141,6 +141,7 @@ library
                     , containers
                     , conduit
                     , time
+                    , sse-parser
 
     hs-source-dirs:   lib
     default-language: Haskell2010

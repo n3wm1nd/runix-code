@@ -438,11 +438,11 @@ parseSSEResponse body =
       sseEvents = parseSSEComplete strictBody
   in case sseEvents of
        (event:_) ->
-         let jsonText = eventData event
-         in if T.null jsonText
+         let eventBytes = sseEventData event
+         in if BS.null eventBytes
             then Left "SSE event has no data"
-            else case Aeson.decode (BSL.fromStrict $ TE.encodeUtf8 jsonText) of
-                   Nothing -> Left $ "Failed to parse JSON from SSE data: " <> jsonText
+            else case Aeson.decode (BSL.fromStrict eventBytes) of
+                   Nothing -> Left $ "Failed to parse JSON from SSE data: " <> TE.decodeUtf8 eventBytes
                    Just val -> Right val
        [] -> Left "No SSE events in response"
 
