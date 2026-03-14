@@ -60,7 +60,7 @@ import qualified MCP.Server.Types as MCP
 import Runix.RestAPI (RestEndpoint(..))
 import Runix.HTTP (HTTP)
 import qualified Runix.HTTP
-import Runix.SSE (SSEEvent(..), parseSSEComplete)
+import Network.SSE (SSEEvent(..), parseSSEComplete)
 
 --------------------------------------------------------------------------------
 -- Internal types

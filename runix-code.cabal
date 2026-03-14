@@ -116,7 +116,6 @@ library
                     , Runix.MCP
                     , Runix.MCP.DynamicTools
                     , Runix.MCP.Playwright
-                    , Runix.SSE
                     , Runix.HTTP.RequestLogger
     other-modules:    Paths_runix_code
     autogen-modules:  Paths_runix_code
