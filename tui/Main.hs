@@ -44,7 +44,10 @@ import qualified Runix.FileSystem.System
 import Runix.Grep (Grep)
 import Runix.Bash (Bash)
 import Runix.Cmd (Cmds)
-import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreaming, withRequestTimeout)
+import Runix.HTTP (HTTP, HTTPStreaming, httpIO, httpIOStreamingWithCancellation, withRequestTimeout)
+import Runix.Cancellation (Cancellation)
+import Runix.LLM.Interpreter (withLLMCancellation)
+import UI.Streaming (interpretCancellation)
 import Runix.Logging (Logging(..), info, Level(..), loggingNull)
 import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Config as ConfigEffect
@@ -345,8 +348,9 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming exePath initialMT
 
     -- | The default agent command: run runixCode with the user's input
     -- historyZipper is the current UI zipper, extract messages for the agent
-    runDefaultAgentCommand historyZipper _settings userText = do
-      catch
+    runDefaultAgentCommand historyZipper _settings userText =
+      -- withLLMCancellation: if ESC is pressed, skip any further LLM requests entirely
+      withLLMCancellation $ catch
         (do -- Use default configs (no streaming)
             let baseConfigs = defaultConfigs @model
                 historyMessages = extractMessages historyZipper
@@ -357,12 +361,10 @@ agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming exePath initialMT
               addMessage @(Message model) (UserText userText)
 
               -- Run agent (with widget isolation via interpretAsWidget)
-              -- The do-block runs inside interpretAsWidget's subsection context
               _result <- interpretAsWidget @model $ do
                 let runWithState = runConfig baseConfigs . runHistory historyMessages
-                (result, finalHistory) <- runWithState $ do
-                  -- Run the agent (user message already added above)
-                  runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
+                (result, finalHistory) <- runWithState $
+                    runixCode @model @TUIWidget sysPrompt (UserPrompt userText)
 
                 -- After agent completes, reconcile final State with subsection zipper.
                 -- The subsection should only contain messages from the agent's RESPONSE,
@@ -578,6 +580,7 @@ interpretTUIEffects :: forall msg r a.
         : Time
         : Fail
         : Logging
+        : Cancellation
         : UserInput TUIWidget
         : UI.ForegroundCmd.ForegroundCmd
         : UI.UI
@@ -589,6 +592,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
   interpretUI uiVars
     . interpretForegroundCmd uiVars
     . interpretUserInput uiVars
+    . interpretCancellation uiVars
     . interpretLoggingToUI
     . failLog
     . timeIO
@@ -610,9 +614,9 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     -- RunixToolsFS: runix-code source directory
     . fileSystemLocal (RunixToolsFS runixCodeDir)
     . loggingWrite @RunixToolsFS "runix-tools"
-    -- HTTP interpreters
+    -- HTTP interpreters: cancellation-aware streaming so ESC stops mid-stream
     . httpIO (withRequestTimeout 300)
-    . httpIOStreaming (withRequestTimeout 300)
+    . httpIOStreamingWithCancellation (withRequestTimeout 300)
     -- HTTP tracing: file logging + LangFuse (after interpreters, so it actually intercepts requests)
     . withTracing cwd
     . ConfigEffect.runConfig (RunixDataDir runixCodeDir)
