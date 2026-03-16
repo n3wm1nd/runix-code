@@ -134,8 +134,6 @@ llmSettingsL = lens _llmSettings (\st s -> st { _llmSettings = s })
 activeStreamsL :: Lens' (AppState msg) [StreamInfo]
 activeStreamsL = lens _activeStreams (\st s -> st { _activeStreams = s })
 
-modelEntryL :: Lens' (AppState msg) ModelEntry
-modelEntryL = lens _modelEntry (\st m -> st { _modelEntry = m })
 
 --------------------------------------------------------------------------------
 -- Display Rendering
@@ -151,7 +149,7 @@ modelEntryL = lens _modelEntry (\st m -> st { _modelEntry = m })
 -- Messages are rendered directly by pattern matching on Message constructors
 --
 -- Refreshes are triggered by the effect interpreters, not by polling.
-runUI :: forall model. Eq (Message model) =>
+runUI :: forall model.
          ModelEntry  -- ^ Model entry for display (name, config, etc.)
       -> ((AgentEvent (Message model) -> IO ()) -> IO (UIVars (Message model)))  -- ^ Function to create UIVars with send callback
       -> IO ()
@@ -198,7 +196,7 @@ runUI modelEntry mkUIVars = do
 -- Brick App Definition
 --------------------------------------------------------------------------------
 
-app :: forall model. Eq (Message model) => M.App (AppState (Message model)) (CustomEvent (Message model)) Name
+app :: forall model. M.App (AppState (Message model)) (CustomEvent (Message model)) Name
 app = M.App
   { M.appDraw = drawUI
   , M.appHandleEvent = handleEvent
@@ -249,15 +247,6 @@ drawUI st = [indicatorLayer, baseLayer]
     availHeight = 100  -- This will be determined by context, placeholder for now
     maxInputHeight = max 1 (availHeight `div` 2)
 
-    modeStr = case _inputMode st of
-              EnterSends -> "Enter: send"
-              EnterNewline -> "Enter: newline (Ctrl-D: send)"
-
-    markdownStr = case _markdownMode st of
-                    RenderMarkdown -> "Markdown: rendered"
-                    ShowRaw -> "Markdown: raw"
-
-
     -- Combine widgets: front (oldest) ++ current ++ back (newest at bottom)
     historyWidgets = frontWidgets ++ currentWidgets ++ backWidgets
 
@@ -273,8 +262,6 @@ drawUI st = [indicatorLayer, baseLayer]
               streamText = "Stream #" <> Text.pack (show (streamId si))
                         <> ": " <> Text.pack (show (chunkCount si)) <> " chunks"
           in indicator <+> txt streamText
-
-    statusText = Text.unpack status
 
     -- MessageHistory returns (base, indicators) for Brick's layer system
     (historyBase, historyIndicators) = MH.messageHistory HistoryViewport (_lastViewport st) historyWidgets
@@ -333,8 +320,8 @@ drawUI st = [indicatorLayer, baseLayer]
 
     -- Render input prompt with color based on status
     renderPrompt :: Text -> T.Widget Name
-    renderPrompt status =
-      let promptAttr = if status == "Ready" || status == ""
+    renderPrompt s =
+      let promptAttr = if s == "Ready" || s == ""
                        then Attrs.promptReadyAttr  -- green
                        else Attrs.promptBusyAttr   -- yellow for pending/working
       in withAttr promptAttr (txt ">")
@@ -395,11 +382,11 @@ reRenderWidgetZipper = do
                                       ShowRaw -> False }
       -- Render each OutputItem to Widget Name
       -- Current item gets isFocused=True for highlight, others get False
-      renderZipper (Zipper back current front) =
+      renderZipper (Zipper zback zcurrent zfront) =
         Zipper
-          { zipperBack = map (renderItem opts False) back
-          , zipperCurrent = fmap (renderItem opts True) current
-          , zipperFront = map (renderItem opts False) front
+          { zipperBack = map (renderItem opts False) zback
+          , zipperCurrent = fmap (renderItem opts True) zcurrent
+          , zipperFront = map (renderItem opts False) zfront
           }
   widgetZipperL .= renderZipper ozipper
 
@@ -412,7 +399,7 @@ replaceOutputZipper zipper = do
   invalidateCacheEntry CachedCurrent
   invalidateCacheEntry CachedBack
 
-handleEvent :: forall model. Eq (Message model) => T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
+handleEvent :: forall model. T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
 -- Check if input widget is active first
 handleEvent ev = do
   -- Read pending input widget from AppState
@@ -491,7 +478,7 @@ applyCompletionResult query matches ed =
 --------------------------------------------------------------------------------
 
 -- Normal event handling (when no input widget active)
-handleNormalEvent :: forall model. Eq (Message model) => T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
+handleNormalEvent :: forall model. T.BrickEvent Name (CustomEvent (Message model)) -> T.EventM Name (AppState (Message model)) ()
 -- ESC: Request cancellation of current operation
 handleNormalEvent (T.VtyEvent (V.EvKey V.KEsc [])) = do
   vars <- use uiVarsL
