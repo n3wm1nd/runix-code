@@ -918,6 +918,8 @@ renderGapZipper line' =
 renderSegment :: InputSegment -> Widget n
 renderSegment (CharSegment '\n') = txt ""  -- Newlines don't render (handled by vBox)
 renderSegment (CharSegment c) = txt (T.singleton c)
+renderSegment (FileRefSegment {segRefQuery = query, segRefState = RefLoading}) =
+  withAttr fileRefLoadingAttr $ txt $ "@" <> query <> "…"
 renderSegment (FileRefSegment {segRefPaths = (path:_), segRefState = RefPending}) =
   withAttr fileRefPendingAttr $ txt $ "@" <> T.pack path
 renderSegment (FileRefSegment {segRefPaths = (path:_), segRefState = RefAccepted}) =
@@ -938,6 +940,10 @@ editAttr = attrName "edit"
 -- | Attribute for focused editor
 editFocusedAttr :: AttrName
 editFocusedAttr = editAttr <> attrName "focused"
+
+-- | Attribute for loading file references (completion in progress)
+fileRefLoadingAttr :: AttrName
+fileRefLoadingAttr = attrName "fileRefLoading"
 
 -- | Attribute for pending file references
 fileRefPendingAttr :: AttrName

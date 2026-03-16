@@ -66,6 +66,7 @@ data AgentEvent msg
   | StreamChunkEvent Int Int      -- ^ Chunk received (stream ID, total chunks for this stream)
   | StreamEndEvent Int            -- ^ Stream completed successfully (stream ID)
   | StreamErrorEvent Int          -- ^ Stream failed with error (stream ID)
+  | CompletionResultEvent Text [Text]  -- ^ File completion results (query, matches)
 
 -- Manual Eq instance (SomeInputWidget can't derive Eq due to callback function)
 instance Eq msg => Eq (AgentEvent msg) where
@@ -82,6 +83,7 @@ instance Eq msg => Eq (AgentEvent msg) where
   StreamChunkEvent id1 c1 == StreamChunkEvent id2 c2 = id1 == id2 && c1 == c2
   StreamEndEvent id1 == StreamEndEvent id2 = id1 == id2
   StreamErrorEvent id1 == StreamErrorEvent id2 = id1 == id2
+  CompletionResultEvent q1 fs1 == CompletionResultEvent q2 fs2 = q1 == q2 && fs1 == fs2
   _ == _ = False
 
 -- Manual Show instance
@@ -99,6 +101,7 @@ instance Show msg => Show (AgentEvent msg) where
   show (StreamChunkEvent sid c) = "StreamChunkEvent " ++ show sid ++ " " ++ show c
   show (StreamEndEvent sid) = "StreamEndEvent " ++ show sid
   show (StreamErrorEvent sid) = "StreamErrorEvent " ++ show sid
+  show (CompletionResultEvent q fs) = "CompletionResultEvent " ++ show q ++ " " ++ show fs
 
 -- | Runtime LLM configuration settings
 -- Currently empty but can hold maxLength, reasoning effort, temperature, etc.
@@ -114,10 +117,8 @@ data UserRequest msg = UserRequest
   } deriving stock (Eq, Show)
 
 -- | File completion request from UI
--- The TVar starts as Nothing, and the handler writes Just [results] when done
 data CompletionRequest = CompletionRequest
-  { completionPattern :: Text           -- ^ Pattern to match (e.g., "ReadMe", "src/mai")
-  , completionResponse :: TVar (Maybe [Text])  -- ^ Response written by handler
+  { completionPattern :: Text  -- ^ Pattern to match (e.g., "ReadMe", "src/mai")
   }
 
 -- | Shared state variables for UI communication
@@ -163,19 +164,12 @@ provideUserInput = writeTQueue
 requestCancelFromUI :: UIVars msg -> STM ()
 requestCancelFromUI vars = writeTVar (cancellationFlag vars) True
 
--- | Request file completion and wait for response
--- Creates a TVar, sends request, waits for handler to fill it
-requestCompletion :: UIVars msg -> Text -> IO [Text]
-requestCompletion vars pattern = do
-  responseVar <- newTVarIO Nothing
-  let req = CompletionRequest pattern responseVar
-  atomically $ writeTQueue (completionQueue vars) req
-  -- Wait for response
-  atomically $ do
-    result <- readTVar responseVar
-    case result of
-      Nothing -> retry  -- Block until response is written
-      Just files -> return files
+-- | Fire-and-forget file completion request
+-- Sends the request to the completion handler and returns immediately.
+-- Results arrive later as a CompletionResultEvent via the agent event channel.
+requestCompletion :: UIVars msg -> Text -> IO ()
+requestCompletion vars pattern =
+  atomically $ writeTQueue (completionQueue vars) (CompletionRequest pattern)
 
 -- | Wait for a completion request (for interpreter/handler)
 waitForCompletion :: TQueue CompletionRequest -> STM CompletionRequest

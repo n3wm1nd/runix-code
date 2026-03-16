@@ -136,14 +136,8 @@ main = do
 -- | Handler for file completion requests (runs in separate thread)
 completionHandler :: FilePath -> RunixDataDir -> UIVars msg -> IO ()
 completionHandler cwd _dataDir uiVars = forever $ do
-  -- Wait for completion request
-  CompletionRequest pattern responseVar <- atomically $ waitForCompletion (completionQueue uiVars)
+  CompletionRequest pattern <- atomically $ waitForCompletion (completionQueue uiVars)
 
-  -- DEBUG: Log that we received a request
-  sendAgentEvent uiVars (LogEvent Info $ "Completion request for: " <> pattern)
-
-  -- Handle the request using filesystem effects
-  -- Copy the pattern from interpretTUIEffects: base effects last
   let runToIO = runM
               . runError @String
               . loggingNull
@@ -152,19 +146,13 @@ completionHandler cwd _dataDir uiVars = forever $ do
               . fileSystemLocal (ProjectFS cwd)
               . filterFileSystem @ProjectFS (hideGit)
 
-  -- Ensure we ALWAYS write to the TVar, even on exceptions
-  result <- runToIO (handleCompletionRequest pattern) `Ex.catch` \(e :: Ex.SomeException) -> do
-    sendAgentEvent uiVars (LogEvent Error $ "Completion exception: " <> T.pack (show e))
+  result <- runToIO (handleCompletionRequest pattern) `Ex.catch` \(e :: Ex.SomeException) ->
     return (Left (show e))
 
-  -- Write response to TVar
-  case result of
-    Left err -> do
-      sendAgentEvent uiVars (LogEvent Error $ "Completion error: " <> T.pack err)
-      atomically $ writeTVar responseVar (Just [])
-    Right files -> do
-      sendAgentEvent uiVars (LogEvent Info $ "Found " <> T.pack (show (length files)) <> " matches")
-      atomically $ writeTVar responseVar (Just files)
+  let files = case result of
+        Left _    -> []
+        Right fs  -> fs
+  sendAgentEvent uiVars (CompletionResultEvent pattern files)
 
 -- | Handle a single completion request with filesystem access
 -- Tries multiple glob patterns to find matches

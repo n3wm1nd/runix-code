@@ -36,7 +36,7 @@ import Control.Concurrent.STM
 import qualified Brick.BChan
 import Brick.BChan (newBChan, writeBChan)
 
-import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..), requestCompletion, CompletionRequest(..))
+import UI.State (UIVars(..), Name(..), provideUserInput, requestCancelFromUI, SomeInputWidget(..), AgentEvent(..), LLMSettings(..), UserRequest(..), requestCompletion)
 import Runner (ModelEntry(..))
 import UI.OutputHistory (Zipper(..), OutputHistoryZipper, OutputItem(..), emptyZipper, appendItem, renderItem, RenderOptions(..), defaultRenderOptions, zipperFront, zipperCurrent, zipperBack, extractMessages)
 import UniversalLLM (Message(..))
@@ -47,6 +47,7 @@ import qualified UI.InputPanel as IP
 import qualified Runix.LLM.Context as Context
 import qualified UI.SegmentEditor as SE
 import qualified UI.Zipper as Z
+import UI.Zipper (Zippable(..))
 
 -- | Custom events for the TUI
 data CustomEvent msg
@@ -479,6 +480,40 @@ handleInputWidgetEvent widget ev = do
     Nothing -> return ()
 
 --------------------------------------------------------------------------------
+-- Completion helpers
+--------------------------------------------------------------------------------
+
+stripDotSlash :: FilePath -> FilePath
+stripDotSlash ('.':'/':rest) = rest
+stripDotSlash path = path
+
+-- | Scan all segments in the editor and replace the first RefLoading segment
+-- matching the given query with the resolved results (or remove it if no matches).
+applyCompletionResult :: Text -> [FilePath] -> SE.SegmentEditor Name SE.InputSegment -> SE.SegmentEditor Name SE.InputSegment
+applyCompletionResult query matches ed =
+  -- Walk to start, scan forward, replace the first matching RefLoading segment
+  let ed0 = SE.moveCursorToStart ed
+  in go ed0
+  where
+    go e =
+      case SE.getSegmentAtCursor e of
+        Just (SE.FileRefSegment { SE.segRefQuery = q, SE.segRefState = SE.RefLoading })
+          | q == query ->
+              case matches of
+                [] ->
+                  -- No matches: remove the placeholder entirely
+                  SE.delForward e
+                _ ->
+                  -- Replace loading placeholder with resolved ref
+                  SE.replaceSegmentAtCursor
+                    (SE.FileRefSegment { SE.segRefPaths = matches, SE.segRefQuery = query, SE.segRefState = SE.RefAccepted })
+                    e
+        Nothing -> ed  -- Reached end without finding it; leave editor unchanged
+        _ ->
+          if atEnd e then ed
+          else go (SE.moveCursorRight e)
+
+--------------------------------------------------------------------------------
 -- Event Handling
 --------------------------------------------------------------------------------
 
@@ -569,6 +604,13 @@ handleNormalEvent (T.AppEvent (AgentEvent event)) = do
         -- Mark stream as errored (keep it visible with error indicator)
         activeStreamsL %= map (\si -> if streamId si == sid then si { streamErrored = True } else si)
 
+      CompletionResultEvent query matches -> do
+        -- Find the RefLoading segment with this query and resolve it
+        ed <- use inputEditorL
+        let cleanMatches = map stripDotSlash (map Text.unpack matches)
+            ed' = applyCompletionResult query cleanMatches ed
+        inputEditorL .= ed'
+
   -- After processing the event, scroll viewport and request viewport update
   M.vScrollToEnd (M.viewportScroll HistoryViewport)
   chan <- use eventChanL
@@ -657,6 +699,8 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar '\t') [])) = do
   ed <- use inputEditorL
   -- Check if segment before cursor is a FileRef - if so, rotate it
   case SE.getSegmentBeforeCursor ed of
+    Just (SE.FileRefSegment _ _ SE.RefLoading) ->
+      return ()  -- Already waiting for results, ignore further tabs
     Just (SE.FileRefSegment _ _ _) ->
       inputEditorL .= SE.rotateFileRefAtCursor ed
     _ -> do
@@ -665,18 +709,11 @@ handleNormalEvent (T.VtyEvent (V.EvKey (V.KChar '\t') [])) = do
         Just (word, segCount) | "@" `Text.isPrefixOf` word -> do
           vars <- use uiVarsL
           let pattern = Text.drop 1 word  -- Remove @
-          matches <- liftIO $ requestCompletion vars pattern
-          case matches of
-            [] -> return ()  -- No matches
-            _ -> do
-              let ed' = SE.deleteNSegments segCount ed
-                  cleanMatches = map stripDotSlash (map Text.unpack matches)
-                  ed'' = SE.insertFileRef cleanMatches pattern SE.RefAccepted ed'
-              inputEditorL .= ed''
+              ed' = SE.deleteNSegments segCount ed
+              ed'' = SE.insertFileRef [] pattern SE.RefLoading ed'
+          inputEditorL .= ed''
+          liftIO $ requestCompletion vars pattern
         _ -> return ()  -- Not a @ word, ignore tab
-  where
-    stripDotSlash ('.':'/':rest) = rest
-    stripDotSlash path = path
 
 -- Handle all other events through the segment editor
 -- The editor returns (shouldSubmit, newEditor)

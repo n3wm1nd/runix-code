@@ -31,7 +31,7 @@ data InputSegment
   deriving (Eq, Show, Ord)
 
 -- | State of a file reference
-data RefState = RefPending | RefAccepted | RefRejected
+data RefState = RefLoading | RefPending | RefAccepted | RefRejected
   deriving (Eq, Show, Ord)
 
 -- | Typeclass for segments that can represent linebreaks
