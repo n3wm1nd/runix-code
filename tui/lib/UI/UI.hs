@@ -46,7 +46,6 @@ import qualified UI.Widgets.MessageHistory as MH
 import qualified UI.InputPanel as IP
 import qualified Runix.LLM.Context as Context
 import qualified UI.SegmentEditor as SE
-import qualified UI.Zipper as Z
 import UI.Zipper (Zippable(..))
 
 -- | Custom events for the TUI
@@ -331,32 +330,6 @@ drawUI st = [indicatorLayer, baseLayer]
 
     -- Indicator layer: rendered on top by Brick's renderFinal
     indicatorLayer = historyIndicators
-
-    -- Render segment lines with highlighting
-    renderSegmentLines :: [Z.GapZipper SE.InputSegment] -> T.Widget Name
-    renderSegmentLines segLines =
-      vBox $ map renderSegmentLine segLines
-
-    renderSegmentLine :: Z.GapZipper SE.InputSegment -> T.Widget Name
-    renderSegmentLine line' =
-      let allSegs = Z.toList line'
-      in if null allSegs
-         then str " "  -- Empty lines shown as space to preserve them
-         else hBox $ map renderSegment allSegs
-
-    renderSegment :: SE.InputSegment -> T.Widget Name
-    renderSegment (SE.CharSegment c) = txt (Text.singleton c)
-    renderSegment (SE.FileRefSegment paths _ SE.RefPending) =
-      let path = case paths of (p:_) -> p; [] -> ""
-      in withAttr Attrs.fileRefPendingAttr $ txt ("@" <> Text.pack path)
-    renderSegment (SE.FileRefSegment paths _ SE.RefAccepted) =
-      let path = case paths of (p:_) -> p; [] -> ""
-      in withAttr Attrs.fileRefAcceptedAttr $ txt ("@" <> Text.pack path)
-    renderSegment (SE.FileRefSegment paths _ SE.RefRejected) =
-      let path = case paths of (p:_) -> p; [] -> ""
-      in withAttr Attrs.fileRefRejectedAttr $ txt ("@" <> Text.pack path)
-    renderSegment (SE.PastedSegment t) =
-      withAttr Attrs.pastedAttr $ txt t
 
     -- Render input prompt with color based on status
     renderPrompt :: Text -> T.Widget Name
