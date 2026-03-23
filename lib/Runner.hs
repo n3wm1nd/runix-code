@@ -70,14 +70,15 @@ import qualified Runix.Logging as Log
 import Data.Default (Default, def)
 
 import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig, ModelName, HasStreaming, ProviderRequest, ProviderResponse)
-import UniversalLLM (ProviderOf, HasTools, SupportsSystemPrompt)
+import UniversalLLM (ProviderOf, HasTools, SupportsSystemPrompt, Provider)
+import UniversalLLM (StreamingProtocol, EnableStreaming, ProtocolRequest)
 import UniversalLLM.Settings (SettingField, SettingValue, ConfigFor, GSettingFields, GSetField, GToggleField, GDefault, ModelSettings, settingFields, setField, toggleField, defaultConfig, toModelConfigs)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
 import Runix.LLM (LLM)
 import Runix.LLMStream (LLMStreaming)
 import Runix.HTTP (HTTPStreaming)
-import Runix.LLM.Interpreter (interpretLLMWith, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..), ProviderProtocol, EnableStreaming, ProtocolRequest)
+import Runix.LLM.Interpreter (interpretLLMWith, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..))
 import Runix.RestAPI (RestEndpoint(..))
 import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
@@ -304,13 +305,10 @@ data ModelEntry where
     , RegistryConfig cfg model
     , RestEndpoint p, Default s
     -- Interpreter constraints
-    , ModelName model, HasCodec (ProviderRequest model)
-    , Monoid (ProviderRequest model)
+    , ModelName model, Provider model
     , EnableStreaming (ProviderResponse model)
     , ProtocolRequest (ProviderResponse model) ~ ProviderRequest model
     , HasStreaming model
-    , HasCodec (ProviderResponse model)
-    , ProviderProtocol (ProviderResponse model)
     ) =>
     { meId       :: ModelId                     -- ^ Model identity (for selection)
     , meName     :: Text                       -- ^ Display name (for UI)
@@ -363,12 +361,10 @@ mkEntry :: forall model cfg p s.
   , ModelDefaults model
   , RegistryConfig cfg model
   , RestEndpoint p, Default s
-  , ModelName model, HasCodec (ProviderRequest model)
-  , Monoid (ProviderRequest model)
+  , ModelName model, Provider model
   , EnableStreaming (ProviderResponse model)
   , ProtocolRequest (ProviderResponse model) ~ ProviderRequest model
   , HasStreaming model
-  , HasCodec (ProviderResponse model)
   ) => ModelId -> Text -> p -> ComposableProvider model s -> model -> ModelEntry
 mkEntry mid name auth provider model = ModelEntry
   { meId = mid, meName = name, meAuth = auth, meProvider = provider, meModel = model, meConfig = defaultConfig }
