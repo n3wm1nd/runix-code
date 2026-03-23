@@ -71,7 +71,7 @@ import Data.Default (Default, def)
 
 import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig, ModelName, HasStreaming, ProviderRequest, ProviderResponse)
 import UniversalLLM (ProviderOf, HasTools, SupportsSystemPrompt, Provider)
-import UniversalLLM (StreamingProtocol, EnableStreaming, ProtocolRequest)
+import UniversalLLM (StreamingProtocol, EnableStreaming)
 import UniversalLLM.Settings (SettingField, SettingValue, ConfigFor, GSettingFields, GSetField, GToggleField, GDefault, ModelSettings, settingFields, setField, toggleField, defaultConfig, toModelConfigs)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
@@ -306,8 +306,7 @@ data ModelEntry where
     , RestEndpoint p, Default s
     -- Interpreter constraints
     , ModelName model, Provider model
-    , EnableStreaming (ProviderResponse model)
-    , ProtocolRequest (ProviderResponse model) ~ ProviderRequest model
+    , EnableStreaming model
     , HasStreaming model
     ) =>
     { meId       :: ModelId                     -- ^ Model identity (for selection)
@@ -362,8 +361,7 @@ mkEntry :: forall model cfg p s.
   , RegistryConfig cfg model
   , RestEndpoint p, Default s
   , ModelName model, Provider model
-  , EnableStreaming (ProviderResponse model)
-  , ProtocolRequest (ProviderResponse model) ~ ProviderRequest model
+  , EnableStreaming model
   , HasStreaming model
   ) => ModelId -> Text -> p -> ComposableProvider model s -> model -> ModelEntry
 mkEntry mid name auth provider model = ModelEntry
