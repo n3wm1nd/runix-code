@@ -62,6 +62,8 @@ data ModelId
   | GLM46ZAI
   | GLM47ZAI
   | GLM5ZAI
+  | GLM51ZAI
+  | GLM5TurboZAI
   -- AlibabaCloud
   | MinimaxM25AlibabaCloud
   | KimiK25AlibabaCloud
@@ -85,6 +87,8 @@ modelDisplayName = \case
   GLM46ZAI                 -> "GLM 4.6 (ZAI)"
   GLM47ZAI                 -> "GLM 4.7 (ZAI)"
   GLM5ZAI                  -> "GLM 5 (ZAI)"
+  GLM51ZAI                 -> "GLM 5.1 (ZAI)"
+  GLM5TurboZAI             -> "GLM 5 Turbo (ZAI)"
   MinimaxM25AlibabaCloud   -> "MiniMax M2.5 (AlibabaCloud)"
   KimiK25AlibabaCloud      -> "Kimi K2.5 (AlibabaCloud)"
   Qwen35PlusAlibabaCloud   -> "Qwen 3.5 Plus (AlibabaCloud)"
@@ -200,6 +204,12 @@ resolveZAIModel = \case
   "glm-4.7" -> Just GLM47ZAI
   "glm5" -> Just GLM5ZAI
   "glm-5" -> Just GLM5ZAI
+  "glm51" -> Just GLM51ZAI
+  "glm-51" -> Just GLM51ZAI
+  "glm-5.1" -> Just GLM51ZAI
+  "glm5turbo" -> Just GLM5TurboZAI
+  "glm-5-turbo" -> Just GLM5TurboZAI
+  "glm-5turbo" -> Just GLM5TurboZAI
   _ -> Nothing
 
 resolveAlibabaCloudModel :: T.Text -> Maybe ModelId
@@ -263,7 +273,19 @@ resolveLegacyAlias = \case
   "zai-glm5"        -> Just GLM5ZAI
   "glm-5"           -> Just GLM5ZAI
   "glm5"            -> Just GLM5ZAI
-  "zai"             -> Just GLM47ZAI
+  "glm-5.1-zai"     -> Just GLM51ZAI
+  "glm51-zai"       -> Just GLM51ZAI
+  "glm51zai"        -> Just GLM51ZAI
+  "zai-glm51"       -> Just GLM51ZAI
+  "glm-5.1"         -> Just GLM51ZAI
+  "glm51"           -> Just GLM51ZAI
+  "glm-5-turbo-zai" -> Just GLM5TurboZAI
+  "glm5turbo-zai"   -> Just GLM5TurboZAI
+  "glm5turbozai"    -> Just GLM5TurboZAI
+  "zai-glm5turbo"   -> Just GLM5TurboZAI
+  "glm-5-turbo"     -> Just GLM5TurboZAI
+  "glm5turbo"       -> Just GLM5TurboZAI
+  "zai"             -> Just GLM51ZAI
   -- AlibabaCloud
   "minimax-m25-alibabacloud"   -> Just MinimaxM25AlibabaCloud
   "minimax-m2.5-alibabacloud"  -> Just MinimaxM25AlibabaCloud

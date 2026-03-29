@@ -84,7 +84,7 @@ import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Config (ModelId)
 import qualified Config
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..), ModelDefaults(..), route, via)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM5Turbo(..), ZAI(..), ModelDefaults(..), route, via)
 import qualified Runix.FileSystem.System as System.Effects
 
 --------------------------------------------------------------------------------
@@ -403,14 +403,16 @@ probeZAI :: IO [Maybe ModelEntry]
 probeZAI = do
   mKey <- lookupEnv "ZAI_API_KEY"
   case mKey of
-    Nothing -> return [Nothing, Nothing, Nothing, Nothing]
+    Nothing -> return [Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
     Just key ->
       let auth = RunixCodeZAIAuth (ZAIAuth key)
       in return $ map Just
-        [ mkEntry Config.GLM45AirZAI "GLM 4.5 Air (ZAI)" auth route (GLM45Air `via` ZAI)
-        , mkEntry Config.GLM46ZAI    "GLM 4.6 (ZAI)"     auth route (GLM46 `via` ZAI)
-        , mkEntry Config.GLM47ZAI    "GLM 4.7 (ZAI)"     auth route (GLM47 `via` ZAI)
-        , mkEntry Config.GLM5ZAI     "GLM 5 (ZAI)"       auth route (GLM5 `via` ZAI)
+        [ mkEntry Config.GLM51ZAI     "GLM 5.1 (ZAI)"     auth route (GLM51 `via` ZAI)
+        , mkEntry Config.GLM5TurboZAI "GLM 5 Turbo (ZAI)" auth route (GLM5Turbo `via` ZAI)
+        , mkEntry Config.GLM5ZAI      "GLM 5 (ZAI)"       auth route (GLM5 `via` ZAI)
+        , mkEntry Config.GLM47ZAI     "GLM 4.7 (ZAI)"     auth route (GLM47 `via` ZAI)
+        , mkEntry Config.GLM46ZAI     "GLM 4.6 (ZAI)"     auth route (GLM46 `via` ZAI)
+        , mkEntry Config.GLM45AirZAI  "GLM 4.5 Air (ZAI)" auth route (GLM45Air `via` ZAI)
         ]
 
 probeAlibabaCloud :: IO [Maybe ModelEntry]

@@ -24,6 +24,8 @@ module Models
   , GLM46(..)
   , GLM47(..)
   , GLM5(..)
+  , GLM51(..)
+  , GLM5Turbo(..)
   , ZAI(..)
   , AlibabaCloud(..)
   , MinimaxM25(..)
@@ -50,7 +52,7 @@ import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
 import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..))
-import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), ZAI(..))
+import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM5Turbo(..), ZAI(..))
 import UniversalLLM.Models.Minimax.M (MinimaxM25(..))
 import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..))
 import UniversalLLM.Models.Moonshot.Kimi (KimiK25(..))
@@ -146,6 +148,16 @@ instance ModelDefaults (GLM5 `Via` ZAI) where
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
+instance ModelDefaults (GLM51 `Via` ZAI) where
+  defaultConfigs =
+    [ Reasoning True    -- Enable reasoning extraction
+    ]
+
+instance ModelDefaults (GLM5Turbo `Via` ZAI) where
+  defaultConfigs =
+    [ Reasoning True    -- Enable reasoning extraction
+    ]
+
 instance ModelDefaults (MinimaxM25 `Via` AlibabaCloud) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
@@ -195,6 +207,8 @@ type instance ConfigFor (GLM45Air `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (GLM46 `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (GLM47 `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (GLM5 `Via` ZAI) = ConfigWithReasoning
+type instance ConfigFor (GLM51 `Via` ZAI) = ConfigWithReasoning
+type instance ConfigFor (GLM5Turbo `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (MinimaxM25 `Via` AlibabaCloud) = ConfigWithReasoning
 type instance ConfigFor (KimiK25 `Via` AlibabaCloud) = ConfigWithReasoning  -- Hidden reasoning (parameter accepted, content not returned)
 type instance ConfigFor (Qwen35Plus `Via` AlibabaCloud) = ConfigWithReasoning
