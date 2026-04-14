@@ -529,7 +529,6 @@ withTracing cwd action = do
   -- Apply tracing based on configuration
   case maybeLangFuse of
     Just lf ->
-      -- LangFuse enabled: restapiHTTP interprets RestAPI, then apply both HTTP and streaming tracing
       restapiHTTP lf . withLangFuseStreaming lf . withLangFuse lf . raise . withFileLogging $ action
     Nothing ->
       -- No LangFuse: just file logging
