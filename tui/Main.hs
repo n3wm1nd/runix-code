@@ -73,7 +73,7 @@ import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
 import UI.OutputHistory (OutputItem(..), OutputHistoryZipper, listToZipper, addCompletedToolItems, extractMessages, emptyZipper, zipperToList)
 import qualified Runix.LLM.Context
-import Runix.Time (Time, timeIO)
+import Runix.Time (Time, Sleep, timeIO, sleepIO)
 import Runix.Tracing.FileLog (logHTTPRequests, logHTTPStreamingRequests)
 import Runix.Tracing.LangFuse (langFuseFromEnv, withLangFuse, withLangFuseStreaming)
 import Runix.RestAPI (restapiHTTP)
@@ -565,6 +565,7 @@ interpretTUIEffects :: forall msg r a.
         : Runix.FileSystem.System.FileSystemRead
         : Runix.FileSystem.System.FileSystemWrite
         : Time
+        : Sleep
         : Fail
         : Logging
         : Cancellation
@@ -582,6 +583,7 @@ interpretTUIEffects cwd (RunixDataDir runixCodeDir) uiVars =
     . interpretCancellation uiVars
     . interpretLoggingToUI
     . failLog
+    . sleepIO
     . timeIO
     -- Base System filesystem
     . Runix.FileSystem.System.filesystemIO

@@ -16,6 +16,7 @@ import Polysemy
 import Polysemy.Error (runError)
 
 import Runix.Runner (bashIO, cmdsIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.Time (timeIO, sleepIO)
 import Runix.HTTP (withFullHTTPLogging)
 import Runix.Grep (grepForFilesystem)
 import Runix.FileSystem (fileWatcherNoop, fileSystemLocal)
@@ -129,6 +130,8 @@ runAgent (ModelInterpreter @model interpretModelNonStreaming _interpretModelStre
                . failLog
                . interpretUserInputFail @CLIWidget
                . httpIO (withRequestTimeout 300)
+               . timeIO
+               . sleepIO
                . withFullHTTPLogging
                . cmdsIO
                . bashIO

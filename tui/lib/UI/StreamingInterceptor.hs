@@ -16,6 +16,7 @@ import Polysemy
 
 import Runix.LLMStream (LLMStreaming, StreamEvent)
 import Runix.Streaming (Streaming(..))
+import Runix.RestAPI (RestError)
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 import UniversalLLM (Message, ModelConfig)
 
@@ -41,11 +42,11 @@ interceptStreamChunksToUI uiVars = intercept handler
       embed $ sendAgentEvent uiVars (StreamStartEvent 0)
 
       -- Forward to underlying LLMStreaming with type application
-      send @(Streaming StreamEvent (Either String [Message model]) ([ModelConfig model], [Message model])) (StartStream config)
+      send @(Streaming StreamEvent (Either RestError [Message model]) ([ModelConfig model], [Message model])) (StartStream config)
 
     handler (FetchItem sid) = do
       -- Forward fetch with type application
-      mItem <- send @(Streaming StreamEvent (Either String [Message model]) ([ModelConfig model], [Message model])) (FetchItem sid)
+      mItem <- send @(Streaming StreamEvent (Either RestError [Message model]) ([ModelConfig model], [Message model])) (FetchItem sid)
 
       -- On each chunk, send event
       case mItem of
@@ -58,7 +59,7 @@ interceptStreamChunksToUI uiVars = intercept handler
 
     handler (CloseStream sid) = do
       -- Forward close with type application and check result
-      result <- send @(Streaming StreamEvent (Either String [Message model]) ([ModelConfig model], [Message model])) (CloseStream sid)
+      result <- send @(Streaming StreamEvent (Either RestError [Message model]) ([ModelConfig model], [Message model])) (CloseStream sid)
 
       -- Send appropriate end event based on result
       case result of

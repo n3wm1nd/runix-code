@@ -59,6 +59,7 @@ import Polysemy.State (State, runState)
 import Polysemy.Reader (Reader, runReader)
 
 import Runix.Runner (grepIO, bashIO, cmdsIO, httpIO, withRequestTimeout, loggingIO, failLog)
+import Runix.Time (Time, Sleep, timeIO, sleepIO)
 import Runix.FileSystem.Simple (FileSystem, FileSystemRead, FileSystemWrite, filesystemIO, readFile, writeFile, fileExists)
 import Runix.Grep (GrepSystem)
 import Runix.Bash (Bash)
@@ -244,7 +245,7 @@ loadSystemPrompt promptFile defaultPrompt = do
 -- This is a generic helper that interprets all the effects needed for
 -- runix-code. The action itself is provided by the caller.
 runWithEffects :: forall widget a. HasCallStack
-               => (forall r. Members '[UserInput widget, FileSystem, FileSystemRead, FileSystemWrite, Runix.Grep.GrepSystem, Bash, Cmds, HTTP, Logging, Fail, Embed IO, PromptStore] r
+               => (forall r. Members '[UserInput widget, FileSystem, FileSystemRead, FileSystemWrite, Runix.Grep.GrepSystem, Bash, Cmds, HTTP, Logging, Fail, Embed IO, PromptStore, Time, Sleep] r
                    => Sem r a)
                -> IO (Either String a)
 runWithEffects action =
@@ -254,6 +255,8 @@ runWithEffects action =
     . failLog
     . interpretUserInputFail @widget
     . httpIO (withRequestTimeout 300)
+    . timeIO
+    . sleepIO
     . cmdsIO
     . bashIO
     . promptStoreIO
@@ -274,7 +277,7 @@ data ModelInterpreter where
     , SupportsSystemPrompt (ProviderOf model)
     , ModelDefaults model
     ) =>
-    { interpretModelNonStreaming :: forall r a. Members [Fail, Embed IO, HTTP] r => Sem (LLM model : r) a -> Sem r a
+    { interpretModelNonStreaming :: forall r a. Members [Fail, Embed IO, HTTP, Time, Sleep] r => Sem (LLM model : r) a -> Sem r a
     , interpretModelStreaming :: forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a
     , miLoadSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , miSaveSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
