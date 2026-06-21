@@ -1,69 +1,28 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE ScopedTypeVariables #-}
-{-# LANGUAGE TypeApplications #-}
-{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE LambdaCase #-}
 
--- | High-level LLM streaming interceptor for chunk visualization
+-- | StreamChunk interpreter for chunk visualization in the TUI
 --
--- This module provides an interceptor that sits between interpretLLMStream and interpretLLMViaStreaming.
--- Stack: interpretLLMStream . interceptStreamChunksToUI . interpretLLMViaStreaming
+-- Translates 'StreamChunk StreamEvent' into UI events, eliminating the effect
+-- from the stack. Sits between 'interpretModel' and 'interpretTUIEffects'.
 module UI.StreamingInterceptor
-  ( interceptStreamChunksToUI
+  ( interpretStreamChunksToUI
   ) where
 
 import Polysemy
 
-import Runix.LLMStream (LLMStreaming, StreamEvent)
-import Runix.Streaming (Streaming(..))
-import Runix.RestAPI (RestError)
+import Runix.LLMStream (StreamEvent)
+import Runix.StreamChunk (StreamChunk(..))
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
-import UniversalLLM (Message, ModelConfig)
+import UniversalLLM (Message)
 
--- | Intercept LLMStreaming to send chunk events to UI
---
--- This INTERCEPTS the LLMStreaming effect (doesn't add or remove it from the stack).
--- It counts chunks and sends visualization events, then forwards to the real LLMStreaming.
--- Type: Sem r a -> Sem r a (where LLMStreaming is Member of r)
-interceptStreamChunksToUI
+-- | Eliminate 'StreamChunk StreamEvent' by forwarding each chunk to the UI.
+interpretStreamChunksToUI
   :: forall model r a.
-     ( Member (LLMStreaming model) r
-     , Member (Embed IO) r
-     )
+     Member (Embed IO) r
   => UIVars (Message model)
+  -> Sem (StreamChunk StreamEvent : r) a
   -> Sem r a
-  -> Sem r a
-interceptStreamChunksToUI uiVars = intercept handler
-  where
-    handler :: LLMStreaming model (Sem rInitial) x -> Sem r x
-    handler (StartStream config) = do
-      -- For now use a simple counter (TODO: proper stream ID tracking)
-      -- Send start event
-      embed $ sendAgentEvent uiVars (StreamStartEvent 0)
-
-      -- Forward to underlying LLMStreaming with type application
-      send @(Streaming StreamEvent (Either RestError [Message model]) ([ModelConfig model], [Message model])) (StartStream config)
-
-    handler (FetchItem sid) = do
-      -- Forward fetch with type application
-      mItem <- send @(Streaming StreamEvent (Either RestError [Message model]) ([ModelConfig model], [Message model])) (FetchItem sid)
-
-      -- On each chunk, send event
-      case mItem of
-        Just _event -> do
-          -- Send chunk event (TODO: proper counting)
-          embed $ sendAgentEvent uiVars (StreamChunkEvent 0 1)
-        Nothing -> return ()
-
-      return mItem
-
-    handler (CloseStream sid) = do
-      -- Forward close with type application and check result
-      result <- send @(Streaming StreamEvent (Either RestError [Message model]) ([ModelConfig model], [Message model])) (CloseStream sid)
-
-      -- Send appropriate end event based on result
-      case result of
-        Left _err -> embed $ sendAgentEvent uiVars (StreamErrorEvent 0)
-        Right _msgs -> embed $ sendAgentEvent uiVars (StreamEndEvent 0)
-
-      return result
+interpretStreamChunksToUI uiVars = interpret $ \case
+  EmitChunk event -> embed $ sendAgentEvent uiVars (StreamChunkEvent 0 1)

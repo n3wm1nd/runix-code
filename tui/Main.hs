@@ -31,7 +31,7 @@ import UniversalLLM (ProviderOf)
 
 import Config
 import Models
-import Runner (loadSystemPrompt, ModelInterpreter(..), runConfig, runHistory, buildAvailableModels, ModelEntry(..), entryInterpreter)
+import Runner (loadSystemPrompt, ModelInterpreterStreaming(..), runConfig, runHistory, buildAvailableModels, ModelEntry(..), entryStreamingInterpreter)
 import Runix.Runner (bashIO, cmdsIO, failLog, loggingIO)
 import Runix.Grep (grepForFilesystem)
 import qualified UI.Commands.View as ViewCmd
@@ -65,9 +65,10 @@ import qualified UI
 import UI.UserInterface (interpretAsWidget)
 import UI.AgentWidgets (addMessage, replaceHistory)
 import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
-import UI.StreamingInterceptor (interceptStreamChunksToUI)
-import Runix.LLMStream (LLMStreaming)
-import Runix.LLM.Interpreter (interpretLLMViaStreaming)
+import UI.StreamingInterceptor (interpretStreamChunksToUI)
+import Runix.LLM (LLM)
+import Runix.LLMStream (StreamEvent)
+import Runix.StreamChunk (StreamChunk)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
 import Runix.FileSystem (loggingWrite, filterRead, filterWrite, hideGit, hideClaude, filterFileSystem, fileSystemLocal, fileWatcherINotify, interceptFileAccessRead, interceptFileAccessWrite, onlyClaude)
@@ -125,9 +126,9 @@ main = do
   IO.hPutStr IO.stderr $ "info: Using model: " ++ T.unpack (meName selectedEntry) ++ "\n"
 
   -- Unpack existential and run UI with full model list for interactive model switching
-  case entryInterpreter selectedEntry of
-    ModelInterpreter{interpretModelStreaming, miLoadSession, miSaveSession} ->
-      runUI selectedEntry (\refreshCallback -> buildUIRunner availableModels interpretModelStreaming miLoadSession miSaveSession (cfgResumeSession cfg) refreshCallback)
+  case entryStreamingInterpreter selectedEntry of
+    ModelInterpreterStreaming{interpretModelStreaming, msLoadSession, msSaveSession} ->
+      runUI selectedEntry (\refreshCallback -> buildUIRunner availableModels interpretModelStreaming msLoadSession msSaveSession (cfgResumeSession cfg) refreshCallback)
 
 --------------------------------------------------------------------------------
 -- Completion Handler
@@ -187,24 +188,18 @@ agentLoop :: forall model.
              , SupportsSystemPrompt (ProviderOf model)
              , ModelDefaults model
              )
-          => FilePath  -- CWD for security restrictions
-          -> RunixDataDir  -- Data directory path
+          => FilePath
+          -> RunixDataDir
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter (internal)
+          -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a)
           -> FilePath  -- Executable path
-          -> Integer  -- Initial executable mtime
+          -> Integer   -- Initial executable mtime
           -> IO ()
 agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming exePath initialMTime = do
-  -- Run the entire agent loop inside Sem so FileWatcher state persists
-  -- Stack: interpretModelStreaming . interceptStreamChunksToUI . interpretLLMViaStreaming
-  -- interpretModelStreaming: HTTPStreaming -> LLMStreaming
-  -- interceptStreamChunksToUI: intercepts LLMStreaming (Sem r a -> Sem r a)
-  -- interpretLLMViaStreaming: LLMStreaming -> LLM
   let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars
+                   . interpretStreamChunksToUI uiVars
                    . interpretModelStreaming
-                   . interceptStreamChunksToUI uiVars
-                   . interpretLLMViaStreaming @model
 
   result <- runToIO' $ forever runOneIteration
 
@@ -389,12 +384,12 @@ buildUIRunner :: forall model.
                  , SupportsSystemPrompt (ProviderOf model)
                  , ModelDefaults model
                  )
-              => [ModelEntry]   -- All available models (for runtime switching)
-              -> (forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a)  -- LLMStreaming interpreter
-              -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])  -- Load session
-              -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())  -- Save session
-              -> Maybe FilePath  -- Resume session path
-              -> (AgentEvent (Message model) -> IO ())  -- Refresh callback
+              => [ModelEntry]
+              -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a)  -- streaming interpreter
+              -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])
+              -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())
+              -> Maybe FilePath
+              -> (AgentEvent (Message model) -> IO ())
               -> IO (UIVars (Message model))
 buildUIRunner _availableModels interpretModelStreaming miLoadSession miSaveSession maybeSessionPath refreshCallback = do
   -- Get current working directory for security restrictions

@@ -26,6 +26,8 @@ module Runner
   , runWithEffects
     -- * Model Interpreter
   , ModelInterpreter(..)
+  , ModelInterpreterStreaming(..)
+  , entryStreamingInterpreter
     -- * Model Registry
   , ModelEntry(..)
   , entryFields
@@ -70,16 +72,18 @@ import Runix.PromptStore (PromptStore, promptStoreIO)
 import qualified Runix.Logging as Log
 import Data.Default (Default, def)
 
-import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig, ModelName, HasStreaming, ProviderRequest, ProviderResponse)
-import UniversalLLM (ProviderOf, HasTools, SupportsSystemPrompt, Provider)
-import UniversalLLM (StreamingProtocol, EnableStreaming)
+import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserializeMessage, ModelConfig, ModelName, ProviderRequest, ProviderResponse)
+import UniversalLLM (ProviderOf, HasTools, SupportsSystemPrompt, Provider, EnableStreaming)
 import UniversalLLM.Settings (SettingField, SettingValue, ConfigFor, GSettingFields, GSetField, GToggleField, GDefault, ModelSettings, settingFields, setField, toggleField, defaultConfig, toModelConfigs)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
 import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
 import Runix.LLM (LLM)
-import Runix.LLMStream (LLMStreaming)
 import Runix.HTTP (HTTPStreaming)
-import Runix.LLM.Interpreter (interpretLLMWith, interpretLLMStream, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..))
+import Runix.LLM.Interpreter (interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..))
+import Runix.LLM.Streaming (llmStreamingRestAPI)
+import Runix.RestAPI (RestAPI, restapiHTTP, llmRetry)
+import Runix.StreamChunk (StreamChunk)
+import Runix.LLMStream (StreamEvent)
 import Runix.RestAPI (RestEndpoint(..))
 import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
@@ -268,8 +272,7 @@ runWithEffects action =
 -- Model Interpreter
 --------------------------------------------------------------------------------
 
--- | Wrapper for model-specific interpreter
--- Provides LLM interpreter plus session serialization.
+-- | Non-streaming model interpreter. Suitable for CLI and batch use.
 data ModelInterpreter where
   ModelInterpreter :: forall model.
     ( Eq (Message model)
@@ -277,11 +280,23 @@ data ModelInterpreter where
     , SupportsSystemPrompt (ProviderOf model)
     , ModelDefaults model
     ) =>
-    { interpretModelNonStreaming :: forall r a. Members [Fail, Embed IO, HTTP, Time, Sleep] r => Sem (LLM model : r) a -> Sem r a
-    , interpretModelStreaming :: forall r a. Members [Fail, HTTPStreaming] r => Sem (LLMStreaming model : r) a -> Sem r a
-    , miLoadSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
-    , miSaveSession :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
+    { interpretModel    :: forall r a. Members '[HTTP, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a
+    , miLoadSession     :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
+    , miSaveSession     :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreter
+
+-- | Streaming model interpreter. Suitable for TUI and interactive use.
+data ModelInterpreterStreaming where
+  ModelInterpreterStreaming :: forall model.
+    ( Eq (Message model)
+    , HasTools model
+    , SupportsSystemPrompt (ProviderOf model)
+    , ModelDefaults model
+    ) =>
+    { interpretModelStreaming :: forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a
+    , msLoadSession           :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
+    , msSaveSession           :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
+    } -> ModelInterpreterStreaming
 
 --------------------------------------------------------------------------------
 -- Model Registry
@@ -310,7 +325,6 @@ data ModelEntry where
     -- Interpreter constraints
     , ModelName model, Provider model
     , EnableStreaming model
-    , HasStreaming model
     ) =>
     { meId       :: ModelId                     -- ^ Model identity (for selection)
     , meName     :: Text                       -- ^ Display name (for UI)
@@ -343,17 +357,24 @@ entryResetConfig :: ModelEntry -> ModelEntry
 entryResetConfig (ModelEntry i n a p m (_ :: cfg)) =
   ModelEntry i n a p m (defaultConfig :: cfg)
 
--- | Create a ModelInterpreter from a ModelEntry (pure, auth already resolved)
+-- | Create a non-streaming ModelInterpreter from a ModelEntry.
 entryInterpreter :: ModelEntry -> ModelInterpreter
-entryInterpreter (ModelEntry _ _ auth provider model cfg) =
+entryInterpreter (ModelEntry _ _ (auth :: p) (provider :: ComposableProvider model s) model cfg) =
   let configs = toModelConfigs cfg
   in ModelInterpreter
-    { interpretModelNonStreaming =
-        interpretLLMWith auth provider model configs
-    , interpretModelStreaming =
-        interpretLLMStream auth provider model configs
-    , miLoadSession = loadSession provider
-    , miSaveSession = saveSession provider
+    { interpretModel = \action -> restapiHTTP auth . llmRetry @p . interpretLLM @p provider model configs $ raiseUnder @(RestAPI p) action
+    , miLoadSession  = loadSession provider
+    , miSaveSession  = saveSession provider
+    }
+
+-- | Create a streaming ModelInterpreterStreaming from a ModelEntry.
+entryStreamingInterpreter :: ModelEntry -> ModelInterpreterStreaming
+entryStreamingInterpreter (ModelEntry _ _ (auth :: p) (provider :: ComposableProvider model s) model cfg) =
+  let configs = toModelConfigs cfg
+  in ModelInterpreterStreaming
+    { interpretModelStreaming = \action -> restapiHTTP auth . llmStreamingRestAPI @model auth . llmRetry @p . interpretLLM @p provider model configs $ raiseUnder @(RestAPI p) action
+    , msLoadSession           = loadSession provider
+    , msSaveSession           = saveSession provider
     }
 
 -- | Convenience constructor using defaultConfig for initial config
@@ -365,7 +386,6 @@ mkEntry :: forall model cfg p s.
   , RestEndpoint p, Default s
   , ModelName model, Provider model
   , EnableStreaming model
-  , HasStreaming model
   ) => ModelId -> Text -> p -> ComposableProvider model s -> model -> ModelEntry
 mkEntry mid name auth provider model = ModelEntry
   { meId = mid, meName = name, meAuth = auth, meProvider = provider, meModel = model, meConfig = defaultConfig }

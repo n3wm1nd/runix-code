@@ -29,7 +29,7 @@ import Agent (SystemPrompt(..), UserPrompt(..), runixCode, responseText)
 import Data.List (find)
 import qualified Config
 import Config (RunixDataDir(..), ProjectFS(..), ClaudeConfigFS(..), RunixToolsFS(..), modelDisplayName, loadConfig, cfgModelId, cfgSessionFile)
-import Runner (loadSystemPrompt, ModelInterpreter(..), ModelEntry(..), buildAvailableModels, entryInterpreter, runConfigHistory)
+import Runner (loadSystemPrompt, ModelInterpreter(..), ModelEntry(..), buildAvailableModels, entryInterpreter, entryStreamingInterpreter, runConfigHistory)
 import UI.UserInput (ImplementsWidget(..), RenderRequest, interpretUserInputFail)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
@@ -111,7 +111,7 @@ main = do
 --
 -- This composes the model interpreter with CLI effects (simple I/O)
 runAgent :: ModelInterpreter -> Config.Config -> Text -> IO (Either String Text)
-runAgent (ModelInterpreter @model interpretModelNonStreaming _interpretModelStreaming miLoadSess miSaveSess) cfg userInput = do
+runAgent (ModelInterpreter @model interpretModel miLoadSess miSaveSess) cfg userInput = do
   -- Get current working directory for filesystem chroot
   cwd <- Dir.getCurrentDirectory
 
@@ -153,7 +153,7 @@ runAgent (ModelInterpreter @model interpretModelNonStreaming _interpretModelStre
                -- Grep for each filesystem
                . grepForFilesystem @RunixToolsFS
                . grepForFilesystem @ProjectFS
-               . interpretModelNonStreaming
+               . interpretModel
 
   runToIO' $ do
     -- Load system prompt
