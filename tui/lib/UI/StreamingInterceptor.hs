@@ -12,7 +12,7 @@ module UI.StreamingInterceptor
 
 import Polysemy
 
-import Runix.LLMStream (StreamEvent)
+import Runix.LLM.Streaming (StreamEvent(..))
 import Runix.StreamChunk (StreamChunk(..))
 import UI.State (UIVars, sendAgentEvent, AgentEvent(..))
 import UniversalLLM (Message)
@@ -25,4 +25,7 @@ interpretStreamChunksToUI
   -> Sem (StreamChunk StreamEvent : r) a
   -> Sem r a
 interpretStreamChunksToUI uiVars = interpret $ \case
-  EmitChunk event -> embed $ sendAgentEvent uiVars (StreamChunkEvent 0 1)
+  EmitChunk event -> embed $ case event of
+    StreamStarted -> sendAgentEvent uiVars (StreamStartEvent 0)
+    StreamDone    -> sendAgentEvent uiVars (StreamEndEvent 0)
+    _             -> sendAgentEvent uiVars (StreamChunkEvent 0 1)

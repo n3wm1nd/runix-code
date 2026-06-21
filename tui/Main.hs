@@ -67,7 +67,7 @@ import UI.AgentWidgets (addMessage, replaceHistory)
 import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
 import UI.StreamingInterceptor (interpretStreamChunksToUI)
 import Runix.LLM (LLM)
-import Runix.LLMStream (StreamEvent)
+import Runix.LLM.Streaming (StreamEvent)
 import Runix.StreamChunk (StreamChunk)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)

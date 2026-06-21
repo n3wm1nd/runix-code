@@ -83,7 +83,7 @@ import Runix.LLM.Interpreter (interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth
 import Runix.LLM.Streaming (llmStreamingRestAPI)
 import Runix.RestAPI (RestAPI, restapiHTTP, llmRetry)
 import Runix.StreamChunk (StreamChunk)
-import Runix.LLMStream (StreamEvent)
+import Runix.LLM.Streaming (StreamEvent)
 import Runix.RestAPI (RestEndpoint(..))
 import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
