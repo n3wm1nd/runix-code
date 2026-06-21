@@ -304,10 +304,17 @@ instance Zippable (SegmentEditor n) where
         -- Deleted within current line
         Just (ed { edCurrentLine = newLine })
       Nothing ->
-        -- At start of current line, move back to previous line and delete there
-        if null (edLinesAbove ed)
-        then Nothing  -- At start of document
-        else deleteBackward (back ed)  -- Move back and try again
+        -- At start of current line; move to end of previous line and delete there
+        case edLinesAbove ed of
+          [] -> Nothing  -- At start of document
+          (prevLine : rest) ->
+            -- Move to previous line with cursor at its end, then delete
+            let edOnPrevLine = ed
+                  { edLinesAbove = rest
+                  , edCurrentLine = Z.GapZipper prevLine []
+                  , edLinesBelow = Z.gapAfter (edCurrentLine ed) : edLinesBelow ed
+                  }
+            in deleteBackward edOnPrevLine
 
   -- Delete segment after cursor (just navigate and delete, ignore line structure)
   deleteForward ed =
@@ -316,10 +323,16 @@ instance Zippable (SegmentEditor n) where
         -- Deleted within current line
         Just (ed { edCurrentLine = newLine })
       Nothing ->
-        -- At end of current line, move forward to next line and delete there
-        if null (edLinesBelow ed)
-        then Nothing  -- At end of document
-        else deleteForward (forward ed)  -- Move forward and try again
+        -- At end of current line; move to start of next line and delete there
+        case edLinesBelow ed of
+          [] -> Nothing  -- At end of document
+          (nextLine : rest) ->
+            let edOnNextLine = ed
+                  { edLinesAbove = Z.gapBefore (edCurrentLine ed) : edLinesAbove ed
+                  , edCurrentLine = Z.GapZipper [] nextLine
+                  , edLinesBelow = rest
+                  }
+            in deleteForward edOnNextLine
 
 --------------------------------------------------------------------------------
 -- Helper functions

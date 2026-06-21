@@ -331,6 +331,11 @@ test-suite runix-code-test
                     , RegistrySpec
                     , MCPSpec
                     , PlaywrightSpec
+                    , SegmentEditorSpec
+                    , UserInterfaceSpec
+                    , WordWrapSpec
+                    , ZippableSpec
+                    , ZipperSpec
 
 -- Vty version removed - brick provides better abstraction for our use case
 -- The raw vty exploration showed it doesn't offer advantages over brick:
