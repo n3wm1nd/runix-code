@@ -67,7 +67,7 @@ import UI.AgentWidgets (addMessage, replaceHistory)
 import UI.AgentWidgetsInterpreter (interpretAgentWidgets)
 import UI.StreamingInterceptor (interpretStreamChunksToUI)
 import Runix.LLM (LLM)
-import Runix.LLM.Streaming (StreamEvent)
+import Runix.LLM.Streaming (StreamEvent, StreamingEnabled(..))
 import Runix.StreamChunk (StreamChunk)
 import qualified Paths_runix_code
 import Paths_runix_code (getDataFileName)
@@ -192,13 +192,14 @@ agentLoop :: forall model.
           -> RunixDataDir
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a)
+          -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled] r => Sem (LLM model : r) a -> Sem r a)
           -> FilePath  -- Executable path
           -> Integer   -- Initial executable mtime
           -> IO ()
 agentLoop cwd dataDir uiVars sysPrompt interpretModelStreaming exePath initialMTime = do
   let runToIO' = runM . runError . interpretTUIEffects cwd dataDir uiVars
                    . interpretStreamChunksToUI uiVars
+                   . ConfigEffect.runConfig (StreamingEnabled True)
                    . interpretModelStreaming
 
   result <- runToIO' $ forever runOneIteration
@@ -385,7 +386,7 @@ buildUIRunner :: forall model.
                  , ModelDefaults model
                  )
               => [ModelEntry]
-              -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a)  -- streaming interpreter
+              -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled] r => Sem (LLM model : r) a -> Sem r a)  -- streaming interpreter
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())
               -> Maybe FilePath

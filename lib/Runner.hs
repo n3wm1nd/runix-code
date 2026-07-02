@@ -80,10 +80,11 @@ import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud
 import Runix.LLM (LLM)
 import Runix.HTTP (HTTPStreaming)
 import Runix.LLM.Interpreter (interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..))
-import Runix.LLM.Streaming (llmStreamingRestAPI)
+import Runix.LLM.Streaming (llmStreamingRestAPI, StreamingEnabled)
 import Runix.RestAPI (RestAPI, restapiHTTP, llmRetry)
 import Runix.StreamChunk (StreamChunk)
 import Runix.LLM.Streaming (StreamEvent)
+import qualified Runix.Config as ConfigEffect
 import Runix.RestAPI (RestEndpoint(..))
 import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
@@ -293,7 +294,7 @@ data ModelInterpreterStreaming where
     , SupportsSystemPrompt (ProviderOf model)
     , ModelDefaults model
     ) =>
-    { interpretModelStreaming :: forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a
+    { interpretModelStreaming :: forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled] r => Sem (LLM model : r) a -> Sem r a
     , msLoadSession           :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , msSaveSession           :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreterStreaming
