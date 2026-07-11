@@ -281,7 +281,7 @@ data ModelInterpreter where
     , SupportsSystemPrompt (ProviderOf model)
     , ModelDefaults model
     ) =>
-    { interpretModel    :: forall r a. Members '[HTTP, Time, Sleep, Fail] r => Sem (LLM model : r) a -> Sem r a
+    { interpretModel    :: forall r a. Members '[HTTP, Time, Sleep, Fail, Logging] r => Sem (LLM model : r) a -> Sem r a
     , miLoadSession     :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , miSaveSession     :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreter
@@ -294,7 +294,7 @@ data ModelInterpreterStreaming where
     , SupportsSystemPrompt (ProviderOf model)
     , ModelDefaults model
     ) =>
-    { interpretModelStreaming :: forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled] r => Sem (LLM model : r) a -> Sem r a
+    { interpretModelStreaming :: forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled, Logging] r => Sem (LLM model : r) a -> Sem r a
     , msLoadSession           :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model]
     , msSaveSession           :: forall r. (Members [FileSystem, FileSystemRead, FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ()
     } -> ModelInterpreterStreaming

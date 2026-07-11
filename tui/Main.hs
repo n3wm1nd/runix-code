@@ -192,7 +192,7 @@ agentLoop :: forall model.
           -> RunixDataDir
           -> UIVars (Message model)
           -> SystemPrompt
-          -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled] r => Sem (LLM model : r) a -> Sem r a)
+          -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled, Logging] r => Sem (LLM model : r) a -> Sem r a)
           -> FilePath  -- Executable path
           -> Integer   -- Initial executable mtime
           -> IO ()
@@ -386,7 +386,7 @@ buildUIRunner :: forall model.
                  , ModelDefaults model
                  )
               => [ModelEntry]
-              -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled] r => Sem (LLM model : r) a -> Sem r a)  -- streaming interpreter
+              -> (forall r a. Members '[HTTP, HTTPStreaming, StreamChunk StreamEvent, Time, Sleep, Fail, ConfigEffect.Config StreamingEnabled, Logging] r => Sem (LLM model : r) a -> Sem r a)  -- streaming interpreter
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> Sem r [Message model])
               -> (forall r. (Members [Runix.FileSystem.Simple.FileSystem, Runix.FileSystem.Simple.FileSystemRead, Runix.FileSystem.Simple.FileSystemWrite, Logging, Fail] r) => FilePath -> [Message model] -> Sem r ())
               -> Maybe FilePath
