@@ -76,7 +76,7 @@ import UniversalLLM (Message, ComposableProvider, cpSerializeMessage, cpDeserial
 import UniversalLLM (ProviderOf, HasTools, SupportsSystemPrompt, Provider, EnableStreaming)
 import UniversalLLM.Settings (SettingField, SettingValue, ConfigFor, GSettingFields, GSetField, GToggleField, GDefault, ModelSettings, settingFields, setField, toggleField, defaultConfig, toModelConfigs)
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloudTokenPlan(..))
 import Runix.LLM (LLM)
 import Runix.HTTP (HTTPStreaming)
 import Runix.LLM.Interpreter (interpretLLM, AnthropicOAuthAuth(..), LlamaCppAuth(..), OpenRouterAuth(..), ZAIAuth(..), AlibabaCloudAuth(..))
@@ -90,7 +90,7 @@ import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Config (ModelId)
 import qualified Config
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..), KimiK25(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM52(..), GLM5Turbo(..), ZAI(..), ModelDefaults(..), route, via)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen37Max(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM52(..), GLM5Turbo(..), ZAI(..), ModelDefaults(..), route, via)
 import qualified Runix.FileSystem.System as System.Effects
 
 --------------------------------------------------------------------------------
@@ -444,14 +444,12 @@ probeAlibabaCloud :: IO [Maybe ModelEntry]
 probeAlibabaCloud = do
   mKey <- lookupEnv "ALIBABACLOUD_API_KEY"
   case mKey of
-    Nothing -> return [Nothing, Nothing, Nothing, Nothing]
+    Nothing -> return [Nothing, Nothing]
     Just key ->
       let auth = RunixCodeAlibabaCloudAuth (AlibabaCloudAuth key)
       in return $ map Just
-        [ mkEntry Config.MinimaxM25AlibabaCloud "MiniMax M2.5 (AlibabaCloud)" auth route (MinimaxM25 `via` AlibabaCloud)
-        , mkEntry Config.KimiK25AlibabaCloud    "Kimi K2.5 (AlibabaCloud)"    auth route (KimiK25 `via` AlibabaCloud)
-        , mkEntry Config.Qwen35PlusAlibabaCloud "Qwen 3.5 Plus (AlibabaCloud)" auth route (Qwen35Plus `via` AlibabaCloud)
-        , mkEntry Config.GLM5AlibabaCloud       "GLM 5 (AlibabaCloud)"        auth route (GLM5 `via` AlibabaCloud)
+        [ mkEntry Config.Qwen37MaxAlibabaCloud "Qwen 3.7 Max (AlibabaCloud)" auth route (Qwen37Max `via` AlibabaCloudTokenPlan)
+        , mkEntry Config.GLM52AlibabaCloud     "GLM 5.2 (AlibabaCloud)"      auth route (GLM52 `via` AlibabaCloudTokenPlan)
         ]
 
 probeOpenRouter :: IO [Maybe ModelEntry]

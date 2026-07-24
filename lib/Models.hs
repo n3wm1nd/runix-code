@@ -28,12 +28,11 @@ module Models
   , GLM52(..)
   , GLM5Turbo(..)
   , ZAI(..)
-  , AlibabaCloud(..)
+  , AlibabaCloudTokenPlan(..)
   , MinimaxM25(..)
   , Qwen35_122B(..)
   , Qwen3CoderNext(..)
-  , Qwen35Plus(..)
-  , KimiK25(..)
+  , Qwen37Max(..)
     -- * Runix-code specific models
   , UniversalWithTools(..)
   , OpenRouter(..)
@@ -48,15 +47,14 @@ import GHC.Generics (Generic)
 import UniversalLLM (route, via, Via, Model(..), ModelName(..), HasTools(..), Routing(..), ModelConfig(..), chainProviders)
 import UniversalLLM.Settings
 import UniversalLLM.Providers.Anthropic (AnthropicOAuth(..))
-import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloud(..))
+import UniversalLLM.Providers.OpenAI (LlamaCpp(..), OpenRouter(..), AlibabaCloudTokenPlan(..))
 import qualified UniversalLLM.Providers.OpenAI as OpenAI
 
 -- Import production models from universal-llm
 import UniversalLLM.Models.Anthropic.Claude (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..))
 import UniversalLLM.Models.ZhipuAI.GLM (GLM45Air(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM52(..), GLM5Turbo(..), ZAI(..))
 import UniversalLLM.Models.Minimax.M (MinimaxM25(..))
-import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), Qwen35Plus(..))
-import UniversalLLM.Models.Moonshot.Kimi (KimiK25(..))
+import UniversalLLM.Models.Alibaba.Qwen (Qwen35_122B(..), Qwen3CoderNext(..), Qwen37Max(..))
 
 --------------------------------------------------------------------------------
 -- Runix-Code Specific Models
@@ -164,22 +162,12 @@ instance ModelDefaults (GLM5Turbo `Via` ZAI) where
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (MinimaxM25 `Via` AlibabaCloud) where
+instance ModelDefaults (Qwen37Max `Via` AlibabaCloudTokenPlan) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
 
-instance ModelDefaults (KimiK25 `Via` AlibabaCloud) where
-  defaultConfigs =
-    [ Reasoning True    -- Enable Deep Thinking (reasoning content not returned)
-    ]
-
-instance ModelDefaults (Qwen35Plus `Via` AlibabaCloud) where
-  defaultConfigs =
-    [ Reasoning True    -- Enable reasoning extraction
-    ]
-
-instance ModelDefaults (GLM5 `Via` AlibabaCloud) where
+instance ModelDefaults (GLM52 `Via` AlibabaCloudTokenPlan) where
   defaultConfigs =
     [ Reasoning True    -- Enable reasoning extraction
     ]
@@ -216,10 +204,8 @@ type instance ConfigFor (GLM5 `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (GLM51 `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (GLM52 `Via` ZAI) = ConfigWithReasoning
 type instance ConfigFor (GLM5Turbo `Via` ZAI) = ConfigWithReasoning
-type instance ConfigFor (MinimaxM25 `Via` AlibabaCloud) = ConfigWithReasoning
-type instance ConfigFor (KimiK25 `Via` AlibabaCloud) = ConfigWithReasoning  -- Hidden reasoning (parameter accepted, content not returned)
-type instance ConfigFor (Qwen35Plus `Via` AlibabaCloud) = ConfigWithReasoning
-type instance ConfigFor (GLM5 `Via` AlibabaCloud) = ConfigWithReasoning
+type instance ConfigFor (Qwen37Max `Via` AlibabaCloudTokenPlan) = ConfigWithReasoning
+type instance ConfigFor (GLM52 `Via` AlibabaCloudTokenPlan) = ConfigWithReasoning
 
 -- Models without reasoning support
 type instance ConfigFor (Qwen3CoderNext `Via` LlamaCpp) = ConfigBasic

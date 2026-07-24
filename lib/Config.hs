@@ -65,11 +65,9 @@ data ModelId
   | GLM51ZAI
   | GLM52ZAI
   | GLM5TurboZAI
-  -- AlibabaCloud
-  | MinimaxM25AlibabaCloud
-  | KimiK25AlibabaCloud
-  | Qwen35PlusAlibabaCloud
-  | GLM5AlibabaCloud
+  -- AlibabaCloud (Token Plan)
+  | Qwen37MaxAlibabaCloud
+  | GLM52AlibabaCloud
   -- OpenRouter
   | OpenRouterModel
   deriving stock (Show, Eq)
@@ -91,10 +89,8 @@ modelDisplayName = \case
   GLM51ZAI                 -> "GLM 5.1 (ZAI)"
   GLM52ZAI                 -> "GLM 5.2 (ZAI)"
   GLM5TurboZAI             -> "GLM 5 Turbo (ZAI)"
-  MinimaxM25AlibabaCloud   -> "MiniMax M2.5 (AlibabaCloud)"
-  KimiK25AlibabaCloud      -> "Kimi K2.5 (AlibabaCloud)"
-  Qwen35PlusAlibabaCloud   -> "Qwen 3.5 Plus (AlibabaCloud)"
-  GLM5AlibabaCloud         -> "GLM 5 (AlibabaCloud)"
+  Qwen37MaxAlibabaCloud    -> "Qwen 3.7 Max (AlibabaCloud)"
+  GLM52AlibabaCloud        -> "GLM 5.2 (AlibabaCloud)"
   OpenRouterModel          -> "OpenRouter"
 
 -- | Path to the runix-code data directory (apps/runix-code during development)
@@ -219,16 +215,10 @@ resolveZAIModel = \case
 
 resolveAlibabaCloudModel :: T.Text -> Maybe ModelId
 resolveAlibabaCloudModel = \case
-  "minimax" -> Just MinimaxM25AlibabaCloud
-  "minimax-m25" -> Just MinimaxM25AlibabaCloud
-  "minimax-m2.5" -> Just MinimaxM25AlibabaCloud
-  "kimi" -> Just KimiK25AlibabaCloud
-  "kimi-k25" -> Just KimiK25AlibabaCloud
-  "kimi-k2.5" -> Just KimiK25AlibabaCloud
-  "qwen35-plus" -> Just Qwen35PlusAlibabaCloud
-  "qwen-3.5-plus" -> Just Qwen35PlusAlibabaCloud
-  "glm5" -> Just GLM5AlibabaCloud
-  "glm-5" -> Just GLM5AlibabaCloud
+  "qwen37-max" -> Just Qwen37MaxAlibabaCloud
+  "qwen-3.7-max" -> Just Qwen37MaxAlibabaCloud
+  "glm52" -> Just GLM52AlibabaCloud
+  "glm-5.2" -> Just GLM52AlibabaCloud
   _ -> Nothing
 
 -- Legacy single-word aliases for backwards compatibility
@@ -297,23 +287,15 @@ resolveLegacyAlias = \case
   "glm-5-turbo"     -> Just GLM5TurboZAI
   "glm5turbo"       -> Just GLM5TurboZAI
   "zai"             -> Just GLM52ZAI
-  -- AlibabaCloud
-  "minimax-m25-alibabacloud"   -> Just MinimaxM25AlibabaCloud
-  "minimax-m2.5-alibabacloud"  -> Just MinimaxM25AlibabaCloud
-  "minimaxm25-alibabacloud"    -> Just MinimaxM25AlibabaCloud
-  "alibabacloud-minimax"       -> Just MinimaxM25AlibabaCloud
-  "kimi-k25-alibabacloud"      -> Just KimiK25AlibabaCloud
-  "kimi-k2.5-alibabacloud"     -> Just KimiK25AlibabaCloud
-  "kimik25-alibabacloud"       -> Just KimiK25AlibabaCloud
-  "alibabacloud-kimi"          -> Just KimiK25AlibabaCloud
-  "qwen3.5-plus-alibabacloud"  -> Just Qwen35PlusAlibabaCloud
-  "qwen35plus-alibabacloud"    -> Just Qwen35PlusAlibabaCloud
-  "alibabacloud-qwen35plus"    -> Just Qwen35PlusAlibabaCloud
-  "qwen3.5-plus"               -> Just Qwen35PlusAlibabaCloud
-  "glm-5-alibabacloud"         -> Just GLM5AlibabaCloud
-  "glm5-alibabacloud"          -> Just GLM5AlibabaCloud
-  "alibabacloud-glm5"          -> Just GLM5AlibabaCloud
-  "alibabacloud"               -> Just Qwen35PlusAlibabaCloud
+  -- AlibabaCloud (Token Plan)
+  "qwen3.7-max-alibabacloud"   -> Just Qwen37MaxAlibabaCloud
+  "qwen37max-alibabacloud"     -> Just Qwen37MaxAlibabaCloud
+  "alibabacloud-qwen37max"     -> Just Qwen37MaxAlibabaCloud
+  "qwen3.7-max"                -> Just Qwen37MaxAlibabaCloud
+  "glm-5.2-alibabacloud"       -> Just GLM52AlibabaCloud
+  "glm52-alibabacloud"         -> Just GLM52AlibabaCloud
+  "alibabacloud-glm52"         -> Just GLM52AlibabaCloud
+  "alibabacloud"               -> Just Qwen37MaxAlibabaCloud
   -- OpenRouter
   "openrouter"           -> Just OpenRouterModel
   "openrouter-universal" -> Just OpenRouterModel
