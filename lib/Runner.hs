@@ -90,7 +90,7 @@ import Autodocodec (HasCodec)
 import UI.UserInput (UserInput, interpretUserInputFail)
 import Config (ModelId)
 import qualified Config
-import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen37Max(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM52(..), GLM5Turbo(..), ZAI(..), ModelDefaults(..), route, via)
+import Models (ClaudeSonnet45(..), ClaudeHaiku45(..), ClaudeOpus46(..), GLM45Air(..), MinimaxM25(..), Qwen35_122B(..), Qwen3CoderNext(..), Qwen37Max(..), UniversalWithTools(..), GLM46(..), GLM47(..), GLM5(..), GLM51(..), GLM52(..), GLM53(..), GLM5Turbo(..), ZAI(..), ModelDefaults(..), route, via)
 import qualified Runix.FileSystem.System as System.Effects
 
 --------------------------------------------------------------------------------
@@ -427,11 +427,12 @@ probeZAI :: IO [Maybe ModelEntry]
 probeZAI = do
   mKey <- lookupEnv "ZAI_API_KEY"
   case mKey of
-    Nothing -> return [Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
+    Nothing -> return [Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing, Nothing]
     Just key ->
       let auth = RunixCodeZAIAuth (ZAIAuth key)
       in return $ map Just
-        [ mkEntry Config.GLM52ZAI     "GLM 5.2 (ZAI)"     auth route (GLM52 `via` ZAI)
+        [ mkEntry Config.GLM53ZAI     "GLM 5.3 (ZAI)"     auth route (GLM53 `via` ZAI)
+        , mkEntry Config.GLM52ZAI     "GLM 5.2 (ZAI)"     auth route (GLM52 `via` ZAI)
         , mkEntry Config.GLM51ZAI     "GLM 5.1 (ZAI)"     auth route (GLM51 `via` ZAI)
         , mkEntry Config.GLM5TurboZAI "GLM 5 Turbo (ZAI)" auth route (GLM5Turbo `via` ZAI)
         , mkEntry Config.GLM5ZAI      "GLM 5 (ZAI)"       auth route (GLM5 `via` ZAI)

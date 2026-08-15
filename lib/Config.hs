@@ -64,6 +64,7 @@ data ModelId
   | GLM5ZAI
   | GLM51ZAI
   | GLM52ZAI
+  | GLM53ZAI
   | GLM5TurboZAI
   -- AlibabaCloud (Token Plan)
   | Qwen37MaxAlibabaCloud
@@ -88,6 +89,7 @@ modelDisplayName = \case
   GLM5ZAI                  -> "GLM 5 (ZAI)"
   GLM51ZAI                 -> "GLM 5.1 (ZAI)"
   GLM52ZAI                 -> "GLM 5.2 (ZAI)"
+  GLM53ZAI                 -> "GLM 5.3 (ZAI)"
   GLM5TurboZAI             -> "GLM 5 Turbo (ZAI)"
   Qwen37MaxAlibabaCloud    -> "Qwen 3.7 Max (AlibabaCloud)"
   GLM52AlibabaCloud        -> "GLM 5.2 (AlibabaCloud)"
@@ -208,6 +210,9 @@ resolveZAIModel = \case
   "glm52" -> Just GLM52ZAI
   "glm-52" -> Just GLM52ZAI
   "glm-5.2" -> Just GLM52ZAI
+  "glm53" -> Just GLM53ZAI
+  "glm-53" -> Just GLM53ZAI
+  "glm-5.3" -> Just GLM53ZAI
   "glm5turbo" -> Just GLM5TurboZAI
   "glm-5-turbo" -> Just GLM5TurboZAI
   "glm-5turbo" -> Just GLM5TurboZAI
@@ -280,13 +285,19 @@ resolveLegacyAlias = \case
   "zai-glm52"       -> Just GLM52ZAI
   "glm-5.2"         -> Just GLM52ZAI
   "glm52"           -> Just GLM52ZAI
+  "glm-5.3-zai"     -> Just GLM53ZAI
+  "glm53-zai"       -> Just GLM53ZAI
+  "glm53zai"        -> Just GLM53ZAI
+  "zai-glm53"       -> Just GLM53ZAI
+  "glm-5.3"         -> Just GLM53ZAI
+  "glm53"           -> Just GLM53ZAI
   "glm-5-turbo-zai" -> Just GLM5TurboZAI
   "glm5turbo-zai"   -> Just GLM5TurboZAI
   "glm5turbozai"    -> Just GLM5TurboZAI
   "zai-glm5turbo"   -> Just GLM5TurboZAI
   "glm-5-turbo"     -> Just GLM5TurboZAI
   "glm5turbo"       -> Just GLM5TurboZAI
-  "zai"             -> Just GLM52ZAI
+  "zai"             -> Just GLM53ZAI
   -- AlibabaCloud (Token Plan)
   "qwen3.7-max-alibabacloud"   -> Just Qwen37MaxAlibabaCloud
   "qwen37max-alibabacloud"     -> Just Qwen37MaxAlibabaCloud
